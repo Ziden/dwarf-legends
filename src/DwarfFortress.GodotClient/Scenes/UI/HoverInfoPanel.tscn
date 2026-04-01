@@ -1,0 +1,29 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/HoverInfoPanel.cs" id="1"]
+
+[node name="HoverInfoPanel" type="PanelContainer"]
+mouse_filter = 2
+custom_minimum_size = Vector2(200, 0)
+script = ExtResource("1")
+
+[node name="Margin" type="MarginContainer" parent="."]
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_bottom = 6
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+theme_override_constants/separation = 2
+
+[node name="StaticLabel" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+autowrap_mode = 0
+clip_text = true
+
+[node name="UnitsLabel" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+autowrap_mode = 0
+clip_text = true
+visible = false
+modulate = Color(0.95, 0.85, 0.45, 1)

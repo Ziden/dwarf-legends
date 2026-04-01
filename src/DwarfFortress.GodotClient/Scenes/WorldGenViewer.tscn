@@ -1,0 +1,266 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/WorldGenViewerRoot.cs" id="1"]
+
+[node name="WorldGenViewerRoot" type="Node2D"]
+script = ExtResource("1")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="UIRoot" type="Control" parent="UI"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="LeftPanel" type="PanelContainer" parent="UI/UIRoot"]
+anchor_bottom = 1.0
+offset_right = 270.0
+
+[node name="Margin" type="MarginContainer" parent="UI/UIRoot/LeftPanel"]
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBox" type="VBoxContainer" parent="UI/UIRoot/LeftPanel/Margin"]
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="Title" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+theme_override_font_sizes/font_size = 14
+text = "World Gen Viewer"
+
+[node name="Sep1" type="HSeparator" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+
+[node name="SeedLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+text = "Seed"
+modulate = Color(0.75, 0.75, 0.75, 1)
+
+[node name="SeedInput" type="SpinBox" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+min_value = 0.0
+max_value = 999999.0
+value = 42.0
+
+[node name="SeedButtons" type="HBoxContainer" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+theme_override_constants/separation = 6
+
+[node name="RegenerateBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox/SeedButtons"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+text = "Regenerate"
+
+[node name="RandomizeBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox/SeedButtons"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+text = "Random Seed"
+
+[node name="Sep2" type="HSeparator" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+
+[node name="ViewLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+text = "View Mode"
+modulate = Color(0.75, 0.75, 0.75, 1)
+
+[node name="WorldViewBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "World Map"
+disabled = true
+
+[node name="RegionViewBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Region Map"
+
+[node name="LocalViewBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Local Embark"
+
+[node name="Sep3" type="HSeparator" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+
+[node name="OverlayLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+text = "Overlay"
+modulate = Color(0.75, 0.75, 0.75, 1)
+
+[node name="OverlayModeSelect" type="OptionButton" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+
+[node name="ParentDeltaThresholdLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Delta tolerance: +/-0.08"
+modulate = Color(0.75, 0.75, 0.75, 1)
+visible = false
+
+[node name="ParentDeltaThresholdSlider" type="HSlider" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+min_value = 0.02
+max_value = 0.3
+step = 0.01
+value = 0.08
+visible = false
+
+[node name="ParentDeltaLegendLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Legend: blue below parent | green aligned | red above parent"
+autowrap_mode = 3
+modulate = Color(0.72, 0.72, 0.72, 1)
+visible = false
+
+[node name="PipelineRow" type="HBoxContainer" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+theme_override_constants/separation = 6
+
+[node name="RunPipelineBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox/PipelineRow"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+text = "Run Pipeline Check"
+
+[node name="PipelineSeedCountInput" type="SpinBox" parent="UI/UIRoot/LeftPanel/Margin/VBox/PipelineRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(72, 0)
+min_value = 1.0
+max_value = 24.0
+step = 1.0
+value = 4.0
+
+[node name="PipelineStatusLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Pipeline: not run"
+autowrap_mode = 3
+modulate = Color(0.75, 0.75, 0.75, 1)
+
+[node name="SepHistory" type="HSeparator" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+
+[node name="HistoryLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+text = "History Playback"
+modulate = Color(0.75, 0.75, 0.75, 1)
+
+[node name="HistoryConfigRow" type="HBoxContainer" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+theme_override_constants/separation = 6
+
+[node name="HistoryEnabledToggle" type="CheckButton" parent="UI/UIRoot/LeftPanel/Margin/VBox/HistoryConfigRow"]
+unique_name_in_owner = true
+button_pressed = true
+text = "Enable"
+
+[node name="HistoryYearsLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox/HistoryConfigRow"]
+text = "Years"
+modulate = Color(0.75, 0.75, 0.75, 1)
+
+[node name="HistoryYearsInput" type="SpinBox" parent="UI/UIRoot/LeftPanel/Margin/VBox/HistoryConfigRow"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 2000.0
+step = 1.0
+value = 125.0
+
+[node name="HistoryYearLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Year: 0/0"
+
+[node name="HistoryYearSlider" type="HSlider" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+min_value = 0.0
+max_value = 0.0
+step = 1.0
+
+[node name="HistoryButtons" type="HBoxContainer" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+theme_override_constants/separation = 6
+
+[node name="HistoryStepBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox/HistoryButtons"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+text = "Step +1"
+
+[node name="HistoryPlayBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox/HistoryButtons"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+text = "Play"
+
+[node name="HistoryResetBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox/HistoryButtons"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+text = "Reset"
+
+[node name="ZLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Z Layer: 0"
+visible = false
+
+[node name="ZSlider" type="HSlider" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+min_value = 0.0
+max_value = 7.0
+step = 1.0
+visible = false
+
+[node name="Spacer" type="Control" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+size_flags_vertical = 3
+
+[node name="BackBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "<- Main Menu"
+
+[node name="RightPanel" type="PanelContainer" parent="UI/UIRoot"]
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+
+[node name="Margin" type="MarginContainer" parent="UI/UIRoot/RightPanel"]
+theme_override_constants/margin_left = 6
+theme_override_constants/margin_right = 6
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_bottom = 6
+
+[node name="RightContent" type="VBoxContainer" parent="UI/UIRoot/RightPanel/Margin"]
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="Scroll" type="ScrollContainer" parent="UI/UIRoot/RightPanel/Margin/RightContent"]
+size_flags_vertical = 3
+
+[node name="StatsBox" type="VBoxContainer" parent="UI/UIRoot/RightPanel/Margin/RightContent/Scroll"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+theme_override_constants/separation = 3
+
+[node name="HistoryFeedPanel" type="PanelContainer" parent="UI/UIRoot/RightPanel/Margin/RightContent"]
+custom_minimum_size = Vector2(0, 240)
+size_flags_vertical = 3
+
+[node name="HistoryFeedMargin" type="MarginContainer" parent="UI/UIRoot/RightPanel/Margin/RightContent/HistoryFeedPanel"]
+theme_override_constants/margin_left = 6
+theme_override_constants/margin_right = 6
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_bottom = 6
+
+[node name="HistoryFeedVBox" type="VBoxContainer" parent="UI/UIRoot/RightPanel/Margin/RightContent/HistoryFeedPanel/HistoryFeedMargin"]
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+
+[node name="HistoryFeedLabel" type="Label" parent="UI/UIRoot/RightPanel/Margin/RightContent/HistoryFeedPanel/HistoryFeedMargin/HistoryFeedVBox"]
+text = "History Feed"
+modulate = Color(0.75, 0.75, 0.75, 1)
+
+[node name="HistoryFeedText" type="RichTextLabel" parent="UI/UIRoot/RightPanel/Margin/RightContent/HistoryFeedPanel/HistoryFeedMargin/HistoryFeedVBox"]
+unique_name_in_owner = true
+size_flags_vertical = 3
+scroll_active = true
+autowrap_mode = 3
+text = "History timeline is generated year by year.\nPress Step +1 or Play to advance."
+
+[node name="InfoBar" type="PanelContainer" parent="UI/UIRoot"]
+anchor_right = 1.0
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -32.0
+offset_left = 270.0
+offset_right = -300.0
+
+[node name="InfoLabel" type="Label" parent="UI/UIRoot/InfoBar"]
+unique_name_in_owner = true
+anchor_right = 1.0
+anchor_bottom = 1.0
+horizontal_alignment = 1
+vertical_alignment = 1
+text = "Generating..."

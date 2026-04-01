@@ -1,0 +1,39 @@
+name: Depth Gate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  worldgen-depth-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore WorldGen CLI
+        run: dotnet restore src/DwarfFortress.WorldGen.Cli/DwarfFortress.WorldGen.Cli.csproj
+
+      - name: Restore WorldGen Tests
+        run: dotnet restore src/DwarfFortress.WorldGen.Tests/DwarfFortress.WorldGen.Tests.csproj
+
+      - name: Restore GameLogic Tests
+        run: dotnet restore src/DwarfFortress.Tests/DwarfFortress.Tests.csproj
+
+      - name: Run WorldGen Tests
+        run: dotnet test src/DwarfFortress.WorldGen.Tests/DwarfFortress.WorldGen.Tests.csproj --configuration Release --no-restore --nologo
+
+      - name: Run GameLogic Tests
+        run: dotnet test src/DwarfFortress.Tests/DwarfFortress.Tests.csproj --configuration Release --no-restore --nologo
+
+      - name: Enforce Depth Budgets
+        run: dotnet run --project src/DwarfFortress.WorldGen.Cli --configuration Release -- analyze-depth --seed-count 100 --enforce-budgets --compact

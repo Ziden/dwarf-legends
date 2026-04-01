@@ -1,0 +1,51 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/ActionBar.cs" id="1"]
+
+[node name="ActionBar" type="PanelContainer"]
+script = ExtResource("1")
+
+[node name="Margin" type="MarginContainer" parent="."]
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_top = 5
+theme_override_constants/margin_bottom = 5
+
+[node name="HBox" type="HBoxContainer" parent="Margin"]
+theme_override_constants/separation = 6
+
+[node name="ClearBtn" type="Button" parent="Margin/HBox"]
+unique_name_in_owner = true
+text = "Clear"
+
+[node name="CancelBtn" type="Button" parent="Margin/HBox"]
+unique_name_in_owner = true
+text = "Cancel"
+
+[node name="ZoneBtn" type="Button" parent="Margin/HBox"]
+unique_name_in_owner = true
+text = "Zone"
+
+[node name="BuildBtn" type="Button" parent="Margin/HBox"]
+unique_name_in_owner = true
+text = "Build"
+
+[node name="KnowledgeBtn" type="Button" parent="Margin/HBox"]
+unique_name_in_owner = true
+text = "Knowledge"
+
+[node name="Sep1" type="VSeparator" parent="Margin/HBox"]
+
+[node name="Spacer" type="Control" parent="Margin/HBox"]
+size_flags_horizontal = 3
+
+[node name="PauseBtn" type="Button" parent="Margin/HBox"]
+unique_name_in_owner = true
+text = "Pause"
+toggle_mode = true
+
+[node name="Sep2" type="VSeparator" parent="Margin/HBox"]
+
+[node name="HintsLabel" type="Label" parent="Margin/HBox"]
+text = "Space : pause  |  Q / E : change Z  |  Arrows : pan  |  Scroll : zoom"
+horizontal_alignment = 2

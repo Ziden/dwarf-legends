@@ -1,0 +1,82 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Scripts/UI/WorkshopPanel.cs" id="1"]
+[ext_resource type="Script" path="res://Scripts/UI/ItemSelectionList.cs" id="2"]
+
+[node name="WorkshopPanel" type="PanelContainer"]
+custom_minimum_size = Vector2(720, 0)
+script = ExtResource("1")
+
+[node name="Margin" type="MarginContainer" parent="."]
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+theme_override_constants/separation = 6
+
+[node name="TitleLabel" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+text = "Workshop"
+theme_override_font_sizes/font_size = 24
+
+[node name="Sep1" type="HSeparator" parent="Margin/VBox"]
+
+[node name="QueueHeader" type="HBoxContainer" parent="Margin/VBox"]
+theme_override_constants/separation = 8
+
+[node name="QueueHeading" type="Label" parent="Margin/VBox/QueueHeader"]
+text = "Work Orders"
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+
+[node name="ClearQueueBtn" type="Button" parent="Margin/VBox/QueueHeader"]
+unique_name_in_owner = true
+text = "Clear All"
+disabled = true
+custom_minimum_size = Vector2(96, 30)
+
+[node name="StorageStatusLabel" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+text = "Workshop storage: empty"
+modulate = Color(0.78, 0.78, 0.78, 1)
+
+[node name="QueueStatusLabel" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+text = "No work orders queued."
+modulate = Color(0.78, 0.78, 0.78, 1)
+
+[node name="QueueBox" type="VBoxContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+theme_override_constants/separation = 2
+
+[node name="Sep2" type="HSeparator" parent="Margin/VBox"]
+
+[node name="InventoryHeading" type="Label" parent="Margin/VBox"]
+text = "Workshop Inventory"
+theme_override_font_sizes/font_size = 16
+
+[node name="InventoryList" type="ScrollContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+script = ExtResource("2")
+custom_minimum_size = Vector2(0, 200)
+size_flags_vertical = 3
+
+[node name="Content" type="VBoxContainer" parent="Margin/VBox/InventoryList"]
+theme_override_constants/separation = 6
+
+[node name="Sep3" type="HSeparator" parent="Margin/VBox"]
+
+[node name="RecipesHeading" type="Label" parent="Margin/VBox"]
+text = "Craftable Items"
+theme_override_font_sizes/font_size = 16
+
+[node name="RecipeList" type="ScrollContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+script = ExtResource("2")
+custom_minimum_size = Vector2(0, 300)
+size_flags_vertical = 3
+
+[node name="Content" type="VBoxContainer" parent="Margin/VBox/RecipeList"]
+theme_override_constants/separation = 6

@@ -1,0 +1,8 @@
+[
+  { "id": "log",       "displayName": "Woodworking",   "description": "Trees can be cut into logs, which can be crafted into planks and used to build workshops.", "category": "material" },
+  { "id": "plank",     "displayName": "Carpentry",     "description": "Planks are crafted from logs at a Carpenter Workshop and used to make furniture and containers.", "category": "material" },
+  { "id": "stone",     "displayName": "Masonry",       "description": "Stone is mined from rock walls and used to build workshops and construct buildings.", "category": "material" },
+  { "id": "iron_ore",  "displayName": "Smelting",      "description": "Ore can be smelted into metal bars at a Smelter.", "category": "material" },
+  { "id": "bucket",    "displayName": "Container Making", "description": "Buckets and barrels are crafted from planks and needed to build some workshops.", "category": "material" },
+  { "id": "barrel",    "displayName": "Cooperage",     "description": "Barrels are crafted from planks and used to store liquids and build workshops.", "category": "material" }
+]

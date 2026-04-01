@@ -1,0 +1,25 @@
+<Project Sdk="Godot.NET.Sdk/4.6.1">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>DwarfFortress.GodotClient</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DwarfFortress.GameLogic\DwarfFortress.GameLogic.csproj" />
+    <ProjectReference Include="..\DwarfFortress.WorldGen\DwarfFortress.WorldGen.csproj" />
+  </ItemGroup>
+
+  <!-- Sprite map JSONs live at repo-root sprites/.
+       Copy them into Graphics/sprites/ so Godot can access them via res://. -->
+  <Target Name="CopySpriteJsons" BeforeTargets="Build">
+    <ItemGroup>
+      <_SpriteJson Include="..\..\sprites\*.json" />
+    </ItemGroup>
+    <MakeDir Directories="Graphics\sprites" />
+    <Copy SourceFiles="@(_SpriteJson)" DestinationFolder="Graphics\sprites" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

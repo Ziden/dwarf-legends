@@ -1,0 +1,91 @@
+[
+	{
+		"id": "carpenter_workshop",
+		"displayName": "Carpenter Workshop",
+		"tags": ["workshop", "wooden", "crafting"],
+		"footprint": [
+			{ "x": 0, "y": 0, "tile": "wood_floor" },
+			{ "x": 1, "y": 0, "tile": "wood_floor" },
+			{ "x": 0, "y": 1, "tile": "wood_floor" },
+			{ "x": 1, "y": 1, "tile": "wood_floor" }
+		],
+		"constructionInputs": [{ "tags": ["log"], "qty": 1 }],
+		"constructionTime": 10.0,
+		"isWorkshop": true
+	},
+	{
+		"id": "smelter",
+		"displayName": "Smelter",
+		"tags": ["workshop", "stone", "smelting"],
+		"footprint": [
+			{ "x": 0, "y": 0, "tile": "stone_brick_floor" },
+			{ "x": 1, "y": 0, "tile": "stone_brick_floor" },
+			{ "x": 0, "y": 1, "tile": "stone_brick_floor" },
+			{ "x": 1, "y": 1, "tile": "stone_brick_floor" }
+		],
+		"constructionInputs": [{ "tags": ["stone"], "qty": 3 }],
+		"constructionTime": 12.0,
+		"isWorkshop": true
+	},
+	{
+		"id": "kitchen",
+		"displayName": "Kitchen",
+		"tags": ["workshop", "stone", "cooking"],
+		"footprint": [
+			{ "x": 0, "y": 0, "tile": "stone_floor" },
+			{ "x": 1, "y": 0, "tile": "stone_floor" },
+			{ "x": 0, "y": 1, "tile": "stone_floor" },
+			{ "x": 1, "y": 1, "tile": "stone_floor" }
+		],
+		"constructionInputs": [{ "tags": ["stone"], "qty": 2 }, { "tags": ["bucket"], "qty": 1 }],
+		"constructionTime": 8.0,
+		"isWorkshop": true
+	},
+	{
+		"id": "still",
+		"displayName": "Still",
+		"tags": ["workshop", "stone", "brewing"],
+		"footprint": [
+			{ "x": 0, "y": 0, "tile": "stone_floor" },
+			{ "x": 1, "y": 0, "tile": "stone_floor" },
+			{ "x": 0, "y": 1, "tile": "stone_floor" },
+			{ "x": 1, "y": 1, "tile": "stone_floor" }
+		],
+		"constructionInputs": [{ "tags": ["stone"], "qty": 2 }, { "tags": ["barrel"], "qty": 1 }],
+		"constructionTime": 8.0,
+		"isWorkshop": true
+	},
+	{
+		"id": "bed",
+		"displayName": "Bed",
+		"tags": ["furniture", "wooden", "sleep"],
+		"footprint": [
+			{ "x": 0, "y": 0, "tile": "wood_floor" }
+		],
+		"constructionInputs": [{ "tags": ["bed"], "qty": 1 }],
+		"constructionTime": 2.0,
+		"isWorkshop": false
+	},
+	{
+		"id": "table",
+		"displayName": "Table",
+		"tags": ["furniture", "wooden", "dining", "table"],
+		"footprint": [
+			{ "x": 0, "y": 0, "tile": "wood_floor" }
+		],
+		"constructionInputs": [{ "tags": ["table"], "qty": 1 }],
+		"constructionTime": 2.0,
+		"isWorkshop": false
+	},
+	{
+		"id": "chair",
+		"displayName": "Chair",
+		"tags": ["furniture", "wooden", "dining", "chair"],
+		"footprint": [
+			{ "x": 0, "y": 0, "tile": "wood_floor" }
+		],
+		"constructionInputs": [{ "tags": ["chair"], "qty": 1 }],
+		"constructionTime": 2.0,
+		"isWorkshop": false
+	}
+]

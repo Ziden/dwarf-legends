@@ -1,0 +1,25 @@
+# .NET
+bin/
+obj/
+TestResults/
+*.user
+*.rsuser
+*.suo
+
+# Godot
+.godot/
+.mono/
+export_presets.cfg
+
+# IDE
+.vs/
+
+# Generated artifacts
+artifacts/buildbin*/
+artifacts/testbin*/
+artifacts/testobj/
+artifacts/testout/
+
+# OS
+.DS_Store
+Thumbs.db

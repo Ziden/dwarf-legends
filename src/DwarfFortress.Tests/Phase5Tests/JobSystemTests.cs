@@ -1,0 +1,225 @@
+using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Entities;
+using DwarfFortress.GameLogic.Entities.Components;
+using DwarfFortress.GameLogic.Jobs;
+using DwarfFortress.GameLogic.Jobs.Strategies;
+using DwarfFortress.GameLogic.World;
+using DwarfFortress.GameLogic.Tests;
+using Xunit;
+
+namespace DwarfFortress.GameLogic.Tests.Phase5Tests;
+
+public sealed class JobSystemTests
+{
+    private static (JobSystem js, EntityRegistry er, WorldMap wm, GameSimulation sim) CreateSim()
+    {
+        var logger = new Fakes.TestLogger();
+        var ds     = new Fakes.InMemoryDataSource();
+        TestFixtures.AddCoreData(ds);
+        var er = new EntityRegistry();
+        var js = new JobSystem();
+        var wm = new WorldMap();
+        var sim = TestFixtures.CreateSimulation(logger, ds, er, js, wm);
+        wm.SetDimensions(16, 16, 4);
+        return (js, er, wm, sim);
+    }
+
+    [Fact]
+    public void CreateJob_Returns_Job_With_Pending_Status()
+    {
+        var (js, _, _, _) = CreateSim();
+
+        var job = js.CreateJob(JobDefIds.MineTile, new Vec3i(5, 5, 0));
+
+        Assert.Equal(JobStatus.Pending, job.Status);
+    }
+
+    [Fact]
+    public void CreateJob_Returns_Job_With_Correct_DefId()
+    {
+        var (js, _, _, _) = CreateSim();
+
+        var job = js.CreateJob(JobDefIds.HaulItem, new Vec3i(0, 0, 0));
+
+        Assert.Equal(JobDefIds.HaulItem, job.JobDefId);
+    }
+
+    [Fact]
+    public void CreateJob_Emits_JobCreatedEvent()
+    {
+        var (js, _, _, sim) = CreateSim();
+        string? createdDefId = null;
+        sim.Context.EventBus.On<JobCreatedEvent>(e => createdDefId = e.JobDefId);
+
+        js.CreateJob(JobDefIds.MineTile, new Vec3i(0, 0, 0));
+
+        Assert.Equal(JobDefIds.MineTile, createdDefId);
+    }
+
+    [Fact]
+    public void GetPendingJobs_Contains_New_Jobs()
+    {
+        var (js, _, _, _) = CreateSim();
+
+        js.CreateJob(JobDefIds.MineTile, new Vec3i(0, 0, 0));
+        js.CreateJob(JobDefIds.CutTree,  new Vec3i(1, 0, 0));
+
+        Assert.Equal(2, js.GetPendingJobs().Count());
+    }
+
+    [Fact]
+    public void CancelJob_Removes_Job_From_AllJobs()
+    {
+        var (js, _, _, _) = CreateSim();
+        var job = js.CreateJob(JobDefIds.MineTile, new Vec3i(0, 0, 0));
+
+        js.CancelJob(job.Id);
+
+        Assert.Null(js.GetJob(job.Id));
+    }
+
+    [Fact]
+    public void CancelJob_Emits_JobCancelledEvent()
+    {
+        var (js, _, _, sim) = CreateSim();
+        int? cancelledId = null;
+        sim.Context.EventBus.On<JobCancelledEvent>(e => cancelledId = e.JobId);
+        var job = js.CreateJob(JobDefIds.MineTile, new Vec3i(0, 0, 0));
+
+        js.CancelJob(job.Id);
+
+        Assert.Equal(job.Id, cancelledId);
+    }
+
+    [Fact]
+    public void GetJob_Returns_Null_For_Unknown_Id()
+    {
+        var (js, _, _, _) = CreateSim();
+
+        Assert.Null(js.GetJob(99999));
+    }
+
+    [Fact]
+    public void DesignateMineCommand_Creates_MineTile_Jobs_For_Designated_Tiles()
+    {
+        var (js, _, wm, sim) = CreateSim();
+
+        // Tiles must be solid walls; the command sets IsDesignated and creates jobs
+        var pos1 = new Vec3i(3, 3, 0);
+        var pos2 = new Vec3i(4, 3, 0);
+        wm.SetTile(pos1, new TileData { TileDefId = TileDefIds.GraniteWall });
+        wm.SetTile(pos2, new TileData { TileDefId = TileDefIds.GraniteWall });
+
+        sim.Context.Commands.Dispatch(new DesignateMineCommand(pos1, pos2));
+
+        var pending = js.GetPendingJobs().ToList();
+        Assert.Equal(2, pending.Count);
+        Assert.All(pending, j => Assert.Equal(JobDefIds.MineTile, j.JobDefId));
+    }
+
+    [Fact]
+    public void DesignateMineCommand_Does_Not_Create_Mine_Jobs_For_Trees()
+    {
+        var (js, _, wm, sim) = CreateSim();
+
+        var pos = new Vec3i(3, 3, 0);
+        wm.SetTile(pos, new TileData { TileDefId = TileDefIds.Tree, MaterialId = "wood", IsPassable = false });
+
+        sim.Context.Commands.Dispatch(new DesignateMineCommand(pos, pos));
+
+        Assert.DoesNotContain(js.GetPendingJobs(), j => j.JobDefId == JobDefIds.MineTile && j.TargetPos == pos);
+        Assert.False(wm.GetTile(pos).IsDesignated);
+    }
+
+    [Fact]
+    public void DesignateMineCommand_Does_Not_Create_Mine_Jobs_For_Hidden_Walls()
+    {
+        var (js, _, wm, sim) = CreateSim();
+        var target = new Vec3i(6, 6, 0);
+
+        wm.SetTile(target, new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+        wm.SetTile(target + Vec3i.North, new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+        wm.SetTile(target + Vec3i.South, new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+        wm.SetTile(target + Vec3i.East, new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+        wm.SetTile(target + Vec3i.West, new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+
+        sim.Context.Commands.Dispatch(new DesignateMineCommand(target, target));
+
+        Assert.DoesNotContain(js.GetPendingJobs(), j => j.JobDefId == JobDefIds.MineTile && j.TargetPos == target);
+        Assert.False(wm.GetTile(target).IsDesignated);
+    }
+
+    [Fact]
+    public void DesignateMineCommand_Allows_Chain_From_Exposed_Wall_Through_Designation()
+    {
+        var (js, _, wm, sim) = CreateSim();
+        var start = new Vec3i(3, 4, 0);
+        var end = new Vec3i(5, 4, 0);
+
+        wm.SetTile(new Vec3i(2, 4, 0), new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = "granite",
+            IsPassable = true,
+        });
+        wm.SetTile(start, new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+        wm.SetTile(new Vec3i(4, 4, 0), new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+        wm.SetTile(end, new TileData { TileDefId = TileDefIds.GraniteWall, IsPassable = false });
+
+        sim.Context.Commands.Dispatch(new DesignateMineCommand(start, end));
+
+        var targets = js.GetPendingJobs()
+            .Where(j => j.JobDefId == JobDefIds.MineTile)
+            .Select(j => j.TargetPos)
+            .ToHashSet();
+
+        Assert.Contains(start, targets);
+        Assert.Contains(new Vec3i(4, 4, 0), targets);
+        Assert.Contains(end, targets);
+    }
+
+    [Fact]
+    public void Jobs_Are_Assigned_Unique_Ids()
+    {
+        var (js, _, _, _) = CreateSim();
+
+        var job1 = js.CreateJob(JobDefIds.MineTile, new Vec3i(0, 0, 0));
+        var job2 = js.CreateJob(JobDefIds.MineTile, new Vec3i(1, 0, 0));
+
+        Assert.NotEqual(job1.Id, job2.Id);
+    }
+
+    [Fact]
+    public void CutTree_Jobs_Fall_Back_To_Any_Idle_Dwarf_When_No_Woodcutter_Is_Idle()
+    {
+        var (js, er, wm, sim) = CreateSim();
+        js.RegisterStrategy(new CutTreeStrategy());
+
+        var treePos = new Vec3i(5, 5, 0);
+        wm.SetTile(treePos, new TileData
+        {
+            TileDefId = TileDefIds.Tree,
+            MaterialId = "wood",
+            TreeSpeciesId = "oak",
+            IsPassable = false,
+        });
+        wm.SetTile(treePos + Vec3i.South, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = "granite",
+            IsPassable = true,
+        });
+
+        var dwarf = new Dwarf(er.NextId(), "Idler", treePos + new Vec3i(-2, 0, 0));
+        dwarf.Labors.DisableAll();
+        dwarf.Labors.Enable(LaborIds.Hauling);
+        er.Register(dwarf);
+
+        sim.Context.Commands.Dispatch(new DesignateCutTreesCommand(treePos, treePos));
+        js.Tick(0.1f);
+
+        var job = Assert.Single(js.GetAllJobs().Where(j => j.JobDefId == JobDefIds.CutTree));
+        Assert.Equal(JobStatus.InProgress, job.Status);
+        Assert.Equal(dwarf.Id, job.AssignedDwarfId);
+    }
+}

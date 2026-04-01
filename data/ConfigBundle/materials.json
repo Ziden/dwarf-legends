@@ -1,0 +1,21 @@
+[
+  { "id": "granite",    "displayName": "Granite",    "tags": ["stone", "hard"], "hardness": 8.0 },
+  { "id": "limestone",  "displayName": "Limestone",  "tags": ["stone"],         "hardness": 5.0 },
+  { "id": "sandstone",  "displayName": "Sandstone",  "tags": ["stone"],         "hardness": 3.0 },
+  { "id": "basalt",     "displayName": "Basalt",     "tags": ["stone", "hard"], "hardness": 7.5 },
+  { "id": "shale",      "displayName": "Shale",      "tags": ["stone"],         "hardness": 3.5 },
+  { "id": "slate",      "displayName": "Slate",      "tags": ["stone"],         "hardness": 4.8 },
+  { "id": "marble",     "displayName": "Marble",     "tags": ["stone"],         "hardness": 5.3 },
+  { "id": "soil",       "displayName": "Soil",       "tags": ["dirt"],          "hardness": 0.3 },
+  { "id": "sand",       "displayName": "Sand",       "tags": ["dirt"],          "hardness": 0.1 },
+  { "id": "iron",       "displayName": "Iron",       "tags": ["metal"],         "hardness": 7.0 },
+  { "id": "copper",     "displayName": "Copper",     "tags": ["metal"],         "hardness": 5.0 },
+  { "id": "tin",        "displayName": "Tin",        "tags": ["metal"],         "hardness": 3.0 },
+  { "id": "silver",     "displayName": "Silver",     "tags": ["metal"],         "hardness": 2.5 },
+  { "id": "gold",       "displayName": "Gold",       "tags": ["metal"],         "hardness": 2.0 },
+  { "id": "wood",       "displayName": "Wood",       "tags": ["organic"],       "hardness": 2.0 },
+  { "id": "food",       "displayName": "Food",       "tags": ["organic"],       "hardness": 0.1 },
+  { "id": "drink",      "displayName": "Drink",      "tags": ["liquid"],        "hardness": 0.1 },
+  { "id": "mud",        "displayName": "Mud",        "tags": ["liquid", "dirt"],"hardness": 0.1 },
+  { "id": "blood",      "displayName": "Blood",      "tags": ["liquid", "organic"], "hardness": 0.1 }
+]

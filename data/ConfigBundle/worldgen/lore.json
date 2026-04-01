@@ -1,0 +1,203 @@
+{
+  "biomes": [
+    "temperate_plains",
+    "conifer_forest",
+    "highland",
+    "misty_marsh",
+    "windswept_steppe"
+  ],
+  "nameLeft": [
+    "Ash",
+    "Stone",
+    "Iron",
+    "Copper",
+    "River",
+    "Moss",
+    "Cold",
+    "Oak",
+    "Rime",
+    "Star",
+    "Black",
+    "Silver",
+    "Red",
+    "Deep",
+    "Green"
+  ],
+  "nameRight": [
+    "vale",
+    "reach",
+    "march",
+    "hollow",
+    "heights",
+    "fen",
+    "ford",
+    "ridge",
+    "field",
+    "basin",
+    "expanse",
+    "frontier",
+    "wilds",
+    "downs",
+    "depths"
+  ],
+  "mottoFragments": [
+    "from stone, strength",
+    "trade binds the valleys",
+    "honor above hunger",
+    "fear is a sharpened blade",
+    "memory outlives steel",
+    "all debts are remembered"
+  ],
+  "siteKinds": [
+    {
+      "id": "fortress",
+      "ownerRule": "trade_focused",
+      "summary": "A fortified settlement controlling nearby routes."
+    },
+    {
+      "id": "hamlet",
+      "ownerRule": "trade_focused",
+      "summary": "A small settlement surviving through local trade."
+    },
+    {
+      "id": "ruin",
+      "ownerRule": "random",
+      "summary": "A collapsed site where old records are still recoverable."
+    },
+    {
+      "id": "shrine",
+      "ownerRule": "trade_focused",
+      "summary": "A sacred place tied to old oaths and taboos."
+    },
+    {
+      "id": "cave",
+      "ownerRule": "hostile",
+      "summary": "A dangerous site whose tunnels are only partly mapped."
+    },
+    {
+      "id": "watchtower",
+      "ownerRule": "trade_focused",
+      "summary": "A military outpost surveying the frontier."
+    }
+  ],
+  "factionTemplates": [
+    {
+      "id": "faction_dwarven_hold",
+      "namePattern": "{left}hold Compact",
+      "isHostile": false,
+      "primaryUnitDefId": "dwarf",
+      "influenceMin": 0.65,
+      "influenceMax": 0.65,
+      "militarismMin": 0.45,
+      "militarismMax": 0.65,
+      "tradeFocusMin": 0.55,
+      "tradeFocusMax": 0.85,
+      "spawnChance": 1.0
+    },
+    {
+      "id": "faction_goblin_clan",
+      "namePattern": "Black Banner of {left}",
+      "isHostile": true,
+      "primaryUnitDefId": "goblin",
+      "alternatePrimaryUnitDefId": "troll",
+      "alternatePrimaryChance": 0.2,
+      "influenceMin": 0.45,
+      "influenceMax": 0.75,
+      "militarismMin": 0.65,
+      "militarismMax": 0.95,
+      "tradeFocusMin": 0.1,
+      "tradeFocusMax": 0.25,
+      "spawnChance": 1.0
+    },
+    {
+      "id": "faction_lowland_league",
+      "namePattern": "{left} Valley League",
+      "isHostile": false,
+      "primaryUnitDefId": "dwarf",
+      "influenceMin": 0.35,
+      "influenceMax": 0.6,
+      "militarismMin": 0.25,
+      "militarismMax": 0.45,
+      "tradeFocusMin": 0.55,
+      "tradeFocusMax": 0.9,
+      "spawnChance": 1.0
+    },
+    {
+      "id": "faction_ashen_host",
+      "namePattern": "Ashen Host of {left}",
+      "isHostile": true,
+      "primaryUnitDefId": "goblin",
+      "influenceMin": 0.2,
+      "influenceMax": 0.45,
+      "militarismMin": 0.7,
+      "militarismMax": 0.9,
+      "tradeFocusMin": 0.05,
+      "tradeFocusMax": 0.2,
+      "spawnChance": 0.45
+    }
+  ],
+  "history": {
+    "simulatedYearsMin": 120,
+    "simulatedYearsMax": 260,
+    "eventsPerYearMin": 1,
+    "eventsPerYearMax": 2,
+    "baseThreatMin": 0.32,
+    "baseThreatMax": 0.47,
+    "baseProsperityMin": 0.36,
+    "baseProsperityMax": 0.58,
+    "eventWeightTreaty": 0.22,
+    "eventWeightRaid": 0.25,
+    "eventWeightFounding": 0.19,
+    "eventWeightSkirmish": 0.17,
+    "eventWeightCrisis": 0.17,
+    "treatyProsperityDelta": 0.02,
+    "treatyThreatDelta": -0.01,
+    "raidThreatDelta": 0.035,
+    "raidProsperityDelta": -0.015,
+    "foundingProsperityDelta": 0.012,
+    "skirmishThreatDelta": 0.02,
+    "skirmishProsperityDelta": -0.008,
+    "crisisThreatDelta": 0.012,
+    "crisisProsperityDelta": -0.01,
+    "threatPerConflictYear": 0.0025,
+    "prosperityPerTradeYear": 0.002
+  },
+  "relations": {
+    "initialFriendlyMin": 0.05,
+    "initialFriendlyMax": 0.45,
+    "initialHostileMin": -0.75,
+    "initialHostileMax": -0.25,
+    "initialMutualHostileMin": -0.45,
+    "initialMutualHostileMax": 0.15,
+    "treatyDelta": 0.22,
+    "skirmishDelta": -0.2,
+    "raidDelta": -0.28,
+    "allyThreshold": 0.35,
+    "hostileThreshold": -0.35
+  },
+  "siteEvolution": {
+    "initialDevelopmentMin": 0.35,
+    "initialDevelopmentMax": 0.65,
+    "initialSecurityMin": 0.3,
+    "initialSecurityMax": 0.65,
+    "developmentDriftPerYear": 0.015,
+    "securityDriftPerYear": 0.012,
+    "developmentNoisePerYear": 0.01,
+    "securityNoisePerYear": 0.01,
+    "growthFromProsperityWeight": 0.45,
+    "growthFromTradeWeight": 0.2,
+    "growthFromInfluenceWeight": 0.15,
+    "growthFromThreatWeight": -0.3,
+    "growthFromHostilePressureWeight": -0.2,
+    "securityFromMilitarismWeight": 0.25,
+    "securityFromProsperityWeight": 0.1,
+    "securityFromThreatWeight": -0.12,
+    "securityFromHostilePressureWeight": -0.15,
+    "growingThreshold": 0.12,
+    "decliningThreshold": -0.12,
+    "fortifiedDevelopmentThreshold": 0.72,
+    "fortifiedSecurityThreshold": 0.55,
+    "ruinedDevelopmentThreshold": 0.2,
+    "ruinedSecurityThreshold": 0.25
+  }
+}

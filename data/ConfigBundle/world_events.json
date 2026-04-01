@@ -1,0 +1,20 @@
+[
+  {
+    "id": "migrant_wave",
+    "displayName": "Migrant Wave",
+    "triggers": [{ "type": "season_change", "params": {} }],
+    "effects":  [{ "op": "spawn_migrants", "params": { "count": "3" } }],
+    "probability": 0.5,
+    "cooldown": 90,
+    "repeatable": true
+  },
+  {
+    "id": "goblin_raid",
+    "displayName": "Goblin Raid",
+    "triggers": [{ "type": "season_change", "params": {} }],
+    "effects":  [{ "op": "spawn_hostiles", "params": { "creature": "goblin", "count": "2" } }],
+    "probability": 0.3,
+    "cooldown": 300,
+    "repeatable": true
+  }
+]

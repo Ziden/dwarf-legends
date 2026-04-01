@@ -1,0 +1,104 @@
+{
+  "category": "tile",
+  "sheet": "res://Graphics/art/Meph_32x32.png",
+  "_sheets_available": [
+    "res://Graphics/art/Meph_Map_32x32.png",
+    "res://Graphics/art/Meph_Map_24x24.png",
+    "res://Graphics/art/Meph_Map_16x16.png",
+    "res://Graphics/art/Meph_32x32.png",
+    "res://Graphics/art/Meph_32x32_alt.png",
+    "res://Graphics/art/_Meph_variety.png",
+    "res://Graphics/art/_Meph_plants.png",
+    "res://Graphics/art/_Meph_trees.png",
+    "res://Graphics/art/_Meph_constructions.png",
+    "res://Graphics/art/_Meph_furniture.png",
+    "res://Graphics/art/_Meph_Furniture_Alternates.png",
+    "res://Graphics/art/_Meph_workshops.png",
+    "res://Graphics/art/_Meph_extra_decorations.png",
+    "res://Graphics/art/_Meph_extra_decorations_2.png",
+    "res://Graphics/art/_Meph_decorations.png",
+    "res://Graphics/art/_Meph_decorations_2.png",
+    "res://Graphics/art/_Meph_decorations_3.png"
+  ],
+  "tile_w": 32,
+  "tile_h": 32,
+  "entries": [
+    {
+      "id": "soil",
+      "col": 7,
+      "row": 11
+    },
+    {
+      "id": "stone_floor",
+      "col": 9,
+      "row": 11
+    },
+    {
+      "id": "granite_wall",
+      "col": 1,
+      "row": 15
+    },
+    {
+      "id": "limestone_wall",
+      "col": 11,
+      "row": 13
+    },
+    {
+      "id": "sandstone_wall",
+      "col": 1,
+      "row": 4
+    },
+    {
+      "id": "soil_wall",
+      "col": 0,
+      "row": 7
+    },
+    {
+      "id": "wood_floor",
+      "col": 13,
+      "row": 2,
+      "sheet": "res://Graphics/art/_Meph_furniture.png"
+    },
+    {
+      "id": "stone_brick_floor",
+      "col": 0,
+      "row": 12,
+      "sheet": "res://Graphics/art/_Meph_decorations_3.png"
+    },
+    {
+      "id": "obsidian_floor",
+      "col": 0,
+      "row": 2
+    },
+    {
+      "id": "ramp",
+      "col": 13,
+      "row": 6,
+      "sheet": "res://Graphics/art/_Meph_constructions.png"
+    },
+    {
+      "id": "staircase",
+      "col": 13,
+      "row": 0,
+      "sheet": "res://Graphics/art/_Meph_constructions.png"
+    },
+    {
+      "id": "water_tile",
+      "col": 6,
+      "row": 14,
+      "sheet": "res://Graphics/art/_Meph_decorations_2.png"
+    },
+    {
+      "id": "magma_tile",
+      "col": 1,
+      "row": 4,
+      "sheet": "res://Graphics/art/_Meph_alternate.png"
+    },
+    {
+      "id": "tree",
+      "col": 1,
+      "row": 2,
+      "sheet": "res://Graphics/art/_Meph_trees.png"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "_comment": "Emote sprite mappings for entity status bubbles.",
+  "_howto": "Each emote is drawn procedurally. No external sprites needed.",
+  "category": "emote",
+  "entries": [
+    { "id": "sleep", "symbol": "Z", "color": [0.6, 0.7, 1.0], "description": "Sleeping - Zzz" },
+    { "id": "fear", "symbol": "!", "color": [1.0, 0.3, 0.2], "description": "Fear/Scared" },
+    { "id": "hungry", "symbol": "~", "color": [1.0, 0.7, 0.2], "description": "Hungry" },
+    { "id": "happy", "symbol": "+", "color": [0.3, 1.0, 0.3], "description": "Happy" },
+    { "id": "angry", "symbol": ">", "color": [1.0, 0.2, 0.2], "description": "Angry" },
+    { "id": "sad", "symbol": "-", "color": [0.4, 0.5, 0.8], "description": "Sad/Groggy" },
+    { "id": "eat", "symbol": "*", "color": [0.9, 0.6, 0.3], "description": "Eating" },
+    { "id": "drink", "symbol": ".", "color": [0.3, 0.6, 1.0], "description": "Drinking" }
+  ]
+}

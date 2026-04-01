@@ -1,0 +1,28 @@
+namespace DwarfFortress.WorldGen.Analysis;
+
+public sealed record LoreMetrics(
+    string BiomeId,
+    int SimulatedYears,
+    int FactionCount,
+    int HostileFactionCount,
+    int RelationCount,
+    int AlliedRelationCount,
+    int NeutralRelationCount,
+    int HostileRelationCount,
+    int SiteCount,
+    int GrowingSiteCount,
+    int StableSiteCount,
+    int DecliningSiteCount,
+    int RuinedSiteCount,
+    int FortifiedSiteCount,
+    float AvgSiteDevelopment,
+    float AvgSiteSecurity,
+    int EventCount,
+    int TreatyCount,
+    int RaidCount,
+    int SkirmishCount,
+    int CrisisCount,
+    int FoundingCount,
+    float HostileEventRatio,
+    float Threat,
+    float Prosperity);

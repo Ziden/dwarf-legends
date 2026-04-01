@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+<!-- Game configuration data lives at the repo root data/ directory.
+       Copied to output so tests and the Godot client can load them from
+       the same relative "data/" path. -->
+  <ItemGroup>
+    <Content Include="..\..\data\**\*.json">
+      <Link>data\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DwarfFortress.WorldGen\DwarfFortress.WorldGen.csproj" />
+  </ItemGroup>
+
+</Project>

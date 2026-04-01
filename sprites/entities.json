@@ -1,0 +1,24 @@
+{
+  "_comment": "Entity sprite mappings -> Meph graphics sheets.",
+  "_howto": "Each entry can override its own sheet. Otherwise tile_w/tile_h from the top level are used.",
+  "_sheets_available": [
+    "res://Graphics/graphics/Meph/dwarves.png",
+    "res://Graphics/graphics/Meph/goblins.png",
+    "res://Graphics/graphics/Meph/kobolds.png",
+    "res://Graphics/graphics/Meph/elves.png",
+    "res://Graphics/graphics/Meph/humans.png",
+    "res://Graphics/graphics/domestic.png",
+    "res://Graphics/graphics/reptiles.png"
+  ],
+  "category": "entity",
+  "sheet": "res://Graphics/graphics/Meph/dwarves.png",
+  "tile_w": 32,
+  "tile_h": 32,
+  "entries": [
+    { "id": "dwarf", "col": 0, "row": 0, "_note": "TODO: verify standing pose, default profession" },
+    { "id": "goblin", "col": 0, "row": 0, "sheet": "res://Graphics/graphics/Meph/goblins.png", "_note": "TODO: verify use Meph/goblins.png" },
+    { "id": "troll", "col": 0, "row": 0, "_note": "TODO: verify may be in fanciful.png or large_* sheets" },
+    { "id": "cat", "col": 0, "row": 0, "sheet": "res://Graphics/graphics/domestic.png", "_note": "TODO: verify use domestic.png" },
+    { "id": "dog", "col": 1, "row": 0, "sheet": "res://Graphics/graphics/domestic.png", "_note": "TODO: verify use domestic.png" }
+  ]
+}

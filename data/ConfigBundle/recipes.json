@@ -1,0 +1,102 @@
+[
+  {
+    "id": "make_plank",
+    "displayName": "Make Plank",
+    "workshop": "carpenter_workshop",
+    "labor": "carpentry",
+    "inputs":  [{ "tags": ["log"], "qty": 1 }],
+    "outputs": [{ "itemId": "plank", "qty": 2 }],
+    "workTime": 8.0,
+    "skillXp": 15
+  },
+  {
+    "id": "make_box",
+    "displayName": "Make Wooden Box",
+    "workshop": "carpenter_workshop",
+    "labor": "carpentry",
+    "inputs":  [{ "tags": ["plank"], "qty": 1 }],
+    "outputs": [{ "itemId": "box", "qty": 1 }],
+    "workTime": 6.0,
+    "skillXp": 10
+  },
+  {
+    "id": "make_bed",
+    "displayName": "Make Bed",
+    "workshop": "carpenter_workshop",
+    "labor": "carpentry",
+    "inputs":  [{ "tags": ["plank"], "qty": 2 }],
+    "outputs": [{ "itemId": "bed", "qty": 1 }],
+    "workTime": 10.0,
+    "skillXp": 20
+  },
+  {
+    "id": "make_table",
+    "displayName": "Make Table",
+    "workshop": "carpenter_workshop",
+    "labor": "carpentry",
+    "inputs":  [{ "tags": ["plank"], "qty": 2 }],
+    "outputs": [{ "itemId": "table", "qty": 1 }],
+    "workTime": 8.0,
+    "skillXp": 16
+  },
+  {
+    "id": "make_chair",
+    "displayName": "Make Chair",
+    "workshop": "carpenter_workshop",
+    "labor": "carpentry",
+    "inputs":  [{ "tags": ["plank"], "qty": 1 }],
+    "outputs": [{ "itemId": "chair", "qty": 1 }],
+    "workTime": 6.0,
+    "skillXp": 12
+  },
+  {
+    "id": "make_barrel",
+    "displayName": "Make Barrel",
+    "workshop": "carpenter_workshop",
+    "labor": "carpentry",
+    "inputs":  [{ "tags": ["plank"], "qty": 2 }],
+    "outputs": [{ "itemId": "barrel", "qty": 1 }],
+    "workTime": 8.0,
+    "skillXp": 15
+  },
+  {
+    "id": "make_bucket",
+    "displayName": "Make Bucket",
+    "workshop": "carpenter_workshop",
+    "labor": "carpentry",
+    "inputs":  [{ "tags": ["plank"], "qty": 1 }],
+    "outputs": [{ "itemId": "bucket", "qty": 1 }],
+    "workTime": 6.0,
+    "skillXp": 12
+  },
+  {
+    "id": "make_iron_bar",
+    "displayName": "Smelt Iron",
+    "workshop": "smelter",
+    "labor": "smithing",
+    "inputs":  [{ "tags": ["ore"], "qty": 2 }, { "tags": ["fuel"], "qty": 1 }],
+    "outputs": [{ "itemId": "iron_bar", "qty": 1 }],
+    "workTime": 12.0,
+    "skillXp": 20
+  },
+  {
+    "id": "cook_meal",
+    "displayName": "Cook Meal",
+    "workshop": "kitchen",
+    "labor": "cooking",
+    "inputs":  [{ "tags": ["plant", "food"], "qty": 2 }],
+    "outputs": [{ "itemId": "meal", "qty": 2 }],
+    "workTime": 6.0,
+    "skillXp": 10
+  },
+  {
+    "id": "brew_drink",
+    "displayName": "Brew Drink",
+    "workshop": "still",
+    "labor": "brewing",
+    "inputs":  [{ "tags": ["plant", "food"], "qty": 2 }],
+    "outputs": [{ "itemId": "drink", "qty": 3 }],
+    "workTime": 5.0,
+    "skillXp": 10
+  }
+]

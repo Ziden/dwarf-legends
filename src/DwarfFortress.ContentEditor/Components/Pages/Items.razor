@@ -1,0 +1,88 @@
+@page "/items"
+@rendermode InteractiveServer
+@inject DataService DataSvc
+
+<PageTitle>Items</PageTitle>
+
+<h2>Items</h2>
+
+@if (_items == null)
+{
+    <p>Loading…</p>
+}
+else if (_editing != null)
+{
+    <ItemEditor Item="_editing" OnSave="SaveItem" OnCancel="() => _editing = null" />
+}
+else
+{
+    <div class="mb-3">
+        <button class="btn btn-success btn-sm" @onclick="AddNew">+ New Item</button>
+    </div>
+
+    <table class="table table-sm table-hover">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Display Name</th>
+                <th>Tags</th>
+                <th>Weight</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in _items)
+            {
+                <tr>
+                    <td><code>@item.Id</code></td>
+                    <td>@item.DisplayName</td>
+                    <td>@string.Join(", ", item.Tags)</td>
+                    <td>@item.Weight</td>
+                    <td>
+                        <button class="btn btn-outline-primary btn-sm me-1" @onclick="() => Edit(item)">Edit</button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="() => Delete(item)">Delete</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (!string.IsNullOrEmpty(_feedback))
+{
+    <div class="alert alert-success alert-dismissible mt-3">@_feedback</div>
+}
+
+@code {
+    private List<ItemModel>? _items;
+    private ItemModel? _editing;
+    private string _feedback = "";
+
+    protected override void OnInitialized() => _items = DataSvc.LoadItems();
+
+    private void AddNew() => _editing = new ItemModel();
+
+    private void Edit(ItemModel item) => _editing = new ItemModel
+    {
+        Id = item.Id, DisplayName = item.DisplayName,
+        Tags = [.. item.Tags], Weight = item.Weight,
+        Stackable = item.Stackable, MaxStack = item.MaxStack, BaseValue = item.BaseValue
+    };
+
+    private void SaveItem(ItemModel updated)
+    {
+        var existing = _items!.FindIndex(x => x.Id == updated.Id);
+        if (existing >= 0) _items![existing] = updated;
+        else _items!.Add(updated);
+        DataSvc.SaveItems(_items!);
+        _editing = null;
+        _feedback = $"Saved '{updated.Id}'.";
+    }
+
+    private void Delete(ItemModel item)
+    {
+        _items!.Remove(item);
+        DataSvc.SaveItems(_items!);
+        _feedback = $"Deleted '{item.Id}'.";
+    }
+}

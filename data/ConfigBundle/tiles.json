@@ -1,0 +1,19 @@
+[
+  { "id": "empty",             "displayName": "Empty",             "isPassable": true,  "isOpaque": false },
+  { "id": "stone_floor",       "displayName": "Stone Floor",       "tags": ["ground_stone"], "isPassable": true,  "isOpaque": false },
+  { "id": "wood_floor",        "displayName": "Wood Floor",        "isPassable": true,  "isOpaque": false },
+  { "id": "stone_brick_floor", "displayName": "Stone Brick Floor", "tags": ["ground_stone"], "isPassable": true,  "isOpaque": false },
+  { "id": "obsidian_floor",    "displayName": "Obsidian Floor",    "tags": ["ground_stone"], "isPassable": true,  "isOpaque": false },
+  { "id": "grass",             "displayName": "Grass",             "tags": ["ground_grass", "ground_soil"], "isPassable": true,  "isOpaque": false },
+  { "id": "sand",              "displayName": "Sand",              "tags": ["ground_sand", "ground_soil"], "isPassable": true,  "isOpaque": false },
+  { "id": "mud",               "displayName": "Mud",               "tags": ["ground_mud", "ground_soil"], "isPassable": true,  "isOpaque": false },
+  { "id": "snow",              "displayName": "Snow",              "tags": ["ground_snow"], "isPassable": true,  "isOpaque": false },
+  { "id": "soil",              "displayName": "Soil",              "tags": ["ground_soil"], "isPassable": true,  "isOpaque": false },
+  { "id": "ramp",              "displayName": "Ramp",              "tags": ["ground_stone"], "isPassable": true,  "isOpaque": false },
+  { "id": "staircase",         "displayName": "Staircase",         "tags": ["ground_stone"], "isPassable": true,  "isOpaque": false },
+  { "id": "water_tile",        "displayName": "Water",             "isPassable": true,  "isOpaque": false },
+  { "id": "magma_tile",        "displayName": "Magma",             "isPassable": true,  "isOpaque": false },
+  { "id": "stone_wall",        "displayName": "Stone Wall",        "tags": ["ground_stone"], "isPassable": false, "isOpaque": true,  "isMineable": true },
+  { "id": "soil_wall",         "displayName": "Soil Wall",         "tags": ["ground_soil"], "isPassable": false, "isOpaque": true,  "isMineable": true },
+  { "id": "tree",              "displayName": "Tree",              "isPassable": false, "isOpaque": false }
+]
