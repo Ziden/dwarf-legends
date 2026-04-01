@@ -47,6 +47,7 @@ public sealed class JobSystem : IGameSystem
     private readonly Dictionary<int, Queue<Vec3i>>      _pathQueues   = new();
     private readonly Dictionary<int, float>             _moveProgress = new();
     private readonly Dictionary<int, string>            _activeWorkAnimations = new();
+    private readonly Dictionary<int, float>             _repathCooldowns = new();
 
     private int       _nextJobId = 1;
     private EventBus? _eventBus;
@@ -568,11 +569,17 @@ public sealed class JobSystem : IGameSystem
         if (IsStepAvailable(map, origin, next, entityId, spatial))
             return MoveStepState.Ready;
 
+        // Cooldown: don't repath too frequently to avoid cascading A* calls
+        var canRepath = !_repathCooldowns.ContainsKey(job.Id);
+        if (!canRepath)
+            return MoveStepState.Wait;
+
         var reroute = FindPathAvoidingOccupiedTiles(map, origin, move.Target, entityId, spatial);
         if (reroute.Count > 1)
         {
             pathQ = new Queue<Vec3i>(reroute.Skip(1));
             _pathQueues[job.Id] = pathQ;
+            _repathCooldowns[job.Id] = 0.5f;  // Half-second cooldown before next repath
             return pathQ.Count == 0 || IsStepAvailable(map, origin, pathQ.Peek(), entityId, spatial)
                 ? MoveStepState.Ready
                 : MoveStepState.Wait;

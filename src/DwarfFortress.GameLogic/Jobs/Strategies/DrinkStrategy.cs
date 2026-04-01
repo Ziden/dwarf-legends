@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
@@ -26,16 +27,16 @@ public sealed class DrinkStrategy : IJobStrategy
     // A dwarf drinking when thirst is above this is over-drinking → nausea
     private const float OverdrinkThreshold = 0.5f;
     private const float NauseaDuration = 60f;
- worki
+
     public bool CanExecute(Job job, int dwarfId, GameContext ctx)
     {
         // Refuse if nauseous
-        var registry = ctx.Get<Entities.EntityRegistry>();
-        if (registry.TryGetById<Entities.Dwarf>(dwarfId, out var d) && d is not null)
-            if (d.Components.TryGet<Entities.Components.StatusEffectComponent>()?.Has(Entities.Components.StatusEffectIds.Nausea) == true)
+        var registry = ctx.Get<EntityRegistry>();
+        if (registry.TryGetById<Dwarf>(dwarfId, out var d) && d is not null)
+            if (d.Components.TryGet<StatusEffectComponent>()?.Has(StatusEffectIds.Nausea) == true)
                 return false;
 
-        var itemSystem = ctx.TryGet<Systems.ItemSystem>();
+        var itemSystem = ctx.TryGet<ItemSystem>();
         if (itemSystem?.FindDrinkItem() is not null)
             return true;
 
@@ -49,9 +50,9 @@ public sealed class DrinkStrategy : IJobStrategy
     public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
     {
         if (!TryGetDwarfAndMap(dwarfId, ctx, out var dwarf, out var map))
-            return System.Array.Empty<ActionStep>();
+            return Array.Empty<ActionStep>();
 
-        var itemSystem = ctx.TryGet<Systems.ItemSystem>();
+        var itemSystem = ctx.TryGet<ItemSystem>();
         var drink = itemSystem?.FindDrinkItem();
         if (drink is not null)
         {
@@ -76,7 +77,7 @@ public sealed class DrinkStrategy : IJobStrategy
         }
 
         if (!TryFindNearestDrinkablePosition(map, origin, out var drinkTarget))
-            return System.Array.Empty<ActionStep>();
+            return Array.Empty<ActionStep>();
 
         return new ActionStep[]
         {
@@ -92,16 +93,16 @@ public sealed class DrinkStrategy : IJobStrategy
 
     public void OnComplete(Job job, int dwarfId, GameContext ctx)
     {
-        var entityRegistry = ctx.Get<Entities.EntityRegistry>();
-        if (!entityRegistry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) || dwarf is null)
+        var entityRegistry = ctx.Get<EntityRegistry>();
+        if (!entityRegistry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null)
             return;
 
         dwarf.Needs.Get(NeedIds.Thirst).Satisfy(ThirstSatisfaction);
 
         // Emit satisfaction event to trigger cooldown in NeedsSystem
-        ctx.EventBus.Emit(new Systems.NeedSatisfiedEvent(dwarfId, NeedIds.Thirst));
+        ctx.EventBus.Emit(new NeedSatisfiedEvent(dwarfId, NeedIds.Thirst));
 
-        var itemSystem = ctx.TryGet<Systems.ItemSystem>();
+        var itemSystem = ctx.TryGet<ItemSystem>();
         var consumedItemName = ResolveConsumedItemName(job, itemSystem, ctx);
         foreach (var id in job.ReservedItemIds)
             itemSystem?.DestroyItem(id);
@@ -119,8 +120,8 @@ public sealed class DrinkStrategy : IJobStrategy
         dwarf = null!;
         map = null!;
 
-        var entityRegistry = ctx.Get<Entities.EntityRegistry>();
-        if (!entityRegistry.TryGetById<Entities.Dwarf>(dwarfId, out var found) || found is null)
+        var entityRegistry = ctx.Get<EntityRegistry>();
+        if (!entityRegistry.TryGetById<Dwarf>(dwarfId, out var found) || found is null)
             return false;
 
         dwarf = found;
@@ -214,10 +215,10 @@ public sealed class DrinkStrategy : IJobStrategy
 
     private static void ReleaseReserved(Job job, GameContext ctx)
     {
-        var itemSystem = ctx.TryGet<Systems.ItemSystem>();
+        var itemSystem = ctx.TryGet<ItemSystem>();
         if (itemSystem is null) return;
-        var registry = ctx.Get<Entities.EntityRegistry>();
-        var dropPos = registry.TryGetById<Entities.Dwarf>(job.AssignedDwarfId, out var dwarf) && dwarf is not null
+        var registry = ctx.Get<EntityRegistry>();
+        var dropPos = registry.TryGetById<Dwarf>(job.AssignedDwarfId, out var dwarf) && dwarf is not null
             ? dwarf.Position.Position
             : job.TargetPos;
         foreach (var id in job.ReservedItemIds)
@@ -230,7 +231,7 @@ public sealed class DrinkStrategy : IJobStrategy
         job.ReservedItemIds.Clear();
     }
 
-    private static string ResolveConsumedItemName(Job job, Systems.ItemSystem? itemSystem, GameContext ctx)
+    private static string ResolveConsumedItemName(Job job, ItemSystem? itemSystem, GameContext ctx)
     {
         if (itemSystem is not null)
         {
