@@ -22,6 +22,24 @@ public sealed class ModifierStack
     public bool Has(string sourceId) =>
         _modifiers.Any(m => m.SourceId == sourceId);
 
+    /// <summary>Returns the first modifier with the given source ID, or null if none.</summary>
+    public Modifier? GetOrNull(string sourceId) =>
+        _modifiers.FirstOrDefault(m => m.SourceId == sourceId);
+
+    /// <summary>Update the value of an existing modifier by source ID. Returns false if not found.</summary>
+    public bool UpdateValue(string sourceId, float newValue)
+    {
+        for (int i = 0; i < _modifiers.Count; i++)
+        {
+            if (_modifiers[i].SourceId == sourceId)
+            {
+                _modifiers[i] = _modifiers[i] with { Value = newValue };
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>Advance all timed modifiers; remove expired ones.</summary>
     public void Tick(float delta)
     {

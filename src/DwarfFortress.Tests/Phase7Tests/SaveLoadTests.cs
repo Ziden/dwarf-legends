@@ -1,5 +1,6 @@
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Items;
@@ -111,6 +112,30 @@ public sealed class SaveLoadTests
         var restored = map2.GetTile(pos);
         Assert.Equal(TileDefIds.Tree, restored.TileDefId);
         Assert.Equal("pine", restored.TreeSpeciesId);
+    }
+
+    [Fact]
+    public void SaveLoad_Restores_Placed_Building_Material_And_Footprint()
+    {
+        var (sim, map, _, _, items) = TestFixtures.BuildFullSim();
+
+        items.CreateItem(ItemDefIds.Log, "oak_wood", new Vec3i(2, 2, 0));
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
+            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
+            Origin: new Vec3i(5, 5, 0)));
+
+        Assert.Equal("oak_wood", map.GetTile(new Vec3i(5, 5, 0)).MaterialId);
+
+        var json = sim.Save();
+
+        var (sim2, map2, _, _, _) = TestFixtures.BuildFullSim();
+        sim2.Load(json);
+
+        var restoredBuilding = sim2.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
+        Assert.NotNull(restoredBuilding);
+        Assert.Equal("oak_wood", restoredBuilding!.MaterialId);
+        Assert.Equal("oak_wood", map2.GetTile(new Vec3i(5, 5, 0)).MaterialId);
+        Assert.Equal("oak_wood", map2.GetTile(new Vec3i(6, 6, 0)).MaterialId);
     }
 
     [Fact]

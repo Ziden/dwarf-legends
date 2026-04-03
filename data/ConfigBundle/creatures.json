@@ -1,9 +1,0 @@
-[
-  { "id": "dwarf",   "displayName": "Dwarf",   "tags": ["sapient", "playable"], "isPlayable": true,  "isSapient": true,  "maxHealth": 100, "speed": 1.00 },
-  { "id": "goblin",  "displayName": "Goblin",  "tags": ["hostile"],             "isHostile":  true,  "maxHealth": 60,  "speed": 1.10 },
-  { "id": "troll",   "displayName": "Troll",   "tags": ["hostile", "large"],    "isHostile":  true,  "maxHealth": 200, "speed": 0.65 },
-  { "id": "elk",     "displayName": "Elk",     "tags": ["animal", "grazer", "herbivore"],                      "maxHealth": 85,  "speed": 1.05 },
-  { "id": "giant_carp", "displayName": "Giant Carp", "tags": ["animal", "aquatic", "fish", "aquatic_grazer"], "maxHealth": 55,  "speed": 1.35 },
-  { "id": "cat",     "displayName": "Cat",     "tags": ["animal", "pet", "groomer", "carnivore"],             "maxHealth": 20,  "speed": 1.55 },
-  { "id": "dog",     "displayName": "Dog",     "tags": ["animal", "pet", "groomer", "omnivore"],              "maxHealth": 30,  "speed": 1.20 }
-]

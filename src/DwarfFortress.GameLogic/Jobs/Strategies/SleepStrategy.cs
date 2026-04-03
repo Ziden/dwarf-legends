@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
@@ -46,8 +47,8 @@ public sealed class SleepStrategy : IJobStrategy
         var entityRegistry = ctx.Get<EntityRegistry>();
         if (!entityRegistry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null) return;
 
-        // Apply Energetic trait: extra sleep recovery
-        var recoveryMultiplier = SleepSystem.GetSleepRecoveryMultiplier(dwarf);
+        // Sleep recovery is driven by stamina and focus attributes.
+        var recoveryMultiplier = SleepSystem.GetSleepRecoveryMultiplier(dwarf, ctx.TryGet<DataManager>());
         dwarf.Needs.Get(NeedIds.Sleep).Satisfy(SleepSatisfaction * recoveryMultiplier);
 
         // Emit satisfaction event to trigger cooldown in NeedsSystem

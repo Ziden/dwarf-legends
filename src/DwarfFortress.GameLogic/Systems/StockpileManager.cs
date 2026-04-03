@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
@@ -219,15 +220,52 @@ public sealed class StockpileManager : IGameSystem
         if (def is null)
             return _stockpiles.Values;
 
-        var isCorpseOrRefuse = def.Tags.HasAny(TagIds.Corpse, TagIds.Refuse) || item.Components.TryGet<CorpseComponent>() is not null;
-        if (!isCorpseOrRefuse)
-            return _stockpiles.Values;
+        var ordered = new List<StockpileData>();
+        var preferredTags = GetPreferredAcceptedTags(item, def);
 
-        var preferred = _stockpiles.Values
-            .Where(sp => sp.AcceptedTags.Contains(TagIds.Corpse) || sp.AcceptedTags.Contains(TagIds.Refuse))
-            .ToList();
+        AddMatchingStockpiles(ordered, sp => AcceptsAny(sp, preferredTags));
+        AddMatchingStockpiles(ordered, sp => sp.AcceptedTags.Length > 0 && def.Tags.HasAny(sp.AcceptedTags));
+        AddMatchingStockpiles(ordered, sp => sp.AcceptedTags.Length == 0);
 
-        return preferred.Count > 0 ? preferred : _stockpiles.Values;
+        return ordered.Count > 0 ? ordered : _stockpiles.Values;
+
+        void AddMatchingStockpiles(List<StockpileData> destination, System.Func<StockpileData, bool> predicate)
+        {
+            foreach (var stockpile in _stockpiles.Values)
+            {
+                if (destination.Contains(stockpile) || !predicate(stockpile))
+                    continue;
+
+                destination.Add(stockpile);
+            }
+        }
+    }
+
+    private static bool AcceptsAny(StockpileData stockpile, IReadOnlyList<string> tags)
+    {
+        if (stockpile.AcceptedTags.Length == 0 || tags.Count == 0)
+            return false;
+
+        foreach (var acceptedTag in stockpile.AcceptedTags)
+            foreach (var preferredTag in tags)
+                if (string.Equals(acceptedTag, preferredTag, System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+        return false;
+    }
+
+    private static IReadOnlyList<string> GetPreferredAcceptedTags(Item item, ItemDef def)
+    {
+        if (def.Tags.HasAny(TagIds.Corpse, TagIds.Refuse) || item.Components.TryGet<CorpseComponent>() is not null)
+            return [TagIds.Corpse, TagIds.Refuse];
+
+        if (def.Tags.Contains(TagIds.Seed))
+            return [TagIds.Seed];
+
+        if (def.Tags.Contains(TagIds.Food))
+            return [TagIds.Food];
+
+        return System.Array.Empty<string>();
     }
 
     public void ReleaseSlotReservation(int stockpileId, Vec3i slot)

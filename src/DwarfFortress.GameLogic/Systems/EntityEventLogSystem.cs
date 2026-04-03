@@ -11,7 +11,7 @@ namespace DwarfFortress.GameLogic.Systems;
 
 public record struct EntityActivityEvent(int EntityId, string Description, Vec3i Position);
 
-public sealed record EntityEventLogEntry(string Message, Vec3i Position, int Year, int Month, int Day, int Hour);
+public sealed record EntityEventLogEntry(string Message, Vec3i Position, int Year, int Month, int Day, int Hour, EventLogLinkTarget? LinkedTarget = null);
 
 public sealed class EntityEventLogSystem : IGameSystem
 {
@@ -85,12 +85,16 @@ public sealed class EntityEventLogSystem : IGameSystem
     }
 
     private void OnItemPickedUp(ItemPickedUpEvent e)
-        => AddEntry(e.CarrierEntityId, $"Picked up {ResolveItemName(e.ItemDefId)}", e.Position);
+    {
+        var itemLink = ResolveItemLink(e.ItemId, e.ItemDefId);
+        AddEntry(e.CarrierEntityId, $"Picked up {itemLink?.DisplayName ?? ResolveItemDisplayName(e.ItemId, e.ItemDefId)}", e.Position, itemLink);
+    }
 
     private void OnItemDropped(ItemDroppedEvent e)
     {
         var verb = e.ContainerBuildingId >= 0 ? "Stored" : "Dropped";
-        AddEntry(e.CarrierEntityId, $"{verb} {ResolveItemName(e.ItemDefId)}", e.Position);
+        var itemLink = ResolveItemLink(e.ItemId, e.ItemDefId);
+        AddEntry(e.CarrierEntityId, $"{verb} {itemLink?.DisplayName ?? ResolveItemDisplayName(e.ItemId, e.ItemDefId)}", e.Position, itemLink);
     }
 
     private void OnEntityDied(EntityDiedEvent e)
@@ -123,24 +127,38 @@ public sealed class EntityEventLogSystem : IGameSystem
 
     private void OnCombatHit(CombatHitEvent e)
     {
+        var defenderLink = ResolveEntityLink(e.DefenderId);
+        var attackerLink = ResolveEntityLink(e.AttackerId);
+
         if (TryGetEntityPosition(e.AttackerId) is Vec3i attackerPos)
             AddEntry(e.AttackerId,
-                $"Hit {ResolveEntityName(e.DefenderId)} in the {Humanize(e.BodyPartId)} for {e.Damage:0.#} damage",
-                attackerPos);
+                $"Hit {defenderLink?.DisplayName ?? ResolveEntityName(e.DefenderId)} in the {Humanize(e.BodyPartId)} for {e.Damage:0.#} damage",
+                attackerPos,
+                defenderLink);
 
         if (TryGetEntityPosition(e.DefenderId) is Vec3i defenderPos)
             AddEntry(e.DefenderId,
-                $"Was hit by {ResolveEntityName(e.AttackerId)} in the {Humanize(e.BodyPartId)} for {e.Damage:0.#} damage",
-                defenderPos);
+                $"Was hit by {attackerLink?.DisplayName ?? ResolveEntityName(e.AttackerId)} in the {Humanize(e.BodyPartId)} for {e.Damage:0.#} damage",
+                defenderPos,
+                attackerLink);
     }
 
     private void OnCombatMiss(CombatMissEvent e)
     {
+        var defenderLink = ResolveEntityLink(e.DefenderId);
+        var attackerLink = ResolveEntityLink(e.AttackerId);
+
         if (TryGetEntityPosition(e.AttackerId) is Vec3i attackerPos)
-            AddEntry(e.AttackerId, $"Missed an attack on {ResolveEntityName(e.DefenderId)}", attackerPos);
+            AddEntry(e.AttackerId,
+                $"Missed an attack on {defenderLink?.DisplayName ?? ResolveEntityName(e.DefenderId)}",
+                attackerPos,
+                defenderLink);
 
         if (TryGetEntityPosition(e.DefenderId) is Vec3i defenderPos)
-            AddEntry(e.DefenderId, $"Dodged an attack from {ResolveEntityName(e.AttackerId)}", defenderPos);
+            AddEntry(e.DefenderId,
+                $"Dodged an attack from {attackerLink?.DisplayName ?? ResolveEntityName(e.AttackerId)}",
+                defenderPos,
+                attackerLink);
     }
 
     private void OnDwarfWounded(DwarfWoundedEvent e)
@@ -180,7 +198,9 @@ public sealed class EntityEventLogSystem : IGameSystem
     private void OnJobAssigned(JobAssignedEvent e)
     {
         var job = _ctx!.TryGet<JobSystem>()?.GetJob(e.JobId);
-        if (job is null || string.Equals(job.JobDefId, JobDefIds.Idle, StringComparison.OrdinalIgnoreCase))
+        if (job is null ||
+            string.Equals(job.JobDefId, JobDefIds.Idle, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(job.JobDefId, JobDefIds.EngageHostile, StringComparison.OrdinalIgnoreCase))
             return;
 
         _trackedJobs[e.JobId] = new TrackedJobInfo(e.DwarfId, job.JobDefId, job.TargetPos);
@@ -189,7 +209,8 @@ public sealed class EntityEventLogSystem : IGameSystem
 
     private void OnJobCompleted(JobCompletedEvent e)
     {
-        if (string.Equals(e.JobDefId, JobDefIds.Idle, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(e.JobDefId, JobDefIds.Idle, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(e.JobDefId, JobDefIds.EngageHostile, StringComparison.OrdinalIgnoreCase))
             return;
 
         _trackedJobs.Remove(e.JobId);
@@ -214,7 +235,7 @@ public sealed class EntityEventLogSystem : IGameSystem
         AddEntry(tracked.DwarfId, $"Cancelled {Humanize(tracked.JobDefId)}", tracked.TargetPos);
     }
 
-    private void AddEntry(int entityId, string message, Vec3i position)
+    private void AddEntry(int entityId, string message, Vec3i position, EventLogLinkTarget? linkedTarget = null)
     {
         if (entityId < 0 || string.IsNullOrWhiteSpace(message))
             return;
@@ -226,7 +247,7 @@ public sealed class EntityEventLogSystem : IGameSystem
         }
 
         var (year, month, day, hour) = SnapshotTime();
-        entries.Insert(0, new EntityEventLogEntry(message, position, year, month, day, hour));
+    entries.Insert(0, new EntityEventLogEntry(message, position, year, month, day, hour, linkedTarget));
 
         if (entries.Count > MaxEntriesPerEntity)
             entries.RemoveRange(MaxEntriesPerEntity, entries.Count - MaxEntriesPerEntity);
@@ -258,25 +279,55 @@ public sealed class EntityEventLogSystem : IGameSystem
     }
 
     private string ResolveEntityName(int entityId)
+        => ResolveEntityLink(entityId)?.DisplayName ?? $"#{entityId}";
+
+    private EventLogLinkTarget? ResolveEntityLink(int entityId)
     {
         var registry = _ctx!.Get<EntityRegistry>();
         var entity = registry.TryGetById(entityId);
         if (entity is null)
-            return $"#{entityId}";
+            return null;
 
         if (entity is Dwarf dwarf)
-            return dwarf.FirstName;
+            return new EventLogLinkTarget(dwarf.Id, EventLogLinkType.Entity, dwarf.DefId, dwarf.FirstName);
 
         if (entity is Creature creature)
-            return _ctx.TryGet<DataManager>()?.Creatures.GetOrNull(creature.DefId)?.DisplayName
-                   ?? Humanize(creature.DefId);
+        {
+            var displayName = _ctx.TryGet<DataManager>()?.Creatures.GetOrNull(creature.DefId)?.DisplayName
+                              ?? Humanize(creature.DefId);
+            return new EventLogLinkTarget(creature.Id, EventLogLinkType.Entity, creature.DefId, displayName);
+        }
 
-        return Humanize(entity.DefId);
+        return new EventLogLinkTarget(entity.Id, EventLogLinkType.Entity, entity.DefId, Humanize(entity.DefId));
     }
 
-    private string ResolveItemName(string itemDefId)
-        => _ctx!.TryGet<DataManager>()?.Items.GetOrNull(itemDefId)?.DisplayName
-           ?? Humanize(itemDefId);
+    private EventLogLinkTarget? ResolveItemLink(int itemId, string fallbackItemDefId)
+    {
+        var itemSystem = _ctx!.TryGet<ItemSystem>();
+        if (itemSystem?.TryGetItem(itemId, out var item) != true || item is null)
+            return new EventLogLinkTarget(itemId, EventLogLinkType.Item, fallbackItemDefId, ResolveItemDisplayName(itemId, fallbackItemDefId));
+
+        return new EventLogLinkTarget(item.Id, EventLogLinkType.Item, item.DefId, ResolveItemDisplayName(item), item.MaterialId);
+    }
+
+    private string ResolveItemDisplayName(int itemId, string fallbackItemDefId)
+    {
+        var itemSystem = _ctx!.TryGet<ItemSystem>();
+        return itemSystem?.TryGetItem(itemId, out var item) == true && item is not null
+            ? ResolveItemDisplayName(item)
+            : _ctx!.TryGet<DataManager>()?.Items.GetOrNull(fallbackItemDefId)?.DisplayName
+              ?? Humanize(fallbackItemDefId);
+    }
+
+    private string ResolveItemDisplayName(Item item)
+    {
+        var corpse = item.Components.TryGet<CorpseComponent>();
+        if (corpse is not null)
+            return $"Corpse of {corpse.DisplayName}";
+
+        return _ctx!.TryGet<DataManager>()?.Items.GetOrNull(item.DefId)?.DisplayName
+               ?? Humanize(item.DefId);
+    }
 
     private static string Humanize(string value)
         => value.Replace('_', ' ');

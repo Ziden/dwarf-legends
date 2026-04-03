@@ -4,6 +4,8 @@ using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.Tests;
+using System.Collections.Generic;
+using System.Linq;
 using Xunit;
 
 namespace DwarfFortress.GameLogic.Tests.Phase6Tests;
@@ -53,6 +55,48 @@ public sealed class NeedsSystemTests
         Assert.NotNull(received);
         Assert.Equal(1, received!.Value.EntityId);
         Assert.Equal(NeedIds.Hunger, received.Value.NeedId);
+    }
+
+    [Fact]
+    public void Tick_Emits_NeedCriticalEvent_Only_Once_While_Need_Remains_Critical()
+    {
+        var (_, er, _, sim) = CreateSim();
+        var dwarf = new Dwarf(1, "Urist", new Vec3i(0, 0, 0));
+        er.Register(dwarf);
+        dwarf.Needs.Hunger.SetLevel(0.05f);
+
+        var events = new List<NeedCriticalEvent>();
+        sim.Context.EventBus.On<NeedCriticalEvent>(e => events.Add(e));
+
+        sim.Tick(0.1f);
+        sim.Tick(0.1f);
+        sim.Tick(0.1f);
+
+        var hungerEvents = events.Where(e => e.EntityId == dwarf.Id && e.NeedId == NeedIds.Hunger).ToList();
+        Assert.Single(hungerEvents);
+    }
+
+    [Fact]
+    public void Tick_Emits_NeedCriticalEvent_Again_When_Need_Recovers_Then_Becomes_Critical_Again()
+    {
+        var (_, er, _, sim) = CreateSim();
+        var dwarf = new Dwarf(1, "Urist", new Vec3i(0, 0, 0));
+        er.Register(dwarf);
+
+        var events = new List<NeedCriticalEvent>();
+        sim.Context.EventBus.On<NeedCriticalEvent>(e => events.Add(e));
+
+        dwarf.Needs.Hunger.SetLevel(0.05f);
+        sim.Tick(0.1f);
+
+        dwarf.Needs.Hunger.SetLevel(0.5f);
+        sim.Tick(0.1f);
+
+        dwarf.Needs.Hunger.SetLevel(0.05f);
+        sim.Tick(0.1f);
+
+        var hungerEvents = events.Where(e => e.EntityId == dwarf.Id && e.NeedId == NeedIds.Hunger).ToList();
+        Assert.Equal(2, hungerEvents.Count);
     }
 
     [Fact]
@@ -113,6 +157,39 @@ public sealed class NeedsSystemTests
 
         var drinkJobs = js.GetPendingJobs().Where(j => j.JobDefId == JobDefIds.Drink).ToList();
         Assert.NotEmpty(drinkJobs);
+    }
+
+    [Fact]
+    public void Tick_Creates_Preassigned_Drink_Job_For_Thirsty_Dwarf()
+    {
+        var (_, er, js, sim) = CreateSim();
+        var thirstyDwarf = new Dwarf(1, "Urist", new Vec3i(0, 0, 0));
+        var fullDwarf = new Dwarf(2, "Rigoth", new Vec3i(1, 0, 0));
+        er.Register(thirstyDwarf);
+        er.Register(fullDwarf);
+        thirstyDwarf.Needs.Thirst.SetLevel(0.05f);
+
+        sim.Tick(0.1f);
+
+        var drinkJob = js.GetPendingJobs().Single(j => j.JobDefId == JobDefIds.Drink);
+        Assert.Equal(thirstyDwarf.Id, drinkJob.AssignedDwarfId);
+    }
+
+    [Fact]
+    public void Tick_Cancels_Pending_Drink_Job_When_Thirst_Recovers()
+    {
+        var (_, er, js, sim) = CreateSim();
+        var dwarf = new Dwarf(1, "Urist", new Vec3i(0, 0, 0));
+        er.Register(dwarf);
+        dwarf.Needs.Thirst.SetLevel(0.05f);
+
+        sim.Tick(0.1f);
+        Assert.Contains(js.GetPendingJobs(), job => job.JobDefId == JobDefIds.Drink && job.AssignedDwarfId == dwarf.Id);
+
+        dwarf.Needs.Thirst.SetLevel(1.0f);
+        sim.Tick(0.1f);
+
+        Assert.DoesNotContain(js.GetAllJobs(), job => job.JobDefId == JobDefIds.Drink && job.AssignedDwarfId == dwarf.Id);
     }
 
     [Fact]

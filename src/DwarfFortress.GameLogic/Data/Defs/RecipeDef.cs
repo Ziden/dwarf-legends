@@ -3,11 +3,19 @@ using DwarfFortress.GameLogic.Data;
 
 namespace DwarfFortress.GameLogic.Data.Defs;
 
-/// <summary>A required input for a recipe: item tags + quantity.</summary>
-public sealed record RecipeInput(TagSet RequiredTags, int Quantity);
+/// <summary>A required input for a recipe: tags plus optional concrete item/material selectors.</summary>
+public sealed record RecipeInput(
+    TagSet RequiredTags,
+    int Quantity,
+    string? ItemDefId = null,
+    string? MaterialId = null);
 
-/// <summary>An output produced by completing a recipe: item def ID + quantity.</summary>
-public sealed record RecipeOutput(string ItemDefId, int Quantity, string? MaterialInheritFrom = null);
+/// <summary>An output produced by completing a recipe: explicit item ID or a derived form role, plus quantity.</summary>
+public sealed record RecipeOutput(
+    string? ItemDefId,
+    int Quantity,
+    string? MaterialInheritFrom = null,
+    string? FormRole = null);
 
 /// <summary>
 /// Immutable definition of a crafting recipe.

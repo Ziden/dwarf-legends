@@ -1,25 +1,35 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=15 format=3]
 
-[ext_resource type="Script" path="res://Scripts/GameRoot.cs" id="1"]
+[ext_resource type="Script" path="res://Scripts/App/GameRoot.cs" id="1"]
 [ext_resource type="Script" path="res://Scripts/Input/InputController.cs" id="2"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/TopBar.tscn" id="3"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/HoverInfoPanel.tscn" id="4"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/TileInfoPanel.tscn" id="5"]
+[ext_resource type="PackedScene" path="res://Scenes/UI/SelectionViewPanel.tscn" id="6"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/DwarfPanel.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/WorkshopPanel.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/AnnouncementLog.tscn" id="9"]
 [ext_resource type="PackedScene" path="res://Scenes/UI/ActionBar.tscn" id="10"]
 [ext_resource type="Script" path="res://Scripts/UI/KnowledgePanel.cs" id="11"]
+[ext_resource type="Script" path="res://Scripts/UI/DebugWindow.cs" id="12"]
+[ext_resource type="Script" path="res://Scripts/Rendering/WorldRender3D.cs" id="13"]
+[ext_resource type="Script" path="res://Scripts/UI/StoryInspectorPanel.cs" id="14"]
 
-[node name="GameRoot" type="Node2D"]
+[node name="GameRoot" type="Node"]
 script = ExtResource("1")
 
-[node name="MainCamera" type="Camera2D" parent="."]
+[node name="World3DRoot" type="Node3D" parent="."]
 unique_name_in_owner = true
-enabled = true
-zoom = Vector2(0.45, 0.45)
+script = ExtResource("13")
 
-[node name="InputController" type="Node2D" parent="."]
+[node name="MainCamera3D" type="Camera3D" parent="World3DRoot"]
+unique_name_in_owner = true
+current = true
+projection = 1
+position = Vector3(-24, 26, 24)
+rotation_degrees = Vector3(-55, -45, 0)
+
+[node name="InputController" type="Node" parent="."]
 unique_name_in_owner = true
 script = ExtResource("2")
 
@@ -57,6 +67,10 @@ theme_override_constants/separation = 4
 unique_name_in_owner = true
 visible = false
 
+[node name="SelectionViewPanel" parent="UI/UIRoot/RightDock" instance=ExtResource("6")]
+unique_name_in_owner = true
+visible = false
+
 [node name="DwarfPanel" parent="UI/UIRoot/RightDock" instance=ExtResource("7")]
 unique_name_in_owner = true
 visible = false
@@ -67,11 +81,10 @@ visible = false
 
 [node name="AnnouncementLog" parent="UI/UIRoot" instance=ExtResource("9")]
 unique_name_in_owner = true
-anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_right = 492.0
-offset_top = -182.0
+offset_right = 84.0
+offset_top = 88.0
 offset_bottom = -54.0
 
 [node name="ActionBar" parent="UI/UIRoot" instance=ExtResource("10")]
@@ -93,3 +106,29 @@ offset_top = -300.0
 offset_right = 400.0
 offset_bottom = 300.0
 script = ExtResource("11")
+
+[node name="DebugWindow" type="PanelContainer" parent="UI/UIRoot"]
+unique_name_in_owner = true
+visible = false
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -560.0
+offset_top = -320.0
+offset_right = 560.0
+offset_bottom = 320.0
+script = ExtResource("12")
+
+[node name="StoryInspectorPanel" type="PanelContainer" parent="UI/UIRoot"]
+unique_name_in_owner = true
+visible = false
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -480.0
+offset_top = -340.0
+offset_right = 480.0
+offset_bottom = 340.0
+script = ExtResource("14")

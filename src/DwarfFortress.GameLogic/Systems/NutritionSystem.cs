@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
@@ -78,10 +79,11 @@ public sealed class NutritionSystem : IGameSystem
         if (!registry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null)
             return;
 
+        var dataManager = _ctx.TryGet<DataManager>();
         var (carbs, protein, fat, vitamins) = ResolveNutritionProfile(itemDef);
 
-        // Apply trait-based nutrient credit multiplier (Fit = 2.0x)
-        var nutrientMultiplier = TraitSystem.GetNutrientCreditMultiplier(dwarf);
+        // Apply attribute-based nutrient credit multiplier (stamina, appetite attributes)
+        var nutrientMultiplier = AttributeEffectSystem.GetNutrientCreditMultiplier(dwarf, dataManager);
         carbs *= nutrientMultiplier;
         protein *= nutrientMultiplier;
         fat *= nutrientMultiplier;
@@ -92,12 +94,12 @@ public sealed class NutritionSystem : IGameSystem
 
         // Add body fat based on meal nutrition (carbs + fat contribute most)
         var bodyFatGain = (carbs + fat) * BodyFatComponent.FatGainPerMeal;
-        
-        // Fit trait reduces fat gain, Gluttony increases it
-        if (dwarf.Traits.HasTrait(TraitIds.Fit))
-            bodyFatGain *= 0.5f;
-        if (dwarf.Traits.HasTrait(TraitIds.Gluttony))
-            bodyFatGain *= 1.5f;
+        bodyFatGain *= AttributeEffectSystem.GetConfiguredMultiplier(
+            dwarf,
+            dataManager,
+            AttributeIds.Appetite,
+            "body_fat_gain_multiplier",
+            1.0f);
         
         dwarf.BodyFat.GainFat(bodyFatGain);
 

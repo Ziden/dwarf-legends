@@ -28,7 +28,7 @@ public sealed class FactionLoreState
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public bool IsHostile { get; set; }
-    public string PrimaryUnitDefId { get; set; } = "goblin";
+    public string PrimaryUnitDefId { get; set; } = "";
     public float Influence { get; set; }
     public float Militarism { get; set; }
     public float TradeFocus { get; set; }

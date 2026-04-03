@@ -1,0 +1,17 @@
+{
+  "id": "dog",
+  "displayName": "Dog",
+  "tags": ["animal", "pet", "groomer", "omnivore"],
+  "canGroom": true,
+  "diet": "omnivore",
+  "maxHealth": 30,
+  "speed": 1.2,
+  "visuals": {
+    "proceduralProfile": "dog",
+    "waterEffectStyle": "pet",
+    "viewerColor": "#DB8F47",
+    "spriteSheet": "res://Graphics/graphics/domestic.png",
+    "spriteColumn": 1,
+    "spriteRow": 0
+  }
+}

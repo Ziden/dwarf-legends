@@ -3,29 +3,22 @@
 [ext_resource type="Script" path="res://Scripts/UI/AnnouncementLog.cs" id="1"]
 
 [node name="AnnouncementLog" type="PanelContainer"]
-custom_minimum_size = Vector2(520, 132)
+custom_minimum_size = Vector2(72, 0)
 script = ExtResource("1")
 
 [node name="Margin" type="MarginContainer" parent="."]
 theme_override_constants/margin_left = 6
 theme_override_constants/margin_right = 6
-theme_override_constants/margin_top = 4
-theme_override_constants/margin_bottom = 4
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_bottom = 6
 
-[node name="VBox" type="VBoxContainer" parent="Margin"]
-theme_override_constants/separation = 6
-
-[node name="Headline" type="Label" parent="Margin/VBox"]
-unique_name_in_owner = true
-autowrap_mode = 3
-text = "No recent announcements."
-
-[node name="Scroll" type="ScrollContainer" parent="Margin/VBox"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 92)
-follow_focus = true
-size_flags_vertical = 3
-
-[node name="Entries" type="VBoxContainer" parent="Margin/VBox/Scroll"]
+[node name="Scroll" type="ScrollContainer" parent="Margin"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
+size_flags_vertical = 3
+follow_focus = true
+
+[node name="Entries" type="VBoxContainer" parent="Margin/Scroll"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+theme_override_constants/separation = 6

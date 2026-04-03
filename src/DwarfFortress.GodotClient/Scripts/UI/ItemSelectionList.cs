@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 public sealed record ItemSelectionEntry(
     string Id,
     string Title,
@@ -13,7 +16,8 @@ public sealed record ItemSelectionEntry(
     Texture2D? Icon,
     string ActionLabel,
     bool IsEnabled,
-    Action? OnPressed);
+    Action? OnPressed,
+    Texture2D? ActionIcon = null);
 
 public partial class ItemSelectionList : ScrollContainer
 {
@@ -142,6 +146,8 @@ public partial class ItemSelectionList : ScrollContainer
             MouseFilter = MouseFilterEnum.Stop,
             SizeFlagsVertical = SizeFlags.ShrinkCenter,
             SizeFlagsHorizontal = SizeFlags.ShrinkEnd,
+            ExpandIcon = true,
+            IconAlignment = HorizontalAlignment.Left,
         };
         var capturedId = entry.Id;
         action.Pressed += () =>
@@ -189,7 +195,9 @@ public partial class ItemSelectionList : ScrollContainer
         refs.Status.Text = entry.Status;
         refs.Status.Modulate = entry.StatusColor;
         refs.Action.Text = entry.ActionLabel;
+        refs.Action.Icon = entry.ActionIcon;
         refs.Action.Disabled = !entry.IsEnabled;
+        refs.Action.Visible = !string.IsNullOrWhiteSpace(entry.ActionLabel) || entry.ActionIcon is not null;
     }
 
     private void EnsureContent()

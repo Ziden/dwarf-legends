@@ -93,7 +93,7 @@ public sealed class WorldLoreConfig
                     Id = "faction_dwarven_hold",
                     NamePattern = "{left}hold Compact",
                     IsHostile = false,
-                    PrimaryUnitDefId = "dwarf",
+                    PrimaryUnitRole = FactionUnitRoleIds.CivilizedPrimary,
                     InfluenceMin = 0.65f,
                     InfluenceMax = 0.65f,
                     MilitarismMin = 0.45f,
@@ -107,8 +107,8 @@ public sealed class WorldLoreConfig
                     Id = "faction_goblin_clan",
                     NamePattern = "Black Banner of {left}",
                     IsHostile = true,
-                    PrimaryUnitDefId = "goblin",
-                    AlternatePrimaryUnitDefId = "troll",
+                    PrimaryUnitRole = FactionUnitRoleIds.HostilePrimary,
+                    AlternatePrimaryUnitRole = FactionUnitRoleIds.HostileAlternate,
                     AlternatePrimaryChance = 0.20f,
                     InfluenceMin = 0.45f,
                     InfluenceMax = 0.75f,
@@ -123,7 +123,7 @@ public sealed class WorldLoreConfig
                     Id = "faction_lowland_league",
                     NamePattern = "{left} Valley League",
                     IsHostile = false,
-                    PrimaryUnitDefId = "dwarf",
+                    PrimaryUnitRole = FactionUnitRoleIds.CivilizedPrimary,
                     InfluenceMin = 0.35f,
                     InfluenceMax = 0.60f,
                     MilitarismMin = 0.25f,
@@ -137,7 +137,7 @@ public sealed class WorldLoreConfig
                     Id = "faction_ashen_host",
                     NamePattern = "Ashen Host of {left}",
                     IsHostile = true,
-                    PrimaryUnitDefId = "goblin",
+                    PrimaryUnitRole = FactionUnitRoleIds.HostilePrimary,
                     InfluenceMin = 0.20f,
                     InfluenceMax = 0.45f,
                     MilitarismMin = 0.70f,
@@ -203,7 +203,9 @@ public sealed class WorldLoreConfig
             Id = template.Id,
             NamePattern = template.NamePattern,
             IsHostile = template.IsHostile,
-            PrimaryUnitDefId = string.IsNullOrWhiteSpace(template.PrimaryUnitDefId) ? "goblin" : template.PrimaryUnitDefId,
+            PrimaryUnitRole = template.PrimaryUnitRole,
+            PrimaryUnitDefId = template.PrimaryUnitDefId,
+            AlternatePrimaryUnitRole = template.AlternatePrimaryUnitRole,
             AlternatePrimaryUnitDefId = template.AlternatePrimaryUnitDefId,
             AlternatePrimaryChance = template.AlternatePrimaryChance,
             InfluenceMin = template.InfluenceMin,
@@ -236,7 +238,9 @@ public sealed class FactionTemplateConfig
     public string Id { get; set; } = "";
     public string NamePattern { get; set; } = "{left} faction";
     public bool IsHostile { get; set; }
-    public string PrimaryUnitDefId { get; set; } = "goblin";
+    public string? PrimaryUnitRole { get; set; }
+    public string PrimaryUnitDefId { get; set; } = "";
+    public string? AlternatePrimaryUnitRole { get; set; }
     public string? AlternatePrimaryUnitDefId { get; set; }
     public float AlternatePrimaryChance { get; set; }
     public float InfluenceMin { get; set; }

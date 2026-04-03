@@ -13,6 +13,7 @@ public sealed class GeneratedEmbarkMap
     public int Height { get; }
     public int Depth { get; }
     public IReadOnlyList<CreatureSpawn> CreatureSpawns => _creatureSpawns;
+    public EmbarkGenerationDiagnostics? Diagnostics { get; internal set; }
 
     public GeneratedEmbarkMap(int width, int height, int depth)
     {

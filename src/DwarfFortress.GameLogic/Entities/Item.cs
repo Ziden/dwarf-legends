@@ -31,6 +31,9 @@ public sealed class Item : Entity
     /// <summary>-1 = not currently carried. &gt;= 0 = entity ID carrying this item.</summary>
     public int          CarriedByEntityId { get; set; } = -1;
 
+    /// <summary>How this item is currently being carried, if at all.</summary>
+    public ItemCarryMode CarryMode { get; set; } = ItemCarryMode.None;
+
     /// <summary>True when this item is claimed by a job and should not be hauled elsewhere.</summary>
     public bool         IsClaimed  { get; set; }
 

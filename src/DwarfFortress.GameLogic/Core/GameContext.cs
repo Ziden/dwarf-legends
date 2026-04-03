@@ -14,6 +14,7 @@ public sealed class GameContext
     public CommandDispatcher Commands          { get; }
     public ILogger           Logger            { get; }
     public IDataSource       DataSource        { get; }
+    public SimulationProfiler Profiler         { get; }
 
     private readonly Dictionary<Type, IGameSystem> _systemMap = new();
 
@@ -21,12 +22,14 @@ public sealed class GameContext
         EventBus          eventBus,
         CommandDispatcher commands,
         ILogger           logger,
-        IDataSource       dataSource)
+        IDataSource       dataSource,
+        SimulationProfiler? profiler = null)
     {
         EventBus   = eventBus   ?? throw new ArgumentNullException(nameof(eventBus));
         Commands   = commands   ?? throw new ArgumentNullException(nameof(commands));
         Logger     = logger     ?? throw new ArgumentNullException(nameof(logger));
         DataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
+        Profiler   = profiler ?? new SimulationProfiler();
     }
 
     /// <summary>

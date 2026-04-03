@@ -1,0 +1,33 @@
+{
+  "id": "stone_tuber",
+  "displayName": "Stone Tuber",
+  "hostKind": "ground",
+  "allowedBiomes": ["highland", "windswept_steppe", "tundra"],
+  "allowedGroundTiles": ["soil", "grass", "stone_floor"],
+  "minMoisture": 0.1,
+  "maxMoisture": 0.58,
+  "minTerrain": 0.2,
+  "maxTerrain": 1.0,
+  "maxGrowthStage": 3,
+  "secondsPerStage": 840,
+  "fruitingCycleSeconds": 840,
+  "seedSpreadChance": 0.08,
+  "seedSpreadRadiusMin": 3,
+  "seedSpreadRadiusMax": 6,
+  "nutrition": { "energy": 0.48, "protein": 0.08, "vitamins": 0.1, "minerals": 0.34 },
+  "harvestItemDefId": "stone_tuber",
+  "harvestItem": {
+    "id": "stone_tuber",
+    "displayName": "Stone Tuber",
+    "tags": ["plant", "food"],
+    "weight": 0.6,
+    "nutrition": { "carbs": 0.5, "protein": 0.2, "fat": 0.1, "vitamins": 0.6 }
+  },
+  "seedItemDefId": "stone_tuber_seed",
+  "seedItem": {
+    "id": "stone_tuber_seed",
+    "displayName": "Stone Tuber Seed",
+    "tags": ["plant", "seed"],
+    "weight": 0.05
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "marsh_reed",
+  "displayName": "Marsh Reed",
+  "hostKind": "ground",
+  "allowedBiomes": ["misty_marsh", "tropical_rainforest", "temperate_plains"],
+  "allowedGroundTiles": ["mud", "soil", "grass"],
+  "minMoisture": 0.58,
+  "maxMoisture": 1.0,
+  "minTerrain": 0.0,
+  "maxTerrain": 0.55,
+  "prefersNearWater": true,
+  "maxGrowthStage": 3,
+  "secondsPerStage": 600,
+  "fruitingCycleSeconds": 640,
+  "seedSpreadChance": 0.13,
+  "seedSpreadRadiusMin": 3,
+  "seedSpreadRadiusMax": 6,
+  "nutrition": { "energy": 0.18, "protein": 0.26, "vitamins": 0.12, "minerals": 0.46 },
+  "harvestItemDefId": "marsh_reed_shoot",
+  "harvestItem": {
+    "id": "marsh_reed_shoot",
+    "displayName": "Marsh Reed Shoot",
+    "tags": ["plant", "food"],
+    "weight": 0.4,
+    "nutrition": { "carbs": 0.5, "protein": 0.2, "fat": 0.1, "vitamins": 0.6 }
+  },
+  "seedItemDefId": "marsh_reed_seed",
+  "seedItem": {
+    "id": "marsh_reed_seed",
+    "displayName": "Marsh Reed Seed",
+    "tags": ["plant", "seed"],
+    "weight": 0.05
+  }
+}

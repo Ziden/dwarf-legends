@@ -1,0 +1,34 @@
+{
+  "id": "sunroot",
+  "displayName": "Sunroot",
+  "hostKind": "ground",
+  "allowedBiomes": ["temperate_plains", "savanna", "windswept_steppe"],
+  "allowedGroundTiles": ["grass", "soil", "sand"],
+  "minMoisture": 0.18,
+  "maxMoisture": 0.72,
+  "minTerrain": 0.0,
+  "maxTerrain": 0.78,
+  "prefersFarFromWater": true,
+  "maxGrowthStage": 3,
+  "secondsPerStage": 720,
+  "fruitingCycleSeconds": 720,
+  "seedSpreadChance": 0.09,
+  "seedSpreadRadiusMin": 3,
+  "seedSpreadRadiusMax": 6,
+  "nutrition": { "energy": 0.62, "protein": 0.06, "vitamins": 0.16, "minerals": 0.08 },
+  "harvestItemDefId": "sunroot_bulb",
+  "harvestItem": {
+    "id": "sunroot_bulb",
+    "displayName": "Sunroot Bulb",
+    "tags": ["plant", "food", "grain"],
+    "weight": 0.5,
+    "nutrition": { "carbs": 0.8, "protein": 0.3, "fat": 0.2, "vitamins": 0.2 }
+  },
+  "seedItemDefId": "sunroot_seed",
+  "seedItem": {
+    "id": "sunroot_seed",
+    "displayName": "Sunroot Seed",
+    "tags": ["plant", "seed"],
+    "weight": 0.05
+  }
+}

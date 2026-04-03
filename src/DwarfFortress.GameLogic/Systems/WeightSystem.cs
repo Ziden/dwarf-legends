@@ -19,7 +19,7 @@ public record struct EncumbranceChangedEvent(int DwarfId, float OldRatio, float 
 
 /// <summary>
 /// Manages weight, carry capacity, and encumbrance for dwarves.
-/// Order 8 — runs after TraitSystem (order 7) so trait modifiers are applied.
+/// Order 8 — runs after AttributeEffectSystem (order 7) so attribute-driven stats are current.
 /// </summary>
 public sealed class WeightSystem : IGameSystem
 {
@@ -27,7 +27,7 @@ public sealed class WeightSystem : IGameSystem
     public int    UpdateOrder => 8;
     public bool   IsEnabled   { get; set; } = true;
 
-    /// <summary>Base carry capacity in kg for an average dwarf (130cm, no traits).</summary>
+    /// <summary>Base carry capacity in kg for an average dwarf (130cm, neutral attributes).</summary>
     public const float BaseCarryCapacity = 50f;
 
     /// <summary>Maximum carry capacity when dwarf halves their speed (2x base).</summary>
@@ -39,8 +39,8 @@ public sealed class WeightSystem : IGameSystem
     /// <summary>Speed penalty threshold - when carry ratio exceeds this, speed is halved.</summary>
     public const float SpeedPenaltyThreshold = 1.0f;
 
-    /// <summary>Lazy trait threshold - lazy dwarves start slowing at 50% capacity.</summary>
-    public const float LazySpeedPenaltyThreshold = 0.5f;
+    /// <summary>Minimum encumbrance threshold before speed penalties begin.</summary>
+    public const float MinimumSpeedPenaltyThreshold = 0.5f;
 
     private GameContext? _ctx;
     private const float EncumbranceEventInterval = 5f;
@@ -58,16 +58,16 @@ public sealed class WeightSystem : IGameSystem
         foreach (var dwarf in registry.GetAlive<Dwarf>())
         {
             var carriedWeight = GetCarriedItemWeight(dwarf, itemSystem, dm);
-            var maxCapacity = GetMaxCarryCapacity(dwarf);
+            var maxCapacity = GetMaxCarryCapacity(dwarf, dm);
             var carryRatio = carriedWeight / maxCapacity;
 
             // Apply speed modifier based on encumbrance
-            ApplyEncumbranceSpeed(dwarf, carryRatio);
+            ApplyEncumbranceSpeed(dwarf, carryRatio, dm);
 
             // Emit encumbrance event periodically
             if (_elapsed % EncumbranceEventInterval < delta && carryRatio > 0.8f)
             {
-                var speedMult = GetSpeedMultiplier(dwarf, carryRatio);
+                var speedMult = GetSpeedMultiplier(dwarf, carryRatio, dm);
                 _ctx.EventBus.Emit(new DwarfEncumberedEvent(dwarf.Id, carriedWeight, maxCapacity, speedMult));
             }
         }
@@ -78,9 +78,9 @@ public sealed class WeightSystem : IGameSystem
 
     /// <summary>
     /// Gets the maximum carry capacity for a dwarf in kg.
-    /// Base: 50kg, modified by height, Strong trait, and Fit trait.
+    /// Base: 50kg, modified by height, strength, and stamina.
     /// </summary>
-    public static float GetMaxCarryCapacity(Dwarf dwarf)
+    public static float GetMaxCarryCapacity(Dwarf dwarf, DataManager? dataManager = null)
     {
         var height = dwarf.Appearance.Height;
         var capacity = BaseCarryCapacity;
@@ -89,13 +89,18 @@ public sealed class WeightSystem : IGameSystem
         var heightBonus = Math.Max(0f, (height - 100f) * 0.5f);
         capacity += heightBonus;
 
-        // Strong trait: +50% capacity
-        if (dwarf.Traits.HasTrait(TraitIds.Strong))
-            capacity *= 1.5f;
-
-        // Fit trait: +25% capacity
-        if (dwarf.Traits.HasTrait(TraitIds.Fit))
-            capacity *= 1.25f;
+        capacity *= AttributeEffectSystem.GetConfiguredMultiplier(
+            dwarf,
+            dataManager,
+            AttributeIds.Strength,
+            "carry_capacity_multiplier",
+            1.0f);
+        capacity *= AttributeEffectSystem.GetConfiguredMultiplier(
+            dwarf,
+            dataManager,
+            AttributeIds.Stamina,
+            "carry_capacity_multiplier",
+            1.0f);
 
         return capacity;
     }
@@ -108,19 +113,19 @@ public sealed class WeightSystem : IGameSystem
         if (itemSystem is null) return 0f;
 
         float totalWeight = 0f;
-        
-        foreach (var itemId in dwarf.Inventory.CarriedItemIds)
-        {
-            if (itemSystem.TryGetItem(itemId, out var item) && item is not null)
-            {
-                var itemDef = dm?.Items.GetOrNull(item.DefId);
-                if (itemDef is not null)
-                {
-                    totalWeight += itemDef.Weight * item.StackSize;
-                }
-            }
-        }
+
+        foreach (var item in itemSystem.GetItemsCarriedBy(dwarf.Id))
+            totalWeight += GetItemWeight(item, dm);
+
         return totalWeight;
+    }
+
+    public static float GetItemWeight(Item item, DataManager? dm = null)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        var itemDef = dm?.Items.GetOrNull(item.DefId);
+        return itemDef is null ? 0f : itemDef.Weight * item.StackSize;
     }
 
     /// <summary>
@@ -155,11 +160,14 @@ public sealed class WeightSystem : IGameSystem
     /// Gets the speed multiplier based on encumbrance.
     /// Returns 1.0 for no penalty, 0.5 for maximum encumbrance.
     /// </summary>
-    public static float GetSpeedMultiplier(Dwarf dwarf, float carryRatio)
+    public static float GetSpeedMultiplier(Dwarf dwarf, float carryRatio, DataManager? dataManager = null)
     {
-        var threshold = dwarf.Traits.HasTrait(TraitIds.Lazy)
-            ? LazySpeedPenaltyThreshold
-            : SpeedPenaltyThreshold;
+        var threshold = AttributeEffectSystem.GetConfiguredEffectValue(
+            dwarf,
+            dataManager,
+            AttributeIds.Focus,
+            "encumbrance_threshold",
+            SpeedPenaltyThreshold);
 
         if (carryRatio <= threshold)
             return 1.0f;
@@ -172,10 +180,10 @@ public sealed class WeightSystem : IGameSystem
     /// <summary>
     /// Applies encumbrance speed modifier to the dwarf's speed stat.
     /// </summary>
-    private void ApplyEncumbranceSpeed(Dwarf dwarf, float carryRatio)
+    private void ApplyEncumbranceSpeed(Dwarf dwarf, float carryRatio, DataManager? dataManager = null)
     {
         var speedStat = dwarf.Stats.Speed;
-        var multiplier = GetSpeedMultiplier(dwarf, carryRatio);
+        var multiplier = GetSpeedMultiplier(dwarf, carryRatio, dataManager);
 
         // Remove existing encumbrance modifier
         speedStat.Modifiers.Remove("encumbrance");
@@ -197,8 +205,8 @@ public sealed class WeightSystem : IGameSystem
     /// </summary>
     public bool CanPickUpItem(Dwarf dwarf, float itemWeight, ItemSystem? itemSystem = null)
     {
-        var currentWeight = GetCarriedItemWeight(dwarf, itemSystem);
-        var maxCapacity = GetMaxCarryCapacity(dwarf);
+        var currentWeight = GetCarriedItemWeight(dwarf, itemSystem, _ctx?.TryGet<DataManager>());
+        var maxCapacity = GetMaxCarryCapacity(dwarf, _ctx?.TryGet<DataManager>());
         return (currentWeight + itemWeight) <= maxCapacity;
     }
 
@@ -208,8 +216,8 @@ public sealed class WeightSystem : IGameSystem
     /// </summary>
     public float GetEncumbranceRatio(Dwarf dwarf, ItemSystem? itemSystem = null)
     {
-        var carriedWeight = GetCarriedItemWeight(dwarf, itemSystem);
-        var maxCapacity = GetMaxCarryCapacity(dwarf);
+        var carriedWeight = GetCarriedItemWeight(dwarf, itemSystem, _ctx?.TryGet<DataManager>());
+        var maxCapacity = GetMaxCarryCapacity(dwarf, _ctx?.TryGet<DataManager>());
         return carriedWeight / maxCapacity;
     }
 

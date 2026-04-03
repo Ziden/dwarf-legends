@@ -14,6 +14,7 @@ public sealed class GameSimulation
     public EventBus          EventBus          { get; }
     public CommandDispatcher CommandDispatcher { get; }
     public GameContext       Context           { get; }
+    public SimulationProfiler Profiler         { get; }
 
     private readonly List<IGameSystem>   _systems = new();
     private          IGameSystem[]       _orderedSystems = Array.Empty<IGameSystem>();
@@ -25,7 +26,8 @@ public sealed class GameSimulation
         _logger           = logger     ?? throw new ArgumentNullException(nameof(logger));
         EventBus          = new EventBus();
         CommandDispatcher = new CommandDispatcher(logger);
-        Context           = new GameContext(EventBus, CommandDispatcher, logger, dataSource);
+        Profiler          = new SimulationProfiler();
+        Context           = new GameContext(EventBus, CommandDispatcher, logger, dataSource, Profiler);
     }
 
     // ── System Registration ────────────────────────────────────────────────
@@ -76,9 +78,29 @@ public sealed class GameSimulation
         if (!_initialized)
             throw new InvalidOperationException("[GameSimulation] Call Initialize() before Tick().");
 
-        foreach (var system in _orderedSystems)
-            if (system.IsEnabled)
-                system.Tick(delta);
+        Profiler.BeginFrame(delta);
+        try
+        {
+            foreach (var system in _orderedSystems)
+            {
+                if (!system.IsEnabled)
+                    continue;
+
+                Profiler.BeginSystem(system.SystemId, system.UpdateOrder);
+                try
+                {
+                    system.Tick(delta);
+                }
+                finally
+                {
+                    Profiler.EndSystem();
+                }
+            }
+        }
+        finally
+        {
+            Profiler.EndFrame();
+        }
     }
 
     // ── Save / Load ────────────────────────────────────────────────────────

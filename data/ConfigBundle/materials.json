@@ -13,6 +13,7 @@
   { "id": "tin",        "displayName": "Tin",        "tags": ["metal"],         "hardness": 3.0 },
   { "id": "silver",     "displayName": "Silver",     "tags": ["metal"],         "hardness": 2.5 },
   { "id": "gold",       "displayName": "Gold",       "tags": ["metal"],         "hardness": 2.0 },
+  { "id": "coal",       "displayName": "Coal",       "tags": ["fuel", "stone"], "hardness": 2.4 },
   { "id": "wood",       "displayName": "Wood",       "tags": ["organic"],       "hardness": 2.0 },
   { "id": "food",       "displayName": "Food",       "tags": ["organic"],       "hardness": 0.1 },
   { "id": "drink",      "displayName": "Drink",      "tags": ["liquid"],        "hardness": 0.1 },

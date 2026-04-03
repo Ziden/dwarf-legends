@@ -29,11 +29,14 @@ public sealed class Stat
 /// </summary>
 public sealed class StatComponent
 {
-    public Stat Speed     { get; } = new(StatNames.Speed,     1.0f);
-    public Stat Strength  { get; } = new(StatNames.Strength,  1.0f);
-    public Stat Toughness { get; } = new(StatNames.Toughness, 1.0f);
-    public Stat Agility   { get; } = new(StatNames.Agility,   1.0f);
-    public Stat Focus     { get; } = new(StatNames.Focus,     1.0f);
+    public const float DefaultSpeedBaseValue = 1.0f;
+    public const float DefaultPrimaryBaseValue = 10.0f;
+
+    public Stat Speed     { get; } = new(StatNames.Speed,     DefaultSpeedBaseValue);
+    public Stat Strength  { get; } = new(StatNames.Strength,  DefaultPrimaryBaseValue);
+    public Stat Toughness { get; } = new(StatNames.Toughness, DefaultPrimaryBaseValue);
+    public Stat Agility   { get; } = new(StatNames.Agility,   DefaultPrimaryBaseValue);
+    public Stat Focus     { get; } = new(StatNames.Focus,     DefaultPrimaryBaseValue);
 
     private readonly Dictionary<string, Stat> _all;
 
@@ -59,6 +62,13 @@ public sealed class StatComponent
 
     public bool TryGet(string statName, out Stat stat)
         => _all.TryGetValue(statName, out stat!);
+
+    public void ApplyBaseProfile(float speed, float strength, float toughness)
+    {
+        Speed.BaseValue = speed;
+        Strength.BaseValue = strength;
+        Toughness.BaseValue = toughness;
+    }
 
     /// <summary>Tick all modifier stacks forward by delta seconds.</summary>
     public void Tick(float delta)

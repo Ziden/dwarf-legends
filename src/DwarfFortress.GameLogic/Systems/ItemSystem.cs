@@ -64,6 +64,7 @@ public sealed class ItemSystem : IGameSystem
                 ContainerBuildingId = item.ContainerBuildingId,
                 ContainerItemId = item.ContainerItemId,
                 CarriedByEntityId = item.CarriedByEntityId,
+                CarryMode = item.CarryMode,
                 CorpseFormerEntityId = corpse?.FormerEntityId ?? -1,
                 CorpseFormerDefId = corpse?.FormerDefId,
                 CorpseDisplayName = corpse?.DisplayName,
@@ -113,7 +114,10 @@ public sealed class ItemSystem : IGameSystem
 
             if (s.CarriedByEntityId >= 0)
             {
-                SetCarriedState(item, s.CarriedByEntityId, isCarried: true);
+                SetCarriedState(
+                    item,
+                    s.CarriedByEntityId,
+                    s.CarryMode == ItemCarryMode.None ? ItemCarryMode.Inventory : s.CarryMode);
                 continue;
             }
 
@@ -138,6 +142,7 @@ public sealed class ItemSystem : IGameSystem
         public int     ContainerBuildingId { get; set; } = -1;
         public int     ContainerItemId { get; set; } = -1;
         public int     CarriedByEntityId { get; set; } = -1;
+        public ItemCarryMode CarryMode { get; set; } = ItemCarryMode.None;
         public int     CorpseFormerEntityId { get; set; } = -1;
         public string? CorpseFormerDefId { get; set; }
         public string? CorpseDisplayName { get; set; }
@@ -168,15 +173,14 @@ public sealed class ItemSystem : IGameSystem
     /// <summary>Removes an item from the world entirely.</summary>
     public void DestroyItem(int itemId)
     {
-        if (!_items.TryGetValue(itemId, out var item)) return;
+        if (!_items.TryGetValue(itemId, out var item))
+            return;
 
         var pos = item.Components.Get<PositionComponent>().Position;
         foreach (var child in GetItemsInItem(itemId).ToArray())
             MoveItem(child.Id, pos);
 
-        RemoveFromCarrierInventory(item);
-        if (item.CarriedByEntityId < 0 && item.ContainerItemId < 0)
-            RemoveFromPos(itemId, pos);
+        DetachFromCurrentLocation(item, pos);
         _items.Remove(itemId);
 
         var defId = item.DefId;
@@ -187,19 +191,19 @@ public sealed class ItemSystem : IGameSystem
     /// <summary>Moves an item to a new position, updating spatial index.</summary>
     public void MoveItem(int itemId, Vec3i newPos, int containerBuildingId = -1)
     {
-        if (!_items.TryGetValue(itemId, out var item)) return;
+        if (!_items.TryGetValue(itemId, out var item))
+            return;
 
         var pos = item.Components.Get<PositionComponent>();
         var old = pos.Position;
         var previousCarrierEntityId = item.CarriedByEntityId;
-        RemoveFromCarrierInventory(item);
-        if (item.CarriedByEntityId < 0 && item.ContainerItemId < 0)
-            RemoveFromPos(itemId, old);
+        DetachFromCurrentLocation(item, old);
         pos.Position = newPos;
         item.StockpileId = -1;
         item.ContainerBuildingId = -1;
         item.ContainerItemId = -1;
         item.CarriedByEntityId = -1;
+        item.CarryMode = ItemCarryMode.None;
         AddToPos(itemId, newPos);
 
         _ctx!.EventBus.Emit(new ItemMovedEvent(itemId, old, newPos));
@@ -220,41 +224,73 @@ public sealed class ItemSystem : IGameSystem
             return;
 
         var pos = item.Components.Get<PositionComponent>();
-        RemoveFromCarrierInventory(item);
-        if (item.CarriedByEntityId < 0 && item.ContainerItemId < 0)
-            RemoveFromPos(itemId, pos.Position);
+        DetachFromCurrentLocation(item, pos.Position);
 
         pos.Position = newPos;
         item.StockpileId = -1;
         item.ContainerBuildingId = -1;
         item.CarriedByEntityId = -1;
+        item.CarryMode = ItemCarryMode.None;
         item.ContainerItemId = containerItemId;
     }
 
-    public void PickUpItem(int itemId, int carrierEntityId, Vec3i carrierPos)
+    public bool PickUpItem(int itemId, int carrierEntityId, Vec3i carrierPos, ItemCarryMode carryMode = ItemCarryMode.Inventory)
     {
-        if (!_items.TryGetValue(itemId, out var item)) return;
+        if (!_items.TryGetValue(itemId, out var item) || carryMode == ItemCarryMode.None)
+            return false;
 
-        // Remove from box container if the item was stored inside one
-        if (item.ContainerItemId >= 0)
+        if (carryMode == ItemCarryMode.Inventory &&
+            _ctx?.TryGet<EntityRegistry>() is { } entityRegistry &&
+            entityRegistry.TryGetById<Dwarf>(carrierEntityId, out var dwarf) && dwarf is not null)
         {
-            var registry = _ctx?.TryGet<EntityRegistry>();
-            if (registry is not null && registry.TryGetById<Box>(item.ContainerItemId, out var containerBox))
-                containerBox?.Container.Remove(itemId);
+            var dm = _ctx.TryGet<DataManager>();
+            var itemWeight = WeightSystem.GetItemWeight(item, dm);
+            if (itemWeight > 0f && !(_ctx.TryGet<WeightSystem>()?.CanPickUpItem(dwarf, itemWeight, this) ?? true))
+                return false;
         }
 
         var pos = item.Components.Get<PositionComponent>();
-        RemoveFromCarrierInventory(item);
-        if (item.CarriedByEntityId < 0)
-            RemoveFromPos(itemId, pos.Position);
-        pos.Position = carrierPos;
+        var previousPosition = pos.Position;
+        var previousStockpileId = item.StockpileId;
+        var previousContainerBuildingId = item.ContainerBuildingId;
+        var previousContainerItemId = item.ContainerItemId;
+        var previousCarrierEntityId = item.CarriedByEntityId;
+        var previousCarryMode = item.CarryMode;
+        var wasIndexedInWorld = IsIndexedInWorld(item);
+        var previousBoxContainer = ResolveBoxContainer(item.ContainerItemId);
+
+        DetachFromCurrentLocation(item, previousPosition);
+
+        item.CarriedByEntityId = carrierEntityId;
+        item.CarryMode = carryMode;
         item.StockpileId = -1;
         item.ContainerBuildingId = -1;
         item.ContainerItemId = -1;
-        item.CarriedByEntityId = carrierEntityId;
-        AddToCarrierInventory(item);
+
+        // Check inventory capacity
+        if (!AddToCarrier(item))
+        {
+            // Inventory full — revert carrier assignment
+            item.CarriedByEntityId = previousCarrierEntityId;
+            item.CarryMode = previousCarryMode;
+            item.StockpileId = previousStockpileId;
+            item.ContainerBuildingId = previousContainerBuildingId;
+            item.ContainerItemId = previousContainerItemId;
+            pos.Position = previousPosition;
+
+            if (previousCarrierEntityId >= 0 && previousCarryMode != ItemCarryMode.None)
+                AddToCarrier(item);
+            else if (wasIndexedInWorld)
+                AddToPos(itemId, previousPosition);
+
+            previousBoxContainer?.Container.TryAdd(itemId);
+            return false;
+        }
+
+        pos.Position = carrierPos;
 
         _ctx!.EventBus.Emit(new ItemPickedUpEvent(item.Id, item.DefId, carrierEntityId, carrierPos));
+        return true;
     }
 
     public void UpdateCarriedItemsPosition(int carrierEntityId, Vec3i carrierPos)
@@ -265,15 +301,53 @@ public sealed class ItemSystem : IGameSystem
 
     public IEnumerable<Item> GetItemsCarriedBy(int carrierEntityId)
     {
-        var registry = _ctx?.Get<EntityRegistry>();
-        var inventory = registry?.TryGetById(carrierEntityId)?.Components.TryGet<InventoryComponent>();
-        if (inventory is null)
-            return _items.Values.Where(item => item.CarriedByEntityId == carrierEntityId);
+        var carrier = _ctx?.TryGet<EntityRegistry>()?.TryGetById(carrierEntityId);
+        var yieldedIds = new HashSet<int>();
 
-        return inventory.CarriedItemIds
-            .Select(itemId => _items.TryGetValue(itemId, out var item) ? item : null)
-            .Where(item => item is not null)
-            .Select(item => item!);
+        if (carrier?.Components.TryGet<InventoryComponent>() is { } inventory)
+        {
+            foreach (var itemId in inventory.CarriedItemIds)
+            {
+                if (!_items.TryGetValue(itemId, out var item))
+                    continue;
+
+                yieldedIds.Add(item.Id);
+                yield return item;
+            }
+        }
+
+        if (carrier?.Components.TryGet<HaulingComponent>() is { IsHauling: true } hauling
+            && _items.TryGetValue(hauling.HauledItemId, out var hauledItem))
+        {
+            yieldedIds.Add(hauledItem.Id);
+            yield return hauledItem;
+        }
+
+        foreach (var item in _items.Values)
+            if (item.CarriedByEntityId == carrierEntityId && yieldedIds.Add(item.Id))
+                yield return item;
+    }
+
+    public bool TryGetHauledItem(int carrierEntityId, out Item? item)
+    {
+        item = null;
+        var hauling = _ctx?.TryGet<EntityRegistry>()?
+            .TryGetById(carrierEntityId)?
+            .Components
+            .TryGet<HaulingComponent>();
+        if (hauling is not null && hauling.IsHauling)
+            return _items.TryGetValue(hauling.HauledItemId, out item);
+
+        foreach (var candidate in _items.Values)
+        {
+            if (candidate.CarriedByEntityId != carrierEntityId || candidate.CarryMode != ItemCarryMode.Hauling)
+                continue;
+
+            item = candidate;
+            return true;
+        }
+
+        return false;
     }
 
     public void ReleaseCarriedItem(int itemId, Vec3i dropPos)
@@ -281,9 +355,10 @@ public sealed class ItemSystem : IGameSystem
         if (!_items.TryGetValue(itemId, out var item)) return;
 
         var carrierEntityId = item.CarriedByEntityId;
-        RemoveFromCarrierInventory(item);
+        DetachFromCurrentLocation(item, item.Components.Get<PositionComponent>().Position);
         item.Components.Get<PositionComponent>().Position = dropPos;
         item.CarriedByEntityId = -1;
+        item.CarryMode = ItemCarryMode.None;
         item.ContainerBuildingId = -1;
         item.ContainerItemId = -1;
         item.StockpileId = -1;
@@ -313,6 +388,33 @@ public sealed class ItemSystem : IGameSystem
                 yield return it;
     }
 
+    public IEnumerable<Item> GetLooseItemsAt(Vec3i pos)
+    {
+        foreach (var item in GetItemsAt(pos))
+            if (IsLooseWorldItem(item))
+                yield return item;
+    }
+
+    public void CollectLooseItemsInBounds(int z, int minX, int minY, int maxX, int maxY, List<int> results)
+    {
+        results.Clear();
+        if (maxX < minX || maxY < minY)
+            return;
+
+        for (var y = minY; y <= maxY; y++)
+        for (var x = minX; x <= maxX; x++)
+        {
+            if (!_byPos.TryGetValue(new Vec3i(x, y, z), out var itemIds))
+                continue;
+
+            foreach (var itemId in itemIds)
+            {
+                if (_items.TryGetValue(itemId, out var item) && IsLooseWorldItem(item))
+                    results.Add(itemId);
+            }
+        }
+    }
+
     public IEnumerable<Item> GetAllItems() => _items.Values;
 
     public IEnumerable<Item> GetItemsInItem(int containerItemId)
@@ -330,13 +432,12 @@ public sealed class ItemSystem : IGameSystem
     {
         if (!_items.TryGetValue(itemId, out var item)) return;
         var pos = item.Components.Get<PositionComponent>();
-        RemoveFromCarrierInventory(item);
-        if (item.CarriedByEntityId < 0 && item.ContainerItemId < 0)
-            RemoveFromPos(itemId, pos.Position);
+        DetachFromCurrentLocation(item, pos.Position);
         pos.Position = box.Position.Position;
         item.StockpileId = stockpileId;
         item.ContainerBuildingId = -1;
         item.CarriedByEntityId = -1;
+        item.CarryMode = ItemCarryMode.None;
         item.ContainerItemId = box.Id;
         box.Container.TryAdd(itemId);
     }
@@ -354,47 +455,68 @@ public sealed class ItemSystem : IGameSystem
 
     public bool CanFulfillInputs(IReadOnlyList<RecipeInput> inputs)
     {
-        return TryMatchInputIds(inputs, GetUsableItems().ToList(), out _);
+        var data = _ctx?.TryGet<DataManager>();
+        return data is not null &&
+               RecipeResolver.TryMatchInputs(data, inputs, GetUsableItems().ToList(), out _);
+    }
+
+    public bool CanFulfillRecipe(RecipeDef recipe)
+    {
+        var data = _ctx?.TryGet<DataManager>();
+        if (data is null)
+            return false;
+
+        return RecipeResolver.TryMatchRecipe(data, recipe, GetUsableItems().ToList(), out _, out _);
     }
 
     public bool TryReserveInputs(IReadOnlyList<RecipeInput> inputs, List<int> reservedIds)
     {
-        if (!TryMatchInputIds(inputs, GetUsableItems().ToList(), out var matchedIds))
+        var data = _ctx?.TryGet<DataManager>();
+        if (data is null ||
+            !RecipeResolver.TryMatchInputs(data, inputs, GetUsableItems().ToList(), out var matchedItems))
             return false;
 
-        foreach (var itemId in matchedIds)
-            if (_items.TryGetValue(itemId, out var item))
-                item.IsClaimed = true;
+        return ClaimMatchedItems(matchedItems, reservedIds);
+    }
 
-        reservedIds.AddRange(matchedIds);
-        return true;
+    public bool TryReserveRecipeInputs(RecipeDef recipe, List<int> reservedIds)
+    {
+        var data = _ctx?.TryGet<DataManager>();
+        if (data is null ||
+            !RecipeResolver.TryMatchRecipe(data, recipe, GetUsableItems().ToList(), out var matchedItems, out _))
+        {
+            return false;
+        }
+
+        return ClaimMatchedItems(matchedItems, reservedIds);
     }
 
     public bool TryConsumeReservedInputs(IReadOnlyList<RecipeInput> inputs, IReadOnlyList<int> reservedIds)
     {
-        var reservedItems = reservedIds
-            .Select(id => _items.TryGetValue(id, out var item) ? item : null)
-            .Where(item => item is not null)
-            .Select(item => item!)
-            .ToList();
-
-        if (!TryMatchInputIds(inputs, reservedItems, out var matchedIds))
+        var data = _ctx?.TryGet<DataManager>();
+        if (data is null ||
+            !TryResolveReservedInputItems(data, inputs, reservedIds, out var matchedItems))
             return false;
 
-        foreach (var itemId in matchedIds)
-            DestroyItem(itemId);
-
+        DestroyMatchedItems(matchedItems);
         return true;
     }
 
     public bool TryConsumeInputs(IReadOnlyList<RecipeInput> inputs)
+        => TryConsumeInputs(inputs, out _);
+
+    public bool TryConsumeInputs(IReadOnlyList<RecipeInput> inputs, out List<Item> consumedItems)
     {
-        if (!TryMatchInputIds(inputs, GetUsableItems().ToList(), out var consumedIds))
+        consumedItems = new List<Item>();
+        var data = _ctx?.TryGet<DataManager>();
+        if (data is null ||
+            !RecipeResolver.TryMatchInputs(data, inputs, GetUsableItems().ToList(), out var matchedItems))
+        {
             return false;
+        }
 
-        foreach (var itemId in consumedIds)
-            DestroyItem(itemId);
-
+        consumedItems = matchedItems.ToList();
+        DestroyMatchedItems(matchedItems);
         return true;
     }
 
@@ -402,6 +524,10 @@ public sealed class ItemSystem : IGameSystem
     public Item? FindFoodItem() =>
         GetUsableItems().FirstOrDefault(i => HasTag(i, TagIds.Food))
         ?? FindItemInBoxes(TagIds.Food);
+
+    /// <summary>Returns an unclaimed food item currently carried by the specified entity.</summary>
+    public Item? FindCarriedFoodItem(int carrierEntityId)
+        => GetItemsCarriedBy(carrierEntityId).FirstOrDefault(item => !item.IsClaimed && HasTag(item, TagIds.Food));
 
     /// <summary>Returns a usable drink item anywhere in the fortress, including inside boxes.</summary>
     public Item? FindDrinkItem() =>
@@ -439,41 +565,61 @@ public sealed class ItemSystem : IGameSystem
         }
     }
 
-    private void SetCarriedState(Item item, int carrierEntityId, bool isCarried)
+    private void DetachFromCurrentLocation(Item item, Vec3i pos)
     {
-        if (isCarried)
-        {
-            RemoveFromCarrierInventory(item);
-            if (item.ContainerItemId < 0)
-                RemoveFromPos(item.Id, item.Position.Position);
-            item.CarriedByEntityId = carrierEntityId;
-            item.StockpileId = -1;
-            item.ContainerBuildingId = -1;
-            item.ContainerItemId = -1;
-            AddToCarrierInventory(item);
-            return;
-        }
-
-        RemoveFromCarrierInventory(item);
-        item.CarriedByEntityId = -1;
+        ResolveBoxContainer(item.ContainerItemId)?.Container.Remove(item.Id);
+        RemoveFromCarrier(item);
+        if (IsIndexedInWorld(item))
+            RemoveFromPos(item.Id, pos);
     }
 
-    private void AddToCarrierInventory(Item item)
+    private Box? ResolveBoxContainer(int containerItemId)
     {
-        if (item.CarriedByEntityId < 0 || _ctx is null)
-            return;
+        if (containerItemId < 0 || _ctx?.TryGet<EntityRegistry>() is not { } registry)
+            return null;
+
+        return registry.TryGetById<Box>(containerItemId, out var box) ? box : null;
+    }
+
+    private static bool IsIndexedInWorld(Item item)
+        => item.CarriedByEntityId < 0 && item.ContainerItemId < 0;
+
+    private void SetCarriedState(Item item, int carrierEntityId, ItemCarryMode carryMode)
+    {
+        DetachFromCurrentLocation(item, item.Position.Position);
+        item.CarriedByEntityId = carrierEntityId;
+        item.CarryMode = carryMode == ItemCarryMode.None ? ItemCarryMode.Inventory : carryMode;
+        item.StockpileId = -1;
+        item.ContainerBuildingId = -1;
+        item.ContainerItemId = -1;
+        AddToCarrier(item);
+    }
+
+    private bool AddToCarrier(Item item)
+    {
+        if (item.CarriedByEntityId < 0 || item.CarryMode == ItemCarryMode.None || _ctx is null)
+            return false;
 
         var carrier = _ctx.Get<EntityRegistry>().TryGetById(item.CarriedByEntityId);
-        carrier?.Components.TryGet<InventoryComponent>()?.AddCarriedItem(item.Id);
+        if (carrier is null)
+            return false;
+
+        return item.CarryMode switch
+        {
+            ItemCarryMode.Inventory => carrier.Components.TryGet<InventoryComponent>()?.TryAddCarriedItem(item.Id) == true,
+            ItemCarryMode.Hauling => carrier.Components.TryGet<HaulingComponent>()?.TryStartHauling(item.Id) == true,
+            _ => false,
+        };
     }
 
-    private void RemoveFromCarrierInventory(Item item)
+    private void RemoveFromCarrier(Item item)
     {
         if (item.CarriedByEntityId < 0 || _ctx is null)
             return;
 
         var carrier = _ctx.Get<EntityRegistry>().TryGetById(item.CarriedByEntityId);
         carrier?.Components.TryGet<InventoryComponent>()?.RemoveCarriedItem(item.Id);
+        carrier?.Components.TryGet<HaulingComponent>()?.StopHauling(item.Id);
     }
 
     private bool HasTag(Item item, string tag)
@@ -484,64 +630,48 @@ public sealed class ItemSystem : IGameSystem
         return def?.Tags.Contains(tag) ?? false;
     }
 
+    public static bool IsLooseWorldItem(Item item)
+        => item.CarriedByEntityId < 0 && item.ContainerItemId < 0 && item.ContainerBuildingId < 0;
+
     private static bool IsUsableItem(Item item)
         => !item.IsClaimed && item.CarriedByEntityId < 0 && item.ContainerItemId < 0;
 
-    private bool MatchesInput(Item item, TagSet requiredTags)
+    private bool ClaimMatchedItems(IReadOnlyList<Item> matchedItems, List<int> reservedIds)
     {
-        var dm = _ctx?.TryGet<Data.DataManager>();
-        var def = dm?.Items.GetOrNull(item.DefId);
-        return def?.Tags.HasAll(requiredTags.All.ToArray()) ?? false;
-    }
-
-    private bool TryMatchInputs(
-        IReadOnlyList<TagSet> requiredTags,
-        int index,
-        IReadOnlyList<Item> availableItems,
-        HashSet<int> matchedIds,
-        List<int> consumedIds)
-    {
-        if (index >= requiredTags.Count)
-            return true;
-
-        var tags = requiredTags[index];
-        var candidates = availableItems
-            .Where(item => !matchedIds.Contains(item.Id) && MatchesInput(item, tags))
-            .OrderBy(item => CountMatchingRequirements(item, requiredTags, index + 1))
-            .ToList();
-
-        foreach (var candidate in candidates)
+        foreach (var matchedItem in matchedItems)
         {
-            matchedIds.Add(candidate.Id);
-            consumedIds.Add(candidate.Id);
-
-            if (TryMatchInputs(requiredTags, index + 1, availableItems, matchedIds, consumedIds))
-                return true;
-
-            consumedIds.RemoveAt(consumedIds.Count - 1);
-            matchedIds.Remove(candidate.Id);
+            if (!_items.TryGetValue(matchedItem.Id, out var item))
+                return false;
         }
 
-        return false;
+        foreach (var matchedItem in matchedItems)
+        {
+            var item = _items[matchedItem.Id];
+            item.IsClaimed = true;
+            reservedIds.Add(item.Id);
+        }
+
+        return true;
     }
 
-    private bool TryMatchInputIds(IReadOnlyList<RecipeInput> inputs, IReadOnlyList<Item> availableItems, out List<int> matchedIds)
+    private void DestroyMatchedItems(IReadOnlyList<Item> matchedItems)
     {
-        var requiredTags = inputs
-            .SelectMany(input => Enumerable.Repeat(input.RequiredTags, input.Quantity))
-            .OrderByDescending(tags => tags.Count)
+        foreach (var matchedItem in matchedItems)
+            DestroyItem(matchedItem.Id);
+    }
+
+    private bool TryResolveReservedInputItems(
+        DataManager data,
+        IReadOnlyList<RecipeInput> inputs,
+        IReadOnlyList<int> reservedIds,
+        out List<Item> matchedItems)
+    {
+        var reservedItems = reservedIds
+            .Select(id => _items.TryGetValue(id, out var item) ? item : null)
+            .Where(item => item is not null)
+            .Select(item => item!)
             .ToList();
 
-        matchedIds = new List<int>();
-        return TryMatchInputs(requiredTags, 0, availableItems, new HashSet<int>(), matchedIds);
-    }
-
-    private int CountMatchingRequirements(Item item, IReadOnlyList<TagSet> requiredTags, int startIndex)
-    {
-        int count = 0;
-        for (int index = startIndex; index < requiredTags.Count; index++)
-            if (MatchesInput(item, requiredTags[index]))
-                count++;
-        return count;
+        return RecipeResolver.TryMatchInputs(data, inputs, reservedItems, out matchedItems);
     }
 }

@@ -28,6 +28,7 @@ public sealed class TestDataFixture : IDisposable
 
     public const string MaterialsJson = """
         [
+          { "id": "granite", "displayName": "Granite", "tags": ["stone"],  "hardness": 6.5 },
           { "id": "iron",   "displayName": "Iron",   "tags": ["metal"],  "hardness": 7.5 },
           { "id": "oak",    "displayName": "Oak",    "tags": ["wood"],   "hardness": 3.0 }
         ]

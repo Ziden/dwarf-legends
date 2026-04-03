@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Jobs;
@@ -35,21 +36,26 @@ public sealed class WorldQuerySystem : IGameSystem
 
     public WorldLoreSummaryView? GetLoreSummary()
     {
-        var lore = _ctx!.TryGet<WorldLoreSystem>()?.Current;
-        if (lore is null)
+        var runtimeHistory = _ctx!.TryGet<WorldHistoryRuntimeService>();
+        var macroState = _ctx.TryGet<WorldMacroStateService>();
+        if (runtimeHistory?.CurrentSummary is not { } canonicalSummary || macroState?.Current is not { } macro)
             return null;
 
         return new WorldLoreSummaryView(
-            lore.RegionName,
-            lore.BiomeId,
-            lore.Threat,
-            lore.Prosperity,
-            lore.SimulatedYears,
-            lore.History
-                .OrderByDescending(e => e.Year)
-                .Take(8)
-                .Select(e => $"Y{e.Year}: {e.Summary}")
-                .ToArray());
+            canonicalSummary.RegionName,
+            canonicalSummary.BiomeId,
+            macro.Threat,
+            macro.Prosperity,
+            canonicalSummary.SimulatedYears,
+            canonicalSummary.RecentEvents,
+            true,
+            canonicalSummary.OwnerCivilizationId,
+            canonicalSummary.OwnerCivilizationName,
+            canonicalSummary.PrimarySiteId,
+            canonicalSummary.PrimarySiteName,
+            canonicalSummary.PrimarySitePopulation,
+            canonicalSummary.PrimarySiteHouseholdCount,
+            canonicalSummary.PrimarySiteMilitaryCount);
     }
 
     public FortressAnnouncementView[] GetFortressAnnouncements(int maxEntries = 24)
@@ -69,6 +75,8 @@ public sealed class WorldQuerySystem : IGameSystem
         if (tile.TileDefId == TileDefIds.Empty)
             return null;
         var isVisible = MiningLineOfSight.IsTileVisible(map, pos);
+        var isDamp = MiningHazardAnalysis.IsDampWall(map, pos);
+        var isWarm = MiningHazardAnalysis.IsWarmWall(map, pos);
         var oreItemDefId = tile.OreItemDefId;
         if (!string.IsNullOrWhiteSpace(oreItemDefId) && !MiningLineOfSight.IsOreVisible(map, pos))
             oreItemDefId = null;
@@ -88,6 +96,8 @@ public sealed class WorldQuerySystem : IGameSystem
             tile.CoatingMaterialId,
             tile.CoatingAmount,
             tile.IsAquifer,
+            isDamp,
+            isWarm,
             oreItemDefId,
                 tile.PlantDefId,
                 tile.PlantGrowthStage,
@@ -112,13 +122,17 @@ public sealed class WorldQuerySystem : IGameSystem
         var labors = dwarf.Components.Get<LaborComponent>();
         var inventory = dwarf.Components.Get<InventoryComponent>();
         var appearance = dwarf.Appearance;
-        var traits = dwarf.Traits;
+        var attributes = dwarf.Attributes;
         var currentJob = jobSystem?.GetAssignedJob(dwarf.Id);
+        var hauledItem = items?.TryGetHauledItem(dwarf.Id, out var hauled) == true && hauled is not null
+            ? ToItemView(hauled)
+            : null;
         var carriedItems = items is null
             ? Array.Empty<ItemView>()
             : inventory.CarriedItemIds
                 .Select(itemId => items.TryGetItem(itemId, out var item) ? item : null)
                 .Where(item => item is not null)
+                .OrderBy(item => item!.Id)
                 .Select(item => ToItemView(item!))
                 .ToArray();
 
@@ -180,8 +194,43 @@ public sealed class WorldQuerySystem : IGameSystem
                 appearance.NoseType.ToString(),
                 appearance.MouthType.ToString(),
                 appearance.FaceType.ToString()),
-            BuildTraitViews(traits),
-            eventLogSystem?.GetEntries(dwarf.Id).Select(ToEventLogView).ToArray() ?? Array.Empty<EventLogEntryView>());
+            BuildAttributeViews(attributes),
+            eventLogSystem?.GetEntries(dwarf.Id).Select(ToEventLogView).ToArray() ?? Array.Empty<EventLogEntryView>(),
+            BuildDwarfProvenanceView(dwarf),
+            hauledItem);
+    }
+
+    private DwarfProvenanceView? BuildDwarfProvenanceView(Dwarf dwarf)
+    {
+        var provenance = dwarf.Components.TryGet<DwarfProvenanceComponent>();
+        if (provenance is null || !provenance.HasKnownOrigin)
+            return null;
+
+        var historyRuntime = _ctx!.TryGet<WorldHistoryRuntimeService>();
+        var figure = historyRuntime?.GetFigure(provenance.FigureId);
+        var household = historyRuntime?.GetHousehold(provenance.HouseholdId);
+        var civilization = historyRuntime?.GetCivilization(provenance.CivilizationId);
+        var originSite = historyRuntime?.GetSite(provenance.OriginSiteId);
+        var birthSite = historyRuntime?.GetSite(provenance.BirthSiteId);
+
+        return new DwarfProvenanceView(
+            provenance.WorldSeed,
+            provenance.FigureId,
+            figure?.Name,
+            provenance.HouseholdId,
+            household?.Name,
+            provenance.CivilizationId,
+            civilization?.Name,
+            provenance.OriginSiteId,
+            originSite?.Name,
+            originSite?.Kind,
+            provenance.BirthSiteId,
+            birthSite?.Name,
+            provenance.MigrationWaveId,
+            provenance.WorldX,
+            provenance.WorldY,
+            provenance.RegionX,
+            provenance.RegionY);
     }
 
     public CreatureView? GetCreatureView(int id)
@@ -193,9 +242,13 @@ public sealed class WorldQuerySystem : IGameSystem
         var eventLogSystem = _ctx.TryGet<EntityEventLogSystem>();
 
         var creatureItems = _ctx.TryGet<ItemSystem>();
+        var hauledItem = creatureItems?.TryGetHauledItem(creature.Id, out var hauled) == true && hauled is not null
+            ? ToItemView(hauled)
+            : null;
         var creatureCarried = creature.Inventory.CarriedItemIds
             .Select(id => creatureItems?.TryGetItem(id, out var itm) == true ? itm : null)
             .Where(itm => itm is not null)
+            .OrderBy(itm => itm!.Id)
             .Select(itm => ToItemView(itm!))
             .ToArray();
 
@@ -226,7 +279,8 @@ public sealed class WorldQuerySystem : IGameSystem
                 .Select(pair => new SubstanceView(pair.Key, pair.Value))
                 .ToArray(),
             creatureCarried,
-            eventLogSystem?.GetEntries(creature.Id).Select(ToEventLogView).ToArray() ?? Array.Empty<EventLogEntryView>());
+            eventLogSystem?.GetEntries(creature.Id).Select(ToEventLogView).ToArray() ?? Array.Empty<EventLogEntryView>(),
+            hauledItem);
     }
 
     public ItemView? GetItemView(int id)
@@ -236,6 +290,33 @@ public sealed class WorldQuerySystem : IGameSystem
             return null;
 
         return ToItemView(item);
+    }
+
+    public ItemView[] GetContainedItemViews(int containerItemId)
+    {
+        var items = _ctx!.TryGet<ItemSystem>();
+        if (items is null)
+            return Array.Empty<ItemView>();
+
+        var registry = _ctx.TryGet<EntityRegistry>();
+        if (registry?.TryGetById(containerItemId) is { } entity && entity is not Item)
+        {
+            var container = entity.Components.TryGet<ContainerComponent>();
+            if (container is not null)
+            {
+                return container.StoredItemIds
+                    .Select(itemId => items.TryGetItem(itemId, out var item) ? item : null)
+                    .Where(item => item is not null)
+                    .OrderBy(item => item!.Id)
+                    .Select(item => ToItemView(item!))
+                    .ToArray();
+            }
+        }
+
+        return items.GetItemsInItem(containerItemId)
+            .OrderBy(item => item.Id)
+            .Select(ToItemView)
+            .ToArray();
     }
 
     public BuildingView? GetBuildingView(int id)
@@ -249,12 +330,41 @@ public sealed class WorldQuerySystem : IGameSystem
                 building.BuildingDefId,
                 building.Origin,
                 building.IsWorkshop,
-                itemSystem?.GetItemsInBuilding(building.Id).Count() ?? 0);
+                itemSystem?.GetItemsInBuilding(building.Id).Count() ?? 0,
+                building.MaterialId);
+    }
+
+    public ContainerEntityView? GetContainerEntityView(int id)
+    {
+        var registry = _ctx!.TryGet<EntityRegistry>();
+        var entity = registry?.TryGetById(id);
+        if (entity is null || entity is Item)
+            return null;
+
+        var position = entity.Components.TryGet<PositionComponent>();
+        var container = entity.Components.TryGet<ContainerComponent>();
+        if (position is null || container is null)
+            return null;
+
+        var itemSystem = _ctx.TryGet<ItemSystem>();
+        var contents = container.StoredItemIds
+            .Select(itemId => itemSystem?.TryGetItem(itemId, out var item) == true ? item : null)
+            .Where(item => item is not null)
+            .OrderBy(item => item!.Id)
+            .Select(item => ToItemView(item!))
+            .ToArray();
+
+        return new ContainerEntityView(
+            entity.Id,
+            entity.DefId,
+            position.Position,
+            new StoredItemsView(contents.Length, contents, container.Capacity));
     }
 
     public TileQueryResult QueryTile(Vec3i pos)
     {
         var spatial = _ctx!.Get<SpatialIndexSystem>();
+        var itemSystem = _ctx.TryGet<ItemSystem>();
         var stockpile = _ctx.TryGet<StockpileManager>()?.GetAll()
             .FirstOrDefault(s =>
                 pos.X >= Math.Min(s.From.X, s.To.X) && pos.X <= Math.Max(s.From.X, s.To.X) &&
@@ -266,35 +376,38 @@ public sealed class WorldQuerySystem : IGameSystem
             GetTileView(pos),
             spatial.GetDwarvesAt(pos).Select(id => GetDwarfView(id)).Where(v => v is not null).Select(v => v!).ToArray(),
             spatial.GetCreaturesAt(pos).Select(id => GetCreatureView(id)).Where(v => v is not null).Select(v => v!).ToArray(),
-            (_ctx!.TryGet<ItemSystem>()?.GetItemsAt(pos) ?? Enumerable.Empty<Item>()).Select(ToItemView).ToArray(),
+            (itemSystem?.GetItemsAt(pos) ?? Enumerable.Empty<Item>())
+                .Where(item => item.CarriedByEntityId < 0 && item.ContainerItemId < 0)
+                .Select(ToItemView)
+                .ToArray(),
+            spatial.GetContainersAt(pos).Select(id => GetContainerEntityView(id)).Where(v => v is not null).Select(v => v!).ToArray(),
             spatial.GetBuildingAt(pos) is int buildingId ? GetBuildingView(buildingId) : null,
             stockpile is null ? null : new StockpileView(stockpile.Id, stockpile.From, stockpile.To, stockpile.AcceptedTags));
     }
 
     private ItemView ToItemView(Item item)
     {
-        var itemSystem = _ctx!.TryGet<ItemSystem>();
         var dm = _ctx!.TryGet<DataManager>();
         var corpse = item.Components.TryGet<CorpseComponent>();
         var rot = item.Components.TryGet<RotComponent>();
+        var itemDef = dm?.Items.GetOrNull(item.DefId);
+        var storage = BuildItemStorageView(item, corpse is not null || itemDef?.Tags.Contains(TagIds.Container) == true);
         CorpseView? corpseView = null;
         if (corpse is not null)
         {
-            var contents = itemSystem is null
-                ? Array.Empty<ItemView>()
-                : itemSystem.GetItemsInItem(item.Id).Select(ToItemView).ToArray();
             corpseView = new CorpseView(
                 corpse.FormerEntityId,
                 corpse.FormerDefId,
                 corpse.DisplayName,
                 corpse.DeathCause,
                 rot?.Progress ?? 0f,
-                rot?.Stage ?? "fresh",
-                contents);
+                rot?.Stage ?? "fresh");
         }
 
         // Get item weight from definition
-        var itemDef = dm?.Items.GetOrNull(item.DefId);
+        var displayName = corpse is not null
+            ? $"Corpse of {corpse.DisplayName}"
+            : itemDef?.DisplayName ?? Humanize(item.DefId);
         var weight = itemDef?.Weight ?? 0f;
         if (item.StackSize > 1)
             weight *= item.StackSize;
@@ -310,14 +423,37 @@ public sealed class WorldQuerySystem : IGameSystem
             item.ContainerItemId,
             item.CarriedByEntityId,
             corpseView,
-            weight);
+            storage,
+            displayName,
+            weight,
+            item.CarryMode);
+    }
+
+    private StoredItemsView? BuildItemStorageView(Item item, bool supportsStorage)
+    {
+        var itemSystem = _ctx!.TryGet<ItemSystem>();
+        if (itemSystem is null)
+            return supportsStorage ? new StoredItemsView(0, Array.Empty<ItemView>()) : null;
+
+        var storedItems = itemSystem.GetItemsInItem(item.Id)
+            .OrderBy(storedItem => storedItem.Id)
+            .ToArray();
+
+        if (!supportsStorage && storedItems.Length == 0)
+            return null;
+
+        var contents = storedItems
+            .Select(ToItemView)
+            .ToArray();
+
+        return new StoredItemsView(contents.Length, contents);
     }
 
     private static EventLogEntryView ToEventLogView(EntityEventLogEntry entry)
-        => new(entry.Message, entry.Position, FormatTimeLabel(entry));
+        => new(entry.Message, entry.Position, FormatTimeLabel(entry), entry.LinkedTarget);
 
     private static FortressAnnouncementView ToFortressAnnouncementView(FortressAnnouncementEntry entry)
-        => new(entry.Sequence, entry.Message, entry.Position, entry.HasLocation, entry.Severity,
+        => new(entry.Sequence, entry.Kind, entry.Message, entry.Position, entry.HasLocation, entry.Severity,
             FormatTimeLabel(entry.Year, entry.Month, entry.Day, entry.Hour), entry.RepeatCount);
 
     private static SubstanceView[] BuildSubstancesView(Entities.Dwarf dwarf)
@@ -353,15 +489,30 @@ public sealed class WorldQuerySystem : IGameSystem
         return $"Y{year} M{month} D{day} {hour:00}:00";
     }
 
-    private TraitView[] BuildTraitViews(TraitComponent traits)
+    private static string Humanize(string value)
+        => string.IsNullOrWhiteSpace(value) ? "Unknown" : value.Replace('_', ' ');
+
+    private DwarfAttributeView[] BuildAttributeViews(DwarfAttributeComponent attributes)
     {
         var data = _ctx!.TryGet<DataManager>();
-        if (data is null) return Array.Empty<TraitView>();
+        if (data is null) return Array.Empty<DwarfAttributeView>();
 
-        return traits.TraitIds
-            .Select(id => data.Traits.GetOrNull(id))
-            .Where(def => def is not null)
-            .Select(def => new TraitView(def!.Id, def!.DisplayName, def!.Description, def!.Category))
-            .ToArray();
+        var attrDefs = data.Attributes;
+        var views = new List<DwarfAttributeView>();
+
+        // Build views for all defined attributes, showing level and label
+        foreach (var attrDef in attrDefs.All())
+        {
+            var level = attributes.GetLevel(attrDef.Id);
+            var attr = new DwarfAttribute(attrDef.Id, level, attrDef);
+            views.Add(new DwarfAttributeView(
+                attrDef.Id,
+                attrDef.DisplayName,
+                level,
+                attr.Label,
+                attrDef.Category));
+        }
+
+        return views.ToArray();
     }
 }

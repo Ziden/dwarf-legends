@@ -428,6 +428,40 @@ public sealed class LocalLayerGeneratorTests
     }
 
     [Fact]
+    public void Generate_StraightNorthSouthRiverContract_KeepsAlignedLocalChannel()
+    {
+        var region = new GeneratedRegionMap(seed: 9137, width: 1, height: 1, worldCoord: new WorldCoord(0, 0));
+        region.SetTile(0, 0, new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.TemperateWoodland,
+            Slope: 40,
+            HasRiver: true,
+            HasLake: false,
+            VegetationDensity: 0.55f,
+            ResourceRichness: 0.50f,
+            SoilDepth: 0.52f,
+            Groundwater: 0.50f,
+            HasRoad: false,
+            HasSettlement: false,
+            RiverEdges: RegionRiverEdges.North | RegionRiverEdges.South,
+            RiverDischarge: 6f,
+            RiverOrder: 4));
+
+        var map = new LocalLayerGenerator().Generate(
+            region,
+            new RegionCoord(0, 0, 0, 0),
+            new LocalGenerationSettings(48, 48, 8));
+
+        var northCenter = ResolveSurfaceWaterCenterAtY(map, 1);
+        var southCenter = ResolveSurfaceWaterCenterAtY(map, map.Height - 2);
+
+        Assert.NotNull(northCenter);
+        Assert.NotNull(southCenter);
+        Assert.True(
+            Math.Abs(northCenter.Value - southCenter.Value) <= 4f,
+            $"Expected straight-through river contract to stay aligned across embark ({northCenter:0.0} vs {southCenter:0.0}).");
+    }
+
+    [Fact]
     public void Generate_RiverCellWithSingleNeighborContract_ExtendsAcrossEmbark()
     {
         var region = new GeneratedRegionMap(seed: 4127, width: 3, height: 3, worldCoord: new WorldCoord(1, 1));
@@ -858,6 +892,75 @@ public sealed class LocalLayerGeneratorTests
         Assert.Equal(RockTypeIds.Sandstone, firstUnderground.MaterialId);
     }
 
+    [Fact]
+    public void Generate_LocalHistoryContext_CarvesSettlementAndRoadContinuity_WithoutRegionBooleans()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 5301,
+            width: 3,
+            height: 3,
+            worldCoord: new WorldCoord(1, 1),
+            parentMacroBiomeId: MacroBiomeIds.ConiferForest);
+        var baseTile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.DenseConifer,
+            Slope: 36,
+            HasRiver: false,
+            HasLake: false,
+            VegetationDensity: 0.84f,
+            ResourceRichness: 0.44f,
+            SoilDepth: 0.72f,
+            Groundwater: 0.68f,
+            HasRoad: false,
+            HasSettlement: false);
+
+        for (var x = 0; x < region.Width; x++)
+        for (var y = 0; y < region.Height; y++)
+            region.SetTile(x, y, baseTile);
+
+        var settings = new LocalGenerationSettings(
+            Width: 48,
+            Height: 48,
+            Depth: 8,
+            BiomeOverrideId: MacroBiomeIds.ConiferForest,
+            TreeDensityBias: 0.58f,
+            ForestPatchBias: 0.48f);
+        var historyContext = new LocalHistoryContext(
+            OwnerCivilizationId: "civ_alpha",
+            TerritoryOwnerCivilizationId: "civ_alpha",
+            PrimarySite: new LocalHistorySite("site_alpha", "Alpha Hold", "fortress", "civ_alpha", 1, 1, 0.84f, 0.76f),
+            NearbySites:
+            [
+                new LocalHistorySite("site_beta", "Beta Hamlet", "hamlet", "civ_alpha", 2, 1, 0.48f, 0.52f),
+            ],
+            NearbyRoads:
+            [
+                new LocalHistoryRoad(
+                    "road_alpha_beta",
+                    "civ_alpha",
+                    "site_alpha",
+                    "site_beta",
+                    DistanceFromEmbark: 0,
+                    PortalEdges: [LocalMapEdge.West, LocalMapEdge.East]),
+            ]);
+
+        var generator = new LocalLayerGenerator();
+        var coord = new RegionCoord(1, 1, 1, 1);
+        var baselineMap = generator.Generate(region, coord, settings);
+        var contextualMap = generator.Generate(region, coord, settings, historyContext);
+
+        var baselineTrees = CountSurfaceTiles(baselineMap, GeneratedTileDefIds.Tree);
+        var contextualTrees = CountSurfaceTiles(contextualMap, GeneratedTileDefIds.Tree);
+        var baselineRoadTiles = CountSurfaceTiles(baselineMap, GeneratedTileDefIds.StoneBrick);
+        var contextualRoadTiles = CountSurfaceTiles(contextualMap, GeneratedTileDefIds.StoneBrick);
+
+        Assert.True(
+            contextualTrees + 8 < baselineTrees,
+            $"Expected named local history to carve visible civic clearings ({contextualTrees} vs {baselineTrees}).");
+        Assert.True(
+            contextualRoadTiles > baselineRoadTiles,
+            $"Expected named local history roads to stamp visible road tiles ({contextualRoadTiles} vs {baselineRoadTiles}).");
+    }
+
     private static string Fingerprint(GeneratedEmbarkMap map)
     {
         long hash = 1469598103934665603L;
@@ -910,6 +1013,27 @@ public sealed class LocalLayerGeneratorTests
         }
 
         return count;
+    }
+
+    private static float? ResolveSurfaceWaterCenterAtY(GeneratedEmbarkMap map, int y)
+    {
+        var weightedX = 0f;
+        var weight = 0f;
+        for (var x = 0; x < map.Width; x++)
+        {
+            var tile = map.GetTile(x, y, 0);
+            if (tile.TileDefId != GeneratedTileDefIds.Water)
+                continue;
+
+            var localWeight = Math.Max(1, (int)tile.FluidLevel);
+            weightedX += x * localWeight;
+            weight += localWeight;
+        }
+
+        if (weight <= 0f)
+            return null;
+
+        return weightedX / weight;
     }
 
     private static string ResolveSurfaceFamily(string tileDefId)

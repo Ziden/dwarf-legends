@@ -29,6 +29,8 @@ public sealed class NeedsSystem : IGameSystem
     private readonly Dictionary<int, (int entityId, string jobDefId)> _jobIdToKey = new();
     // O(1) lookup: (entityId, jobDefId) → jobId for fast existence check
     private readonly Dictionary<(int entityId, string jobDefId), int> _activeJobIds = new();
+    // Tracks which needs are currently in their critical state so events fire on entry, not every tick.
+    private readonly HashSet<(int entityId, string needId)> _activeCriticalNeeds = new();
     // Tracks when a need was last satisfied (in game seconds) to prevent job spam
     private readonly Dictionary<(int entityId, string needId), float> _lastSatisfiedAt = new();
 
@@ -57,7 +59,7 @@ public sealed class NeedsSystem : IGameSystem
 
         foreach (var dwarf in registry.GetAlive<Dwarf>())
         {
-            TickDwarfNeeds(dwarf, delta);
+            TickDwarfNeeds(dwarf, delta, _ctx!.TryGet<DataManager>());
 
             CheckNeed(dwarf, dwarf.Needs.Hunger, Jobs.JobDefIds.Eat, jobSystem);
             CheckNeed(dwarf, dwarf.Needs.Thirst, Jobs.JobDefIds.Drink, jobSystem);
@@ -73,7 +75,12 @@ public sealed class NeedsSystem : IGameSystem
     }
 
     public void OnSave(SaveWriter w) { }
-    public void OnLoad(SaveReader r) { _activeJobIds.Clear(); _jobIdToKey.Clear(); }
+    public void OnLoad(SaveReader r)
+    {
+        _activeJobIds.Clear();
+        _jobIdToKey.Clear();
+        _activeCriticalNeeds.Clear();
+    }
 
     // ── Private ────────────────────────────────────────────────────────────
 
@@ -83,15 +90,15 @@ public sealed class NeedsSystem : IGameSystem
             need.Decay(delta);
     }
 
-    private static void TickDwarfNeeds(Dwarf dwarf, float delta)
+    private static void TickDwarfNeeds(Dwarf dwarf, float delta, DataManager? dataManager)
     {
-        var sleepDecayMultiplier = SleepSystem.GetSleepDecayMultiplier(dwarf);
+        var sleepDecayMultiplier = SleepSystem.GetSleepDecayMultiplier(dwarf, dataManager);
         
         foreach (var need in dwarf.Needs.All)
         {
             if (need.Name == NeedIds.Sleep)
             {
-                // Apply Sleepy trait: sleep need increases double as fast
+                // Sleep decay is driven by stamina rather than a separate trait system.
                 need.Decay(delta * sleepDecayMultiplier);
             }
             else
@@ -103,6 +110,13 @@ public sealed class NeedsSystem : IGameSystem
 
     private void CheckNeed(Dwarf dwarf, Need need, string jobDefId, Jobs.JobSystem? jobSystem)
     {
+        var criticalKey = (dwarf.Id, need.Name);
+        if (!need.IsCritical)
+        {
+            _activeCriticalNeeds.Remove(criticalKey);
+            return;
+        }
+
         // Check if need was recently satisfied (cooldown to prevent job spam)
         var satisfactionKey = (dwarf.Id, need.Name);
         if (_lastSatisfiedAt.TryGetValue(satisfactionKey, out var lastSatisfied))
@@ -110,8 +124,6 @@ public sealed class NeedsSystem : IGameSystem
             if (_elapsedTime - lastSatisfied < SatisfactionCooldown)
                 return;  // Still in cooldown period
         }
-
-        if (!need.IsCritical) return;
 
         // Don't queue eat/drink jobs if the dwarf is nauseous
         if ((jobDefId == Jobs.JobDefIds.Eat || jobDefId == Jobs.JobDefIds.Drink)
@@ -130,7 +142,7 @@ public sealed class NeedsSystem : IGameSystem
         if (string.Equals(jobDefId, Jobs.JobDefIds.Eat, System.StringComparison.OrdinalIgnoreCase))
         {
             var itemSystem = _ctx!.TryGet<ItemSystem>();
-            if (itemSystem?.FindFoodItem() is null)
+            if (itemSystem?.FindCarriedFoodItem(dwarf.Id) is null && itemSystem?.FindFoodItem() is null)
             {
                 var map = _ctx.TryGet<WorldMap>();
                 var data = _ctx.TryGet<DataManager>();
@@ -163,7 +175,14 @@ public sealed class NeedsSystem : IGameSystem
 
     private void EmitNeedCritical(Entity entity, Need need)
     {
+        var key = (entity.Id, need.Name);
         if (!need.IsCritical)
+        {
+            _activeCriticalNeeds.Remove(key);
+            return;
+        }
+
+        if (!_activeCriticalNeeds.Add(key))
             return;
 
         _ctx!.EventBus.Emit(new NeedCriticalEvent(entity.Id, need.Name));

@@ -54,6 +54,26 @@ public sealed class WorldMapTests
     }
 
     [Fact]
+    public void SetTile_Does_Not_Emit_Or_Dirty_On_No_Op_Update()
+    {
+        var (map, ctx) = CreateMap();
+        var pos = new Vec3i(2, 3, 0);
+        var tile = new TileData { TileDefId = TileDefIds.StoneFloor, IsPassable = true };
+
+        map.SetTile(pos, tile);
+        foreach (var chunk in map.AllChunks())
+            chunk.ClearDirty();
+
+        var eventCount = 0;
+        ctx.EventBus.On<TileChangedEvent>(_ => eventCount++);
+
+        map.SetTile(pos, tile);
+
+        Assert.Equal(0, eventCount);
+        Assert.Empty(map.GetDirtyChunks());
+    }
+
+    [Fact]
     public void IsPassable_Reflects_Tile_Data()
     {
         var (map, _) = CreateMap();

@@ -7,8 +7,11 @@ using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 /// <summary>
-/// Bottom action bar — the primary interaction surface.
+/// Bottom action bar â€” the primary interaction surface.
 /// Contains designation buttons, a build popup, and pause control.
 /// Replaces the buried BuildMenu and the old time controls that were in TopBar.
 /// </summary>
@@ -17,11 +20,11 @@ public partial class ActionBar : PanelContainer
     private const int ActionButtonSize = 46;
     private const float FixedSpeedMultiplier = 5f;
 
-    // ── Exposed to GameRoot ────────────────────────────────────────────────
+    // â”€â”€ Exposed to GameRoot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     public bool  IsPaused        => _paused;
     public float SpeedMultiplier => FixedSpeedMultiplier;
 
-    // ── Private state ──────────────────────────────────────────────────────
+    // â”€â”€ Private state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private InputController? _input;
     private PopupPanel?      _buildPopup;
     private ItemSelectionList? _buildList;
@@ -31,7 +34,7 @@ public partial class ActionBar : PanelContainer
     private GameSimulation?  _simulation;
     private DiscoverySystem? _discovery;
 
-    // ── Knowledge panel callback ───────────────────────────────────────────
+    // â”€â”€ Knowledge panel callback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     public Action? OnKnowledgePressed { get; set; }
 
     public override void _Ready()
@@ -172,7 +175,7 @@ public partial class ActionBar : PanelContainer
         return new ItemSelectionEntry(
             Id: def.Id,
             Title: def.DisplayName,
-            Subtitle: $"{typeLabel} • footprint {footprint}",
+            Subtitle: $"{typeLabel} â€¢ footprint {footprint}",
             Details: def.ConstructionInputs.Count == 0
                 ? $"Build time {def.ConstructionTime:0.#}"
                 : $"Needs {requirements.NeededSummary}  |  Build {def.ConstructionTime:0.#}",

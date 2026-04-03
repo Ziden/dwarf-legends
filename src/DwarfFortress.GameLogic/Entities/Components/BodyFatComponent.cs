@@ -28,7 +28,7 @@ public sealed class BodyFatComponent
 
     /// <summary>
     /// Increases body fat when the dwarf eats a meal.
-    /// The amount is reduced if the dwarf has the Fit trait.
+    /// Attribute-driven nutrition systems can reduce how much fat is gained per meal.
     /// </summary>
     public void GainFat(float amount)
     {

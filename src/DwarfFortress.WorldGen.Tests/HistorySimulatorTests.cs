@@ -1,4 +1,6 @@
 using System.Text;
+using DwarfFortress.WorldGen.Config;
+using DwarfFortress.WorldGen.Content;
 using DwarfFortress.WorldGen.History;
 using DwarfFortress.WorldGen.Ids;
 using DwarfFortress.WorldGen.World;
@@ -95,6 +97,41 @@ public sealed class HistorySimulatorTests
     }
 
     [Fact]
+    public void Simulate_Produces_Figures_And_Households_With_Valid_References()
+    {
+        var world = new WorldLayerGenerator().Generate(seed: 1207, width: 64, height: 64);
+        var history = new HistorySimulator().Simulate(world, seed: 8911, simulatedYearsOverride: 24);
+
+        Assert.NotEmpty(history.Households);
+        Assert.NotEmpty(history.Figures);
+
+        var sitesById = history.Sites.ToDictionary(site => site.Id, StringComparer.OrdinalIgnoreCase);
+        var householdsById = history.Households.ToDictionary(household => household.Id, StringComparer.OrdinalIgnoreCase);
+        var figuresById = history.Figures.ToDictionary(figure => figure.Id, StringComparer.OrdinalIgnoreCase);
+
+        Assert.All(history.Households, household =>
+        {
+            Assert.True(sitesById.ContainsKey(household.HomeSiteId), $"Household {household.Id} references unknown site {household.HomeSiteId}.");
+            Assert.NotEmpty(household.MemberFigureIds);
+            Assert.All(household.MemberFigureIds, memberId => Assert.True(figuresById.ContainsKey(memberId), $"Household {household.Id} references unknown figure {memberId}."));
+        });
+
+        Assert.All(history.Figures, figure =>
+        {
+            Assert.True(householdsById.ContainsKey(figure.HouseholdId), $"Figure {figure.Id} references unknown household {figure.HouseholdId}.");
+            Assert.True(sitesById.ContainsKey(figure.BirthSiteId), $"Figure {figure.Id} references unknown birth site {figure.BirthSiteId}.");
+            Assert.True(sitesById.ContainsKey(figure.CurrentSiteId), $"Figure {figure.Id} references unknown current site {figure.CurrentSiteId}.");
+            Assert.Contains(figure.Id, householdsById[figure.HouseholdId].MemberFigureIds);
+            Assert.True(figure.IsAlive);
+            Assert.False(string.IsNullOrWhiteSpace(figure.Name));
+        });
+
+        Assert.Contains(history.Figures, figure =>
+            figure.IsFounder &&
+            string.Equals(figure.SpeciesDefId, "dwarf", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void SimulateTimeline_EmitsYearlySnapshotsWithConsistentFinalHistory()
     {
         var world = new WorldLayerGenerator().Generate(seed: 1441, width: 48, height: 48);
@@ -135,6 +172,7 @@ public sealed class HistorySimulatorTests
         foreach (var year in timeline.Years)
         {
             var siteIds = year.Sites.Select(site => site.SiteId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var householdIds = year.Households.Select(household => household.HouseholdId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var road in year.Roads)
             {
                 Assert.True(siteIds.Contains(road.FromSiteId), $"Road {road.Id} references missing source site in year {year.Year}.");
@@ -149,7 +187,92 @@ public sealed class HistorySimulatorTests
                     Assert.Equal(1, step);
                 }
             }
+
+            Assert.All(year.Households, household => Assert.Contains(household.HomeSiteId, siteIds));
+            Assert.All(year.Figures, figure =>
+            {
+                Assert.Contains(figure.CurrentSiteId, siteIds);
+                Assert.Contains(figure.HouseholdId, householdIds);
+            });
         }
+    }
+
+    [Fact]
+    public void SimulateTimeline_Tracks_Site_Population_History()
+    {
+        var world = new WorldLayerGenerator().Generate(seed: 1467, width: 48, height: 48);
+        var timeline = new HistorySimulator().SimulateTimeline(world, seed: 5017, simulatedYearsOverride: 18);
+
+        Assert.NotEmpty(timeline.FinalHistory.SitePopulations);
+
+        var siteIds = timeline.FinalHistory.Sites
+            .Select(site => site.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.All(timeline.FinalHistory.SitePopulations, record =>
+        {
+            Assert.Contains(record.SiteId, siteIds);
+            Assert.InRange(record.Year, 0, timeline.FinalHistory.SimulatedYears);
+            Assert.True(record.Population >= record.HouseholdCount);
+            Assert.True(record.MilitaryCount + record.CraftCount + record.AgrarianCount + record.MiningCount <= record.Population);
+            Assert.InRange(record.Prosperity, 0f, 1f);
+            Assert.InRange(record.Security, 0f, 1f);
+        });
+
+        foreach (var year in timeline.Years)
+        {
+            Assert.Equal(year.Sites.Count, year.SitePopulations.Count);
+            Assert.All(year.SitePopulations, record =>
+            {
+                Assert.Equal(year.Year, record.Year);
+                Assert.Contains(record.SiteId, siteIds);
+            });
+        }
+
+        var finalSnapshotPopulations = timeline.Years[^1].SitePopulations
+            .OrderBy(record => record.SiteId, StringComparer.Ordinal)
+            .ToArray();
+        var finalHistoryPopulations = timeline.FinalHistory.SitePopulations
+            .Where(record => record.Year == timeline.FinalHistory.SimulatedYears)
+            .OrderBy(record => record.SiteId, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(finalSnapshotPopulations.Select(record => record.SiteId), finalHistoryPopulations.Select(record => record.SiteId));
+        Assert.Equal(finalSnapshotPopulations.Select(record => record.Population), finalHistoryPopulations.Select(record => record.Population));
+        Assert.Equal(finalSnapshotPopulations.Select(record => record.HouseholdCount), finalHistoryPopulations.Select(record => record.HouseholdCount));
+    }
+
+    [Fact]
+    public void GeneratedWorldHistoryProjector_FromSnapshot_Preserves_Characters_And_Uses_Baseline_Metadata()
+    {
+        var world = new WorldLayerGenerator().Generate(seed: 1493, width: 48, height: 48);
+        var timeline = new HistorySimulator().SimulateTimeline(world, seed: 6127, simulatedYearsOverride: 18);
+
+        var midSnapshot = timeline.Years[8];
+        var projectedMidHistory = GeneratedWorldHistoryProjector.FromSnapshot(midSnapshot, seed: 6127);
+
+        Assert.NotEmpty(projectedMidHistory.Households);
+        Assert.NotEmpty(projectedMidHistory.Figures);
+        Assert.Equal(midSnapshot.Figures.Count, projectedMidHistory.Figures.Count);
+        Assert.Equal(midSnapshot.Households.Count, projectedMidHistory.Households.Count);
+        Assert.Equal(midSnapshot.SitePopulations.Count, projectedMidHistory.SitePopulations.Count);
+        Assert.Equal(midSnapshot.Events.Count, projectedMidHistory.Events.Count);
+
+        var projectedFigureIds = projectedMidHistory.Figures
+            .Select(figure => figure.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.All(projectedMidHistory.Households, household =>
+            Assert.All(household.MemberFigureIds, memberId => Assert.Contains(memberId, projectedFigureIds)));
+
+        Assert.Contains(timeline.FinalHistory.Figures, figure => figure.LaborIds.Count > 0);
+        var baselineFigure = timeline.FinalHistory.Figures.First(figure => figure.LaborIds.Count > 0);
+        var projectedFinalHistory = GeneratedWorldHistoryProjector.FromSnapshot(timeline.Years[^1], seed: 6127, timeline.FinalHistory);
+        var projectedFigure = Assert.Single(projectedFinalHistory.Figures.Where(figure => string.Equals(figure.Id, baselineFigure.Id, StringComparison.OrdinalIgnoreCase)));
+
+        Assert.Equal(baselineFigure.LaborIds, projectedFigure.LaborIds);
+        Assert.Equal(
+            baselineFigure.SkillLevels.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => $"{entry.Key}:{entry.Value}"),
+            projectedFigure.SkillLevels.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => $"{entry.Key}:{entry.Value}"));
     }
 
     [Fact]
@@ -226,6 +349,128 @@ public sealed class HistorySimulatorTests
         Assert.Null(session.FinalHistory);
     }
 
+    [Fact]
+    public void Simulate_Uses_Configured_HistoryFigureContent()
+    {
+        const string json =
+            """
+            {
+              "geologyProfiles": [
+                {
+                  "id": "custom_history_geology",
+                  "seedSalt": 808,
+                  "aquiferDepthFraction": 0.12,
+                  "layers": [
+                    { "rockTypeId": "granite", "thicknessMin": 2, "thicknessMax": 4 }
+                  ]
+                }
+              ],
+              "historyFigures": {
+                "professionProfiles": [
+                  {
+                    "id": "scribe",
+                    "laborIds": ["hauling"],
+                    "skillLevels": { "writing": 4 }
+                  }
+                ],
+                "professionSelectionRules": [
+                  {
+                    "speciesDefId": "dwarf",
+                    "memberIndex": 0,
+                    "founderBias": true,
+                    "professionIds": ["scribe"]
+                  }
+                ],
+                "defaultProfessionIds": ["scribe"],
+                "defaultNonDwarfProfessionIds": ["scribe"],
+                "defaultNamePool": ["Archivist"],
+                "speciesNamePools": [
+                  { "speciesDefId": "dwarf", "names": ["Led", "Deler"] }
+                ]
+              }
+            }
+            """;
+
+        var catalog = WorldGenContentCatalog.FromConfig(WorldGenContentConfigLoader.LoadFromJson(json));
+        var world = new WorldLayerGenerator().Generate(seed: 2141, width: 48, height: 48);
+        var history = new HistorySimulator(catalog).Simulate(world, seed: 9403, simulatedYearsOverride: 8);
+
+        Assert.NotEmpty(history.Figures);
+        Assert.All(history.Figures, figure => Assert.Equal("scribe", figure.ProfessionId));
+
+        var dwarfNames = history.Figures
+            .Where(figure => string.Equals(figure.SpeciesDefId, "dwarf", StringComparison.OrdinalIgnoreCase))
+            .Select(figure => figure.Name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.NotEmpty(dwarfNames);
+        Assert.All(dwarfNames, name => Assert.Contains(name, new[] { "Led", "Deler" }));
+    }
+
+    [Fact]
+    public void Simulate_Uses_SharedCreatureHistoryContent()
+    {
+        const string json =
+            """
+            {
+              "geologyProfiles": [
+                {
+                  "id": "custom_history_geology",
+                  "seedSalt": 808,
+                  "aquiferDepthFraction": 0.12,
+                  "layers": [
+                    { "rockTypeId": "granite", "thicknessMin": 2, "thicknessMax": 4 }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        var content = new MemoryContentFileSource();
+        content.AddFile("data/Content/Core/materials/granite.json", """
+            { "id": "granite", "displayName": "Granite", "tags": ["stone"] }
+            """);
+        content.AddFile("data/Content/Game/creatures/sapients/dwarf/creature.json", """
+            {
+              "id": "dwarf",
+              "displayName": "Dwarf",
+              "tags": ["sapient", "playable"],
+              "history": {
+                "figureNamePool": ["Led", "Deler"],
+                "defaultProfessionIds": ["hauler"],
+                "professionRules": [
+                  { "memberIndex": 0, "founderBias": true, "professionIds": ["crafter"] }
+                ]
+              }
+            }
+            """);
+        content.AddFile("data/Content/Game/creatures/hostile/goblin/creature.json", """
+            {
+              "id": "goblin",
+              "displayName": "Goblin",
+              "tags": ["hostile"],
+              "history": {
+                "figureNamePool": ["Snaga", "Ghash"],
+                "defaultProfessionIds": ["militia"]
+              }
+            }
+            """);
+
+        var shared = SharedContentCatalogLoader.Load(content);
+        var catalog = WorldGenContentCatalog.FromConfig(WorldGenContentConfigLoader.LoadFromJson(json), shared);
+        var world = new WorldLayerGenerator().Generate(seed: 2141, width: 48, height: 48);
+        var history = new HistorySimulator(catalog).Simulate(world, seed: 9403, simulatedYearsOverride: 8);
+
+        var dwarfFigures = history.Figures
+            .Where(figure => string.Equals(figure.SpeciesDefId, "dwarf", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        Assert.NotEmpty(dwarfFigures);
+        Assert.All(dwarfFigures, figure => Assert.Contains(figure.Name, new[] { "Led", "Deler" }));
+        Assert.Contains(dwarfFigures, figure => figure.ProfessionId == "crafter");
+    }
+
     private static string Fingerprint(GeneratedWorldHistory history)
     {
         var sb = new StringBuilder();
@@ -247,12 +492,37 @@ public sealed class HistorySimulatorTests
               .Append(site.Location.X).Append(',').Append(site.Location.Y).Append(';');
         }
 
+                foreach (var population in history.SitePopulations
+                                         .OrderBy(record => record.Year)
+                                         .ThenBy(record => record.SiteId, StringComparer.Ordinal))
+                {
+                        sb.Append(population.SiteId).Append('@').Append(population.Year).Append(':')
+                            .Append(population.Population).Append(':')
+                            .Append(population.HouseholdCount).Append(':')
+                            .Append(population.MilitaryCount).Append(';');
+                }
+
         foreach (var road in history.Roads.OrderBy(road => road.Id, StringComparer.Ordinal))
         {
             sb.Append(road.Id).Append(':')
               .Append(road.FromSiteId).Append("->").Append(road.ToSiteId).Append(':')
               .Append(road.Path.Count).Append(';');
         }
+
+                foreach (var household in history.Households.OrderBy(household => household.Id, StringComparer.Ordinal))
+                {
+                        sb.Append(household.Id).Append(':')
+                            .Append(household.HomeSiteId).Append(':')
+                            .Append(household.MemberFigureIds.Count).Append(';');
+                }
+
+                foreach (var figure in history.Figures.OrderBy(figure => figure.Id, StringComparer.Ordinal).Take(50))
+                {
+                        sb.Append(figure.Id).Append(':')
+                            .Append(figure.CivilizationId).Append(':')
+                            .Append(figure.CurrentSiteId).Append(':')
+                            .Append(figure.ProfessionId).Append(';');
+                }
 
         foreach (var evt in history.Events.Take(50))
         {

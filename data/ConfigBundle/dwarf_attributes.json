@@ -1,0 +1,100 @@
+{
+  "appetite": {
+    "id": "appetite",
+    "displayName": "Appetite",
+    "description": "How much food this dwarf needs. Higher = hungrier.",
+    "category": "physiological",
+    "tags": ["food", "need", "hunger"],
+    "effectCurves": {
+      "1": { "effects": { "hunger_decay_multiplier": 0.5, "hunger_satisfaction_multiplier": 2.0, "nutrient_credit_multiplier": 1.3, "body_fat_gain_multiplier": 0.7 } },
+      "2": { "effects": { "hunger_decay_multiplier": 0.75, "hunger_satisfaction_multiplier": 1.5, "nutrient_credit_multiplier": 1.15, "body_fat_gain_multiplier": 0.7 } },
+      "3": { "effects": { "nutrient_credit_multiplier": 1.0, "body_fat_gain_multiplier": 1.0 } },
+      "4": { "effects": { "hunger_decay_multiplier": 1.5, "hunger_satisfaction_multiplier": 0.7, "nutrient_credit_multiplier": 0.85, "body_fat_gain_multiplier": 1.3 } },
+      "5": { "effects": { "hunger_decay_multiplier": 2.0, "hunger_satisfaction_multiplier": 0.5, "nutrient_credit_multiplier": 0.7, "body_fat_gain_multiplier": 1.3 } }
+    }
+  },
+  "thirst": {
+    "id": "thirst",
+    "displayName": "Thirst",
+    "description": "How much drink this dwarf needs. Higher = thirstier.",
+    "category": "physiological",
+    "tags": ["drink", "need", "thirst"],
+    "effectCurves": {
+      "1": { "effects": { "thirst_decay_multiplier": 0.5, "thirst_satisfaction_multiplier": 2.0 } },
+      "2": { "effects": { "thirst_decay_multiplier": 0.75, "thirst_satisfaction_multiplier": 1.5 } },
+      "3": { "effects": {} },
+      "4": { "effects": { "thirst_decay_multiplier": 1.5, "thirst_satisfaction_multiplier": 0.7 } },
+      "5": { "effects": { "thirst_decay_multiplier": 2.0, "thirst_satisfaction_multiplier": 0.5 } }
+    }
+  },
+  "stamina": {
+    "id": "stamina",
+    "displayName": "Stamina",
+    "description": "How long this dwarf can work before getting tired. Higher = more endurance.",
+    "category": "physiological",
+    "tags": ["sleep", "fatigue", "endurance", "work"],
+    "effectCurves": {
+      "1": { "effects": { "sleep_need_decay_multiplier": 2.0, "sleep_recovery_multiplier": 0.8, "fat_gain_multiplier": 1.5, "work_speed_multiplier": 0.7, "carry_capacity_multiplier": 0.85 } },
+      "2": { "effects": { "sleep_need_decay_multiplier": 1.5, "sleep_recovery_multiplier": 0.9, "fat_gain_multiplier": 1.2, "work_speed_multiplier": 0.85, "carry_capacity_multiplier": 0.95 } },
+      "3": { "effects": { "sleep_recovery_multiplier": 1.0, "carry_capacity_multiplier": 1.0 } },
+      "4": { "effects": { "sleep_need_decay_multiplier": 0.7, "sleep_recovery_multiplier": 1.15, "fat_gain_multiplier": 0.8, "work_speed_multiplier": 1.15, "carry_capacity_multiplier": 1.1 } },
+      "5": { "effects": { "sleep_need_decay_multiplier": 0.5, "sleep_recovery_multiplier": 1.3, "fat_gain_multiplier": 0.5, "work_speed_multiplier": 1.3, "carry_capacity_multiplier": 1.25 } }
+    }
+  },
+  "strength": {
+    "id": "strength",
+    "displayName": "Strength",
+    "description": "How much weight this dwarf can carry and how physically powerful they are.",
+    "category": "physiological",
+    "tags": ["carry", "hauling", "combat", "strength"],
+    "effectCurves": {
+      "1": { "effects": { "carry_capacity_multiplier": 0.75, "melee_damage_multiplier": 0.75 } },
+      "2": { "effects": { "carry_capacity_multiplier": 0.9, "melee_damage_multiplier": 0.9 } },
+      "3": { "effects": { "carry_capacity_multiplier": 1.0, "melee_damage_multiplier": 1.0 } },
+      "4": { "effects": { "carry_capacity_multiplier": 1.25, "melee_damage_multiplier": 1.25 } },
+      "5": { "effects": { "carry_capacity_multiplier": 1.5, "melee_damage_multiplier": 1.5 } }
+    }
+  },
+  "focus": {
+    "id": "focus",
+    "displayName": "Focus",
+    "description": "How well this dwarf concentrates on tasks. Higher = better work quality.",
+    "category": "mental",
+    "tags": ["work", "quality", "speed"],
+    "effectCurves": {
+      "1": { "effects": { "work_speed_multiplier": 0.6, "work_quality_penalty": 1.0, "encumbrance_threshold": 0.5 } },
+      "2": { "effects": { "work_speed_multiplier": 0.8, "encumbrance_threshold": 0.75 } },
+      "3": { "effects": { "encumbrance_threshold": 1.0 } },
+      "4": { "effects": { "work_speed_multiplier": 1.2, "encumbrance_threshold": 1.15 } },
+      "5": { "effects": { "work_speed_multiplier": 1.4, "work_quality_bonus": 1.0, "encumbrance_threshold": 1.25 } }
+    }
+  },
+  "courage": {
+    "id": "courage",
+    "displayName": "Courage",
+    "description": "How brave this dwarf is in the face of danger. Lower = more likely to flee.",
+    "category": "mental",
+    "tags": ["fear", "combat", "flee"],
+    "effectCurves": {
+      "1": { "effects": { "flee_chance": 0.8, "animal_flee_radius": 8, "water_fear": 1.0 } },
+      "2": { "effects": { "flee_chance": 0.5, "animal_flee_radius": 5, "water_fear": 1.0 } },
+      "3": { "effects": { "water_fear": 0.0 } },
+      "4": { "effects": { "flee_chance": 0.1, "water_fear": 0.0 } },
+      "5": { "effects": { "flee_chance": 0.0, "combat_strength_bonus": 0.2, "water_fear": 0.0 } }
+    }
+  },
+  "sociability": {
+    "id": "sociability",
+    "displayName": "Sociability",
+    "description": "How much this dwarf enjoys being around others. Higher = gains more happiness from socializing.",
+    "category": "social",
+    "tags": ["social", "comfort", "happiness"],
+    "effectCurves": {
+      "1": { "effects": { "loneliness_penalty": 1.5, "social_comfort_bonus": 0.2 } },
+      "2": { "effects": { "loneliness_penalty": 1.2 } },
+      "3": { "effects": {} },
+      "4": { "effects": { "social_comfort_bonus": 0.5 } },
+      "5": { "effects": { "loneliness_penalty": 0.3, "social_comfort_bonus": 1.0 } }
+    }
+  }
+}

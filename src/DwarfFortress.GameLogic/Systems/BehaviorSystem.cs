@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
@@ -25,6 +24,7 @@ public record struct BehaviorFiredEvent(int EntityId, string BehaviorId);
 /// Built-in behaviors:
 ///   - EatFoodBehavior  : hungry creatures seek diet-appropriate food
 ///   - DrinkWaterBehavior: thirsty creatures seek nearby water and drink
+///   - HostilePursuitBehavior: hostile creatures close distance to nearby dwarves
 ///   - GroomingBehavior : creatures with "groomer" tag periodically lick body parts → ingestion
 ///   - SocializeBehavior: when Social need is low, seek adjacent dwarf → satisfy Social
 ///   - TantrumBehavior  : when Mood == Sufferer → destroy items, optionally attack nearby dwarves
@@ -38,31 +38,55 @@ public sealed class BehaviorSystem : IGameSystem
     public int    UpdateOrder => 12;
     public bool   IsEnabled   { get; set; } = true;
 
-    private GameContext?     _ctx;
-    private readonly List<IBehavior> _behaviors = new();
+    private GameContext? _ctx;
+    private SimulationProfiler? _profiler;
+    private readonly List<IBehavior> _dwarfBehaviors = new();
+    private readonly List<IBehavior> _creatureBehaviors = new();
 
     public void Initialize(GameContext ctx)
     {
         _ctx = ctx;
+        _profiler = ctx.Profiler;
 
         // Register built-in behaviors in execution priority order
-        _behaviors.Add(new TantrumBehavior());
-        _behaviors.Add(new DrinkWaterBehavior());
-        _behaviors.Add(new EatFoodBehavior());
-        _behaviors.Add(new GroomingBehavior());
-        _behaviors.Add(new SocializeBehavior());
-        _behaviors.Add(new WanderBehavior());
+        _dwarfBehaviors.Clear();
+        _creatureBehaviors.Clear();
+
+        var tantrum = new TantrumBehavior();
+        var drinkWater = new DrinkWaterBehavior();
+        var eatFood = new EatFoodBehavior();
+        var hostilePursuit = new HostilePursuitBehavior();
+        var grooming = new GroomingBehavior();
+        var socialize = new SocializeBehavior();
+        var wander = new WanderBehavior();
+
+        _dwarfBehaviors.Add(tantrum);
+        _dwarfBehaviors.Add(grooming);
+        _dwarfBehaviors.Add(socialize);
+
+        _creatureBehaviors.Add(drinkWater);
+        _creatureBehaviors.Add(eatFood);
+        _creatureBehaviors.Add(hostilePursuit);
+        _creatureBehaviors.Add(grooming);
+        _creatureBehaviors.Add(wander);
     }
 
     public void Tick(float delta)
     {
         var registry = _ctx!.Get<EntityRegistry>();
+        using var behaviorScope = _profiler?.Measure("behavior_system") ?? default;
 
-        foreach (var dwarf in registry.GetAlive<Dwarf>())
-            RunBehaviors(dwarf, delta);
+        using (var dwarfScope = _profiler?.Measure("behavior_dwarves") ?? default)
+        {
+            foreach (var dwarf in registry.GetAlive<Dwarf>())
+                RunBehaviors(dwarf, delta, _dwarfBehaviors);
+        }
 
-        foreach (var creature in registry.GetAlive<Creature>())
-            RunBehaviors(creature, delta);
+        using (var creatureScope = _profiler?.Measure("behavior_creatures") ?? default)
+        {
+            foreach (var creature in registry.GetAlive<Creature>())
+                RunBehaviors(creature, delta, _creatureBehaviors);
+        }
     }
 
     public void OnSave(SaveWriter w) { }
@@ -70,10 +94,14 @@ public sealed class BehaviorSystem : IGameSystem
 
     // ── Private ────────────────────────────────────────────────────────────
 
-    private void RunBehaviors(Entity entity, float delta)
+    private void RunBehaviors(Entity entity, float delta, IReadOnlyList<IBehavior> behaviors)
     {
-        foreach (var behavior in _behaviors)
+        if (IsSleeping(entity, _ctx!))
+            return;
+
+        for (var index = 0; index < behaviors.Count; index++)
         {
+            var behavior = behaviors[index];
             behavior.Tick(entity, delta);
             if (behavior.CanFire(entity, _ctx!) && behavior.ShouldFire(entity, _ctx!))
             {
@@ -83,6 +111,20 @@ public sealed class BehaviorSystem : IGameSystem
                 break; // one behavior per entity per tick
             }
         }
+    }
+
+    private static bool IsSleeping(Entity entity, GameContext ctx)
+    {
+        var sleepSystem = ctx.TryGet<SleepSystem>();
+        if (sleepSystem is null)
+            return false;
+
+        return entity switch
+        {
+            Dwarf => sleepSystem.IsSleeping(entity.Id),
+            Creature => sleepSystem.IsCreatureSleeping(entity.Id),
+            _ => false,
+        };
     }
 }
 
@@ -145,7 +187,8 @@ public abstract class CooldownBehavior : IBehavior
             cooldownSeconds += (Random.Shared.NextSingle() * spread * 2f) - spread;
         }
 
-        _cooldowns[entity.Id] = Math.Max(0.05f, cooldownSeconds);
+        var appliedCooldown = Math.Max(0.05f, cooldownSeconds);
+        _cooldowns[entity.Id] = appliedCooldown;
     }
 
     protected virtual float GetCooldownSeconds(Entity entity, GameContext ctx)
@@ -178,7 +221,11 @@ public sealed class GroomingBehavior : CooldownBehavior
         if (!entity.Components.Has<BodyPartComponent>()) return false;
         if (!CanGroom(entity, ctx)) return false;
         var parts = entity.Components.Get<BodyPartComponent>();
-        return parts.All.Any(p => p.CoatingMaterialId is not null);
+        foreach (var part in parts.All)
+            if (part.CoatingMaterialId is not null)
+                return true;
+
+        return false;
     }
 
     public override void Fire(Entity entity, GameContext ctx)
@@ -198,6 +245,8 @@ public sealed class GroomingBehavior : CooldownBehavior
 
         var dm = ctx.TryGet<DataManager>();
         var def = dm?.Creatures.GetOrNull(entity.DefId);
+        if (def?.AuthoredCanGroom is bool authoredCanGroom)
+            return authoredCanGroom;
         if (def?.IsGroomer() == true) return true;
 
         if (!entity.Components.Has<BodyPartComponent>()) return false;
@@ -227,12 +276,7 @@ public sealed class SocializeBehavior : CooldownBehavior
     {
         if (entity is not Dwarf self) return;
 
-        var pos      = self.Position.Position;
-        var registry = ctx.Get<EntityRegistry>();
-
-        var partner = registry.GetAlive<Dwarf>()
-            .FirstOrDefault(d => d.Id != self.Id &&
-                                 d.Position.Position.ManhattanDistanceTo(pos) <= 2);
+        var partner = FindPartner(self, ctx);
         if (partner is null) return;
 
         float satisfaction = 0.3f;
@@ -247,6 +291,45 @@ public sealed class SocializeBehavior : CooldownBehavior
     {
         dwarf.Components.Get<ThoughtComponent>()
              .AddThought(new Thought(id, desc, mod, duration));
+    }
+
+    private static Dwarf? FindPartner(Dwarf self, GameContext ctx)
+    {
+        var origin = self.Position.Position;
+        var registry = ctx.Get<EntityRegistry>();
+        var spatial = ctx.TryGet<SpatialIndexSystem>();
+
+        if (spatial is not null)
+        {
+            for (var dx = -2; dx <= 2; dx++)
+            for (var dy = -2; dy <= 2; dy++)
+            {
+                if (Math.Abs(dx) + Math.Abs(dy) > 2)
+                    continue;
+
+                var candidate = new Vec3i(origin.X + dx, origin.Y + dy, origin.Z);
+                foreach (var dwarfId in spatial.GetDwarvesAt(candidate))
+                {
+                    if (dwarfId == self.Id)
+                        continue;
+
+                    if (registry.TryGetById<Dwarf>(dwarfId, out var partner) && partner is not null)
+                        return partner;
+                }
+            }
+
+            return null;
+        }
+
+        foreach (var dwarf in registry.GetAlive<Dwarf>())
+        {
+            if (dwarf.Id == self.Id)
+                continue;
+            if (dwarf.Position.Position.ManhattanDistanceTo(origin) <= 2)
+                return dwarf;
+        }
+
+        return null;
     }
 }
 
@@ -280,22 +363,55 @@ public sealed class TantrumBehavior : CooldownBehavior
         var registry = ctx.Get<EntityRegistry>();
         var combat   = ctx.TryGet<CombatSystem>();
         var items    = ctx.TryGet<ItemSystem>();
+        var spatial  = ctx.TryGet<SpatialIndexSystem>();
 
         // Attack a random adjacent dwarf (pick randomly without sorting)
-        var nearby = registry.GetAlive<Dwarf>()
-            .Where(d => d.Id != dwarf.Id && d.Position.Position.ManhattanDistanceTo(pos) <= 1)
-            .ToList();
-        var target = nearby.Count > 0
-            ? nearby[Random.Shared.Next(nearby.Count)]
-            : null;
+        var nearby = new List<Dwarf>(4);
+        if (spatial is not null)
+        {
+            for (var dx = -1; dx <= 1; dx++)
+            for (var dy = -1; dy <= 1; dy++)
+            {
+                if (Math.Abs(dx) + Math.Abs(dy) > 1)
+                    continue;
+
+                var candidate = new Vec3i(pos.X + dx, pos.Y + dy, pos.Z);
+                foreach (var dwarfId in spatial.GetDwarvesAt(candidate))
+                {
+                    if (dwarfId == dwarf.Id)
+                        continue;
+
+                    if (registry.TryGetById<Dwarf>(dwarfId, out var targetDwarf) && targetDwarf is not null)
+                        nearby.Add(targetDwarf);
+                }
+            }
+        }
+        else
+        {
+            foreach (var other in registry.GetAlive<Dwarf>())
+            {
+                if (other.Id == dwarf.Id)
+                    continue;
+                if (other.Position.Position.ManhattanDistanceTo(pos) <= 1)
+                    nearby.Add(other);
+            }
+        }
+
+        var target = nearby.Count > 0 ? nearby[Random.Shared.Next(nearby.Count)] : null;
 
         if (target is not null)
             combat?.AttackEntity(dwarf.Id, target.Id);
 
         // Destroy a random adjacent item
-        var nearbyItem = items?.GetItemsAt(pos).FirstOrDefault()
-                      ?? items?.GetItemsAt(pos + Vec3i.North).FirstOrDefault()
-                      ?? items?.GetItemsAt(pos + Vec3i.South).FirstOrDefault();
+        Item? nearbyItem = null;
+        if (items is not null)
+        {
+            items.TryGetItemAt(pos, out nearbyItem);
+            if (nearbyItem is null)
+                items.TryGetItemAt(pos + Vec3i.North, out nearbyItem);
+            if (nearbyItem is null)
+                items.TryGetItemAt(pos + Vec3i.South, out nearbyItem);
+        }
 
         if (nearbyItem is not null)
             items?.DestroyItem(nearbyItem.Id);
@@ -320,16 +436,9 @@ internal static class CreatureTraversalProfile
     {
         var def = ctx.TryGet<DataManager>()?.Creatures.GetOrNull(creature.DefId);
         if (def is null)
-        {
-            var fallbackAquatic =
-                string.Equals(creature.DefId, DefIds.GiantCarp, StringComparison.OrdinalIgnoreCase) ||
-                CreatureDefTagExtensions.IsLikelyAquaticId(creature.DefId);
-            return (fallbackAquatic, fallbackAquatic);
-        }
+            return (false, false);
 
-        var isAquatic = def.IsAquatic();
-        var isSwimmer = def.CanSwim();
-        return (isSwimmer, isAquatic);
+        return def.ResolveTraversal();
     }
 }
 
@@ -357,6 +466,95 @@ internal static class AutonomousPacing
             return Math.Max(0.2f, ctx.TryGet<DataManager>()?.Creatures.GetOrNull(creature.DefId)?.BaseSpeed ?? 1f);
 
         return 1f;
+    }
+}
+
+internal static class BehaviorSearch
+{
+    public static readonly Vec3i[] CardinalDirections =
+        [Vec3i.North, Vec3i.South, Vec3i.East, Vec3i.West];
+
+    public static bool TryFindNearestReachableTarget(
+        WorldMap map,
+        Vec3i origin,
+        int searchRadius,
+        bool canSwim,
+        bool requiresSwimming,
+        Predicate<Vec3i> isTarget,
+        out Vec3i nextStep)
+    {
+        nextStep = origin;
+
+        var visited = new HashSet<Vec3i> { origin };
+        var queue = new Queue<(Vec3i Position, Vec3i FirstStep)>();
+
+        for (var i = 0; i < CardinalDirections.Length; i++)
+        {
+            var next = origin + CardinalDirections[i];
+            if (!IsSearchCandidate(next, origin, searchRadius, map, visited, canSwim, requiresSwimming))
+                continue;
+
+            if (isTarget(next))
+            {
+                nextStep = next;
+                return true;
+            }
+
+            queue.Enqueue((next, next));
+        }
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            for (var i = 0; i < CardinalDirections.Length; i++)
+            {
+                var next = current.Position + CardinalDirections[i];
+                if (!IsSearchCandidate(next, origin, searchRadius, map, visited, canSwim, requiresSwimming))
+                    continue;
+
+                if (isTarget(next))
+                {
+                    nextStep = current.FirstStep;
+                    return true;
+                }
+
+                queue.Enqueue((next, current.FirstStep));
+            }
+        }
+
+        return false;
+    }
+
+    public static void FillShuffledDirections(Span<Vec3i> buffer)
+    {
+        for (var i = 0; i < CardinalDirections.Length; i++)
+            buffer[i] = CardinalDirections[i];
+
+        for (var i = buffer.Length - 1; i > 0; i--)
+        {
+            var j = Random.Shared.Next(i + 1);
+            (buffer[i], buffer[j]) = (buffer[j], buffer[i]);
+        }
+    }
+
+    private static bool IsSearchCandidate(
+        Vec3i candidate,
+        Vec3i origin,
+        int searchRadius,
+        WorldMap map,
+        HashSet<Vec3i> visited,
+        bool canSwim,
+        bool requiresSwimming)
+    {
+        if (!map.IsInBounds(candidate) || !visited.Add(candidate))
+            return false;
+
+        var dx = Math.Abs(candidate.X - origin.X);
+        var dy = Math.Abs(candidate.Y - origin.Y);
+        if (dx > searchRadius || dy > searchRadius)
+            return false;
+
+        return map.IsTraversable(candidate, canSwim, requiresSwimming);
     }
 }
 
@@ -411,8 +609,7 @@ public sealed class EatFoodBehavior : CooldownBehavior
         if (!TryFindStepTowardFood(creature, ctx, map, origin, diet, edibleItemPositions, dataManager, out var nextStep))
             return;
 
-        creature.Position.Position = nextStep;
-        ctx.EventBus.Emit(new EntityMovedEvent(creature.Id, origin, nextStep));
+        EntityMovement.TryMove(ctx, creature, nextStep);
 
         TryEatAtCurrentPosition(creature, ctx, nextStep, map, itemSystem, dataManager, diet);
     }
@@ -444,8 +641,16 @@ public sealed class EatFoodBehavior : CooldownBehavior
         if (itemSystem is null || dataManager is null)
             return false;
 
-        var edibleItem = itemSystem.GetItemsAt(position)
-            .FirstOrDefault(item => IsEdibleItemForDiet(item, dataManager, diet));
+        Item? edibleItem = null;
+        foreach (var item in itemSystem.GetItemsAt(position))
+        {
+            if (!IsEdibleItemForDiet(item, dataManager, diet))
+                continue;
+
+            edibleItem = item;
+            break;
+        }
+
         if (edibleItem is null)
             return false;
 
@@ -469,34 +674,18 @@ public sealed class EatFoodBehavior : CooldownBehavior
     {
         nextStep = origin;
         var (canSwim, requiresSwimming) = CreatureTraversalProfile.Resolve(creature, ctx);
-        IReadOnlyList<Vec3i>? bestPath = null;
 
-        for (var dx = -SearchRadius; dx <= SearchRadius; dx++)
-        for (var dy = -SearchRadius; dy <= SearchRadius; dy++)
-        {
-            var candidate = new Vec3i(origin.X + dx, origin.Y + dy, origin.Z);
-            if (!map.IsInBounds(candidate))
-                continue;
-            if (!map.IsTraversable(candidate, canSwim, requiresSwimming))
-                continue;
-            if (!CanGrazeTile(map, candidate, diet) &&
-                !edibleItemPositions.Contains(candidate) &&
-                !CanHarvestWildPlant(map, dataManager, candidate, diet))
-                continue;
-
-            var path = Pathfinder.FindPath(map, origin, candidate, canSwim, requiresSwimming);
-            if (path.Count <= 1)
-                continue;
-
-            if (bestPath is null || path.Count < bestPath.Count)
-                bestPath = path;
-        }
-
-        if (bestPath is null || bestPath.Count <= 1)
-            return false;
-
-        nextStep = bestPath[1];
-        return true;
+        return BehaviorSearch.TryFindNearestReachableTarget(
+            map,
+            origin,
+            SearchRadius,
+            canSwim,
+            requiresSwimming,
+            candidate =>
+                CanGrazeTile(map, candidate, diet) ||
+                edibleItemPositions.Contains(candidate) ||
+                CanHarvestWildPlant(map, dataManager, candidate, diet),
+            out nextStep);
     }
 
     private static ISet<Vec3i> ResolveEdibleItemPositions(
@@ -575,9 +764,7 @@ public sealed class EatFoodBehavior : CooldownBehavior
         if (def is not null)
             return def.ResolveDiet();
 
-        return CreatureDefTagExtensions.IsLikelyAquaticId(creature.DefId)
-            ? CreatureDiet.AquaticGrazer
-            : CreatureDiet.Omnivore;
+        return CreatureDiet.Omnivore;
     }
 
     private static string ResolveGrazingDescription(CreatureDiet diet)
@@ -599,9 +786,6 @@ public sealed class DrinkWaterBehavior : CooldownBehavior
     private const float CooldownSeconds = 1f;
     private const float DrinkSatisfaction = 0.9f;
     private const int SearchRadius = 14;
-
-    private static readonly Vec3i[] Directions =
-        [Vec3i.North, Vec3i.South, Vec3i.East, Vec3i.West];
 
     public DrinkWaterBehavior() : base(CooldownSeconds) { }
 
@@ -643,8 +827,7 @@ public sealed class DrinkWaterBehavior : CooldownBehavior
         if (!TryFindStepTowardDrinkablePosition(creature, ctx, map, origin, out var nextStep))
             return;
 
-        creature.Position.Position = nextStep;
-        ctx.EventBus.Emit(new EntityMovedEvent(creature.Id, origin, nextStep));
+        EntityMovement.TryMove(ctx, creature, nextStep);
 
         if (CanDrinkAt(map, nextStep))
         {
@@ -662,32 +845,15 @@ public sealed class DrinkWaterBehavior : CooldownBehavior
     {
         nextStep = origin;
         var (canSwim, requiresSwimming) = CreatureTraversalProfile.Resolve(creature, ctx);
-        IReadOnlyList<Vec3i>? bestPath = null;
 
-        for (var dx = -SearchRadius; dx <= SearchRadius; dx++)
-        for (var dy = -SearchRadius; dy <= SearchRadius; dy++)
-        {
-            var candidate = new Vec3i(origin.X + dx, origin.Y + dy, origin.Z);
-            if (!map.IsInBounds(candidate))
-                continue;
-            if (!map.IsTraversable(candidate, canSwim, requiresSwimming))
-                continue;
-            if (!CanDrinkAt(map, candidate))
-                continue;
-
-            var path = Pathfinder.FindPath(map, origin, candidate, canSwim, requiresSwimming);
-            if (path.Count <= 1)
-                continue;
-
-            if (bestPath is null || path.Count < bestPath.Count)
-                bestPath = path;
-        }
-
-        if (bestPath is null || bestPath.Count <= 1)
-            return false;
-
-        nextStep = bestPath[1];
-        return true;
+        return BehaviorSearch.TryFindNearestReachableTarget(
+            map,
+            origin,
+            SearchRadius,
+            canSwim,
+            requiresSwimming,
+            candidate => CanDrinkAt(map, candidate),
+            out nextStep);
     }
 
     private static bool CanDrinkAt(WorldMap map, Vec3i position)
@@ -695,9 +861,12 @@ public sealed class DrinkWaterBehavior : CooldownBehavior
         if (IsDrinkableWaterTile(map, position))
             return true;
 
-        foreach (var dir in Directions)
+        for (var i = 0; i < BehaviorSearch.CardinalDirections.Length; i++)
+        {
+            var dir = BehaviorSearch.CardinalDirections[i];
             if (IsDrinkableWaterTile(map, position + dir))
                 return true;
+        }
 
         return false;
     }
@@ -716,13 +885,133 @@ public sealed class DrinkWaterBehavior : CooldownBehavior
     }
 }
 
+public sealed class HostilePursuitBehavior : CooldownBehavior
+{
+    public override string BehaviorId => BehaviorIds.HuntDwarves;
+    private const float CooldownSeconds = 0.75f;
+    private const int SearchRadius = 12;
+
+    public HostilePursuitBehavior() : base(CooldownSeconds) { }
+
+    protected override float GetCooldownSeconds(Entity entity, GameContext ctx)
+        => AutonomousPacing.ScaleMoveCooldown(entity, ctx, CooldownSeconds, 0.15f, 1.25f, urgencyMultiplier: 1.35f);
+
+    protected override float GetCooldownJitterFraction(Entity entity, GameContext ctx)
+        => 0.12f;
+
+    public override bool ShouldFire(Entity entity, GameContext ctx)
+    {
+        if (entity is not Creature creature || !creature.IsHostile || creature.Health.IsDead)
+            return false;
+
+        var target = FindNearestDwarf(creature, ctx);
+        return target is not null && creature.Position.Position.ManhattanDistanceTo(target.Position.Position) > 1;
+    }
+
+    public override void Fire(Entity entity, GameContext ctx)
+    {
+        if (entity is not Creature creature || !creature.IsHostile || creature.Health.IsDead)
+            return;
+
+        var target = FindNearestDwarf(creature, ctx);
+        if (target is null)
+            return;
+
+        var map = ctx.Get<WorldMap>();
+        var origin = creature.Position.Position;
+        if (origin.ManhattanDistanceTo(target.Position.Position) <= 1)
+            return;
+
+        var (canSwim, requiresSwimming) = CreatureTraversalProfile.Resolve(creature, ctx);
+        var path = Pathfinder.FindPath(map, origin, target.Position.Position, canSwim, requiresSwimming);
+        if (path.Count <= 1)
+            return;
+
+        var nextStep = path[1];
+        if (nextStep == target.Position.Position)
+            return;
+
+        if (!map.IsTraversable(nextStep, canSwim, requiresSwimming))
+            return;
+
+        if (IsOccupiedByOtherEntity(ctx.TryGet<SpatialIndexSystem>(), nextStep, creature.Id))
+            return;
+
+        EntityMovement.TryMove(ctx, creature, nextStep);
+    }
+
+    private static Dwarf? FindNearestDwarf(Creature creature, GameContext ctx)
+    {
+        var origin = creature.Position.Position;
+        var registry = ctx.Get<EntityRegistry>();
+        var nearestDistance = int.MaxValue;
+        Dwarf? nearest = null;
+
+        var spatial = ctx.TryGet<SpatialIndexSystem>();
+        if (spatial is not null)
+        {
+            var dwarfIds = new List<int>();
+            spatial.CollectDwarvesInBounds(
+                origin.Z,
+                Math.Max(0, origin.X - SearchRadius),
+                Math.Max(0, origin.Y - SearchRadius),
+                origin.X + SearchRadius,
+                origin.Y + SearchRadius,
+                dwarfIds);
+
+            for (var i = 0; i < dwarfIds.Count; i++)
+            {
+                if (!registry.TryGetById<Dwarf>(dwarfIds[i], out var dwarf) || dwarf is null || dwarf.Health.IsDead)
+                    continue;
+
+                var distance = origin.ManhattanDistanceTo(dwarf.Position.Position);
+                if (distance > SearchRadius || distance >= nearestDistance)
+                    continue;
+
+                nearest = dwarf;
+                nearestDistance = distance;
+            }
+
+            return nearest;
+        }
+
+        foreach (var dwarf in registry.GetAlive<Dwarf>())
+        {
+            if (dwarf.Health.IsDead)
+                continue;
+
+            var distance = origin.ManhattanDistanceTo(dwarf.Position.Position);
+            if (distance > SearchRadius || distance >= nearestDistance)
+                continue;
+
+            nearest = dwarf;
+            nearestDistance = distance;
+        }
+
+        return nearest;
+    }
+
+    private static bool IsOccupiedByOtherEntity(SpatialIndexSystem? spatial, Vec3i position, int entityId)
+    {
+        if (spatial is null)
+            return false;
+
+        foreach (var dwarfId in spatial.GetDwarvesAt(position))
+            if (dwarfId != entityId)
+                return true;
+
+        foreach (var creatureId in spatial.GetCreaturesAt(position))
+            if (creatureId != entityId)
+                return true;
+
+        return false;
+    }
+}
+
 public sealed class WanderBehavior : CooldownBehavior
 {
     public override string BehaviorId => BehaviorIds.Wander;
     private const float CooldownSeconds = 5f;
-
-    private static readonly Vec3i[] Directions =
-        [Vec3i.North, Vec3i.South, Vec3i.East, Vec3i.West];
 
     public WanderBehavior() : base(CooldownSeconds) { }
 
@@ -745,7 +1034,8 @@ public sealed class WanderBehavior : CooldownBehavior
         var map = ctx.Get<WorldMap>();
         var pos = entity.Components.Get<PositionComponent>().Position;
         var (canSwim, requiresSwimming) = CreatureTraversalProfile.Resolve(entity, ctx);
-        var shuffled = ShuffledDirections();
+        Span<Vec3i> shuffled = stackalloc Vec3i[4];
+        BehaviorSearch.FillShuffledDirections(shuffled);
 
         // Aquatic creatures should remain in swimmable tiles.
         if (requiresSwimming && !map.IsSwimmable(pos))
@@ -756,8 +1046,7 @@ public sealed class WanderBehavior : CooldownBehavior
                 if (!map.IsSwimmable(next))
                     continue;
 
-                entity.Components.Get<PositionComponent>().Position = next;
-                ctx.EventBus.Emit(new EntityMovedEvent(entity.Id, pos, next));
+                EntityMovement.TryMove(ctx, entity, next);
                 return;
             }
 
@@ -770,24 +1059,12 @@ public sealed class WanderBehavior : CooldownBehavior
             var next = pos + dir;
             if (map.IsTraversable(next, canSwim, requiresSwimming))
             {
-                entity.Components.Get<PositionComponent>().Position = next;
-                ctx.EventBus.Emit(new EntityMovedEvent(entity.Id, pos, next));
+                EntityMovement.TryMove(ctx, entity, next);
                 break;
             }
         }
     }
 
-    private static List<Vec3i> ShuffledDirections()
-    {
-        var shuffled = Directions.ToList();
-        for (var i = shuffled.Count - 1; i > 0; i--)
-        {
-            var j = Random.Shared.Next(i + 1);
-            (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
-        }
-
-        return shuffled;
-    }
 }
 
 /// <summary>String constants for behavior IDs.</summary>
@@ -795,6 +1072,7 @@ public static class BehaviorIds
 {
     public const string EatFood = "eat_food";
     public const string DrinkWater = "drink_water";
+    public const string HuntDwarves = "hunt_dwarves";
     public const string Grooming  = "grooming";
     public const string Socialize = "socialize";
     public const string Tantrum   = "tantrum";

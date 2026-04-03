@@ -7,8 +7,12 @@ using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
+using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
+
+namespace DwarfFortress.GodotClient.UI;
+
 
 /// <summary>Right-side panel showing available recipes for a selected workshop.</summary>
 public partial class WorkshopPanel : PanelContainer
@@ -70,7 +74,7 @@ public partial class WorkshopPanel : PanelContainer
         }
     }
 
-    // ── Private ────────────────────────────────────────────────────────────
+    // â”€â”€ Private â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private void Rebuild()
     {
@@ -114,7 +118,7 @@ public partial class WorkshopPanel : PanelContainer
                 ? dm.Recipes.Get(order.RecipeId).DisplayName
                 : order.RecipeId;
 
-            _queueBox.AddChild(new Label { Text = $"  {displayName} ×{order.Remaining}" });
+            _queueBox.AddChild(new Label { Text = $"  {displayName} Ã—{order.Remaining}" });
         }
 
         _lastQueueHash = ComputeQueueHash(orders);
@@ -167,11 +171,13 @@ public partial class WorkshopPanel : PanelContainer
 
     private ItemSelectionEntry BuildRecipeEntry(RecipeDef recipe, IReadOnlyDictionary<string, int> queueCounts)
     {
+        var dataManager = _simulation!.Context.Get<DataManager>();
         var output = recipe.Outputs.FirstOrDefault();
-        var itemDefId = output?.ItemDefId ?? "log";
+        var outputItemDefIds = RecipeOutputQuery.ResolveItemDefIds(dataManager, recipe);
+        var itemDefId = outputItemDefIds.FirstOrDefault() ?? output?.ItemDefId ?? ItemDefIds.Log;
         var outputLabel = output is null
             ? recipe.DisplayName
-            : $"{output.Quantity}x {FormatDefId(output.ItemDefId)}";
+            : FormatOutputLabel(dataManager, output);
         var requirements = SelectionRequirementHelper.Analyze(_simulation!, recipe.Inputs);
 
         var queueText = queueCounts.TryGetValue(recipe.Id, out var queued) && queued > 0
@@ -179,8 +185,8 @@ public partial class WorkshopPanel : PanelContainer
             : "Ready to queue";
 
         var status = requirements.CanFulfill
-            ? $"{queueText} • materials available now"
-            : $"{queueText} • missing {requirements.MissingSummary}";
+            ? $"{queueText} â€¢ materials available now"
+            : $"{queueText} â€¢ missing {requirements.MissingSummary}";
 
         return new ItemSelectionEntry(
             Id: recipe.Id,
@@ -218,16 +224,31 @@ public partial class WorkshopPanel : PanelContainer
     private static string FormatDefId(string id)
         => id.Replace('_', ' ');
 
-    private static string FormatStorageStatus(int storedItemCount)
-        => storedItemCount <= 0
-            ? "Workshop storage: empty"
-            : $"Workshop storage: {storedItemCount} staged item(s)";
+    private static string FormatOutputLabel(DataManager dataManager, RecipeOutput output)
+    {
+        var outputItemDefId = RecipeOutputQuery.ResolveItemDefIds(dataManager, output).FirstOrDefault();
+        var labelId = !string.IsNullOrWhiteSpace(outputItemDefId)
+            ? outputItemDefId
+            : output.ItemDefId ?? output.FormRole ?? "item";
+
+        return $"{output.Quantity}x {FormatDefId(labelId)}";
+    }
+
+    private static string FormatStorageStatus(int storedItemCount, float totalWeight = 0f)
+    {
+        if (storedItemCount <= 0)
+            return "Workshop storage: empty";
+        
+        var weightText = totalWeight > 0f ? $" ({totalWeight:F1} kg)" : "";
+        return $"Workshop storage: {storedItemCount} staged item(s){weightText}";
+    }
 
     private void RefreshInventory()
     {
         if (_building is null || _simulation is null || _inventoryList is null) return;
 
         var itemSystem = _simulation.Context.TryGet<ItemSystem>();
+        var dm = _simulation.Context.TryGet<DataManager>();
         if (itemSystem is null)
         {
             _inventoryList.SetEntries(new[]
@@ -244,6 +265,8 @@ public partial class WorkshopPanel : PanelContainer
                     IsEnabled: false,
                     OnPressed: null)
             });
+            if (_storageStatusLabel is not null)
+                _storageStatusLabel.Text = FormatStorageStatus(0);
             return;
         }
 
@@ -265,15 +288,38 @@ public partial class WorkshopPanel : PanelContainer
                     IsEnabled: false,
                     OnPressed: null)
             });
+            if (_storageStatusLabel is not null)
+                _storageStatusLabel.Text = FormatStorageStatus(0);
             return;
+        }
+
+        // Calculate total weight
+        float totalWeight = 0f;
+        foreach (var item in items)
+        {
+            var itemDef = dm?.Items.GetOrNull(item.DefId);
+            var weight = itemDef?.Weight ?? 0f;
+            if (item.StackSize > 1)
+                weight *= item.StackSize;
+            totalWeight += weight;
         }
 
         var entries = items.Select(item => BuildInventoryEntry(item)).ToList();
         _inventoryList.SetEntries(entries);
+
+        // Update storage status with total weight
+        if (_storageStatusLabel is not null)
+            _storageStatusLabel.Text = FormatStorageStatus(items.Count, totalWeight);
     }
 
     private ItemSelectionEntry BuildInventoryEntry(Item item)
     {
+        var dm = _simulation?.Context.TryGet<DataManager>();
+        var itemDef = dm?.Items.GetOrNull(item.DefId);
+        var weight = itemDef?.Weight ?? 0f;
+        if (item.StackSize > 1)
+            weight *= item.StackSize;
+
         var materialLabel = !string.IsNullOrEmpty(item.MaterialId) 
             ? $"{FormatDefId(item.MaterialId)} " 
             : "";
@@ -281,6 +327,7 @@ public partial class WorkshopPanel : PanelContainer
         var qualityLabel = item.Quality != ItemQuality.Ordinary 
             ? $" [{item.Quality}]" 
             : "";
+        var weightLabel = weight > 0f ? $" [{weight:F1} kg]" : "";
 
         var corpse = item.Components.TryGet<CorpseComponent>();
         string title, subtitle;
@@ -290,11 +337,11 @@ public partial class WorkshopPanel : PanelContainer
             title = $"{corpse.DisplayName} corpse";
             var rot = item.Components.TryGet<RotComponent>();
             var rotStage = rot?.Stage ?? "fresh";
-            subtitle = $"Died of {FormatDefId(corpse.DeathCause)} • {rotStage}";
+            subtitle = $"Died of {FormatDefId(corpse.DeathCause)} â€¢ {rotStage}";
         }
         else
         {
-            title = $"{materialLabel}{FormatDefId(item.DefId)}{stackLabel}{qualityLabel}";
+            title = $"{materialLabel}{FormatDefId(item.DefId)}{stackLabel}{qualityLabel}{weightLabel}";
             subtitle = $"Stored in workshop";
         }
 
@@ -302,10 +349,10 @@ public partial class WorkshopPanel : PanelContainer
             Id: item.Id.ToString(),
             Title: title,
             Subtitle: subtitle,
-            Details: $"Item #{item.Id} • Position: ({item.Position.Position.X}, {item.Position.Position.Y}, {item.Position.Position.Z})",
+            Details: $"Item #{item.Id} â€¢ Position: ({item.Position.Position.X}, {item.Position.Position.Y}, {item.Position.Position.Z})",
             Status: item.IsClaimed ? "Reserved" : "Available",
             StatusColor: item.IsClaimed ? new Color(0.96f, 0.72f, 0.28f) : new Color(0.44f, 0.85f, 0.48f),
-            Icon: PixelArtFactory.GetItem(item.DefId),
+            Icon: PixelArtFactory.GetItem(item.DefId, item.MaterialId),
             ActionLabel: "",
             IsEnabled: false,
             OnPressed: null);

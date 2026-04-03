@@ -88,6 +88,73 @@ public sealed class MineTileStrategyTests
         Assert.DoesNotContain(drops, i => i.DefId == "granite_boulder");
     }
 
+    [Fact]
+    public void OnComplete_UsesContentMaterialFormsForMineDrops()
+    {
+        var ds = new InMemoryDataSource();
+        ds.AddFile("data/ConfigBundle/tiles.json", """
+            [
+              { "id": "empty", "displayName": "Empty", "isPassable": true, "isOpaque": false },
+              { "id": "stone_floor", "displayName": "Stone Floor", "isPassable": true, "isOpaque": false },
+              { "id": "stone_wall", "displayName": "Stone Wall", "isPassable": false, "isOpaque": true, "isMineable": true }
+            ]
+            """);
+        ds.AddFile("data/ConfigBundle/jobs.json", TestFixtures.CoreJobsJson);
+        TestFixtures.AddCoreCreatureBundles(ds);
+        ds.AddFile("data/ConfigBundle/items.json", "[]");
+        ds.AddFile("data/ConfigBundle/materials.json", "[]");
+        ds.AddFile("data/Content/Core/materials/obsidian.json", """
+            {
+              "id": "obsidian",
+              "displayName": "Obsidian",
+              "tags": ["stone", "hard"],
+              "forms": [
+                {
+                  "role": "boulder",
+                  "item": {
+                    "id": "obsidian_shard",
+                    "displayName": "Obsidian Shard",
+                    "tags": ["stone", "boulder"],
+                    "weight": 18.0
+                  }
+                }
+              ]
+            }
+            """);
+
+        var logger = new TestLogger();
+        var map = new WorldMap();
+        var items = new ItemSystem();
+        var sim = TestFixtures.CreateSimulation(
+            logger,
+            ds,
+            new DataManager(),
+            new DwarfFortress.GameLogic.Entities.EntityRegistry(),
+            map,
+            items);
+
+        map.SetDimensions(8, 8, 2);
+        var target = new Vec3i(3, 3, 0);
+        map.SetTile(target, new TileData
+        {
+            TileDefId = TileDefIds.StoneWall,
+            MaterialId = "obsidian",
+            IsDesignated = true,
+            IsPassable = false,
+        });
+        map.SetTile(target + Vec3i.South, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = "obsidian",
+            IsPassable = true,
+        });
+
+        var strategy = new MineTileStrategy();
+        strategy.OnComplete(new Job(1, JobDefIds.MineTile, target), dwarfId: 1, sim.Context);
+
+        Assert.Contains(items.GetItemsAt(target), item => item.DefId == "obsidian_shard");
+    }
+
     private static (GameSimulation Sim, WorldMap Map, ItemSystem Items) CreateSimulation(string materialsJson)
     {
         var logger = new TestLogger();
@@ -96,7 +163,7 @@ public sealed class MineTileStrategyTests
         ds.AddFile("data/ConfigBundle/tiles.json", TestFixtures.CoreTilesJson);
         ds.AddFile("data/ConfigBundle/items.json", TestFixtures.CoreItemsJson);
         ds.AddFile("data/ConfigBundle/jobs.json", TestFixtures.CoreJobsJson);
-        ds.AddFile("data/ConfigBundle/creatures.json", TestFixtures.CoreCreaturesJson);
+        TestFixtures.AddCoreCreatureBundles(ds);
 
         var map = new WorldMap();
         var items = new ItemSystem();

@@ -9,6 +9,9 @@ public sealed class GeneratedWorldHistory
     public int SimulatedYears { get; init; }
     public IReadOnlyList<CivilizationRecord> Civilizations { get; init; } = [];
     public IReadOnlyList<SiteRecord> Sites { get; init; } = [];
+    public IReadOnlyList<SitePopulationRecord> SitePopulations { get; init; } = [];
+    public IReadOnlyList<HouseholdRecord> Households { get; init; } = [];
+    public IReadOnlyList<HistoricalFigureRecord> Figures { get; init; } = [];
     public IReadOnlyList<RoadRecord> Roads { get; init; } = [];
     public IReadOnlyList<HistoricalEventRecord> Events { get; init; } = [];
     public IReadOnlyDictionary<WorldCoord, string> TerritoryByTile { get; init; }

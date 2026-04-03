@@ -22,6 +22,20 @@ public sealed class WorldGenAnalyzerTests
     }
 
     [Fact]
+    public void AnalyzeEmbarkStages_DefaultDiagnosticsBudgets_Pass()
+    {
+        var map = EmbarkGenerator.Generate(width: 48, height: 48, depth: 8, seed: 42, biomeId: MacroBiomeIds.ConiferForest);
+
+        var report = WorldGenAnalyzer.AnalyzeEmbarkStages(map);
+
+        Assert.True(report.Passed, "Expected embark stage diagnostics budgets to pass on current generator baseline.");
+        Assert.Equal(42, report.Seed);
+        Assert.Equal(map.Width * map.Height, report.SurfaceTileCount);
+        Assert.Equal(map.Width * map.Height * (map.Depth - 1), report.UndergroundTileCount);
+        Assert.Equal(map.Diagnostics!.StageSnapshots.Count, report.StageSnapshots.Count);
+    }
+
+    [Fact]
     public void AnalyzeLore_ComputesEventBreakdown()
     {
         var lore = WorldLoreGenerator.Generate(seed: 33, width: 48, height: 48, depth: 8);
@@ -96,6 +110,11 @@ public sealed class WorldGenAnalyzerTests
         Assert.Equal(report.DenseForestSampleCount > 0, report.DenseForestCoverageAchieved);
         Assert.Equal(report.TropicalSampleCount > 0, report.TropicalCoverageAchieved);
         Assert.Equal(report.AridSampleCount > 0, report.AridCoverageAchieved);
+
+        var diagnosticsCoverageBudget = report.Budgets.Single(b => b.Name == "Embark Stage Diagnostics Coverage");
+        var diagnosticsPassBudget = report.Budgets.Single(b => b.Name == "Embark Stage Diagnostics Pass");
+        Assert.True(diagnosticsCoverageBudget.Passed);
+        Assert.True(diagnosticsPassBudget.Passed);
 
         var worldGenerator = new WorldLayerGenerator();
         var hasDenseForest = false;

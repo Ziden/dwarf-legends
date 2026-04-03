@@ -1,5 +1,8 @@
 using DwarfFortress.GameLogic.Systems;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 public static class UiText
 {
     public const string Yes = "Yes";

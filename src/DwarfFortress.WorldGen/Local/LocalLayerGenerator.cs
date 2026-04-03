@@ -9,7 +9,11 @@ namespace DwarfFortress.WorldGen.Local;
 
 public interface ILocalLayerGenerator
 {
-    GeneratedEmbarkMap Generate(GeneratedRegionMap region, RegionCoord coord, LocalGenerationSettings settings);
+    GeneratedEmbarkMap Generate(
+        GeneratedRegionMap region,
+        RegionCoord coord,
+        LocalGenerationSettings settings,
+        LocalHistoryContext? historyContext = null);
 }
 
 /// <summary>
@@ -17,7 +21,11 @@ public interface ILocalLayerGenerator
 /// </summary>
 public sealed class LocalLayerGenerator : ILocalLayerGenerator
 {
-    public GeneratedEmbarkMap Generate(GeneratedRegionMap region, RegionCoord coord, LocalGenerationSettings settings)
+    public GeneratedEmbarkMap Generate(
+        GeneratedRegionMap region,
+        RegionCoord coord,
+        LocalGenerationSettings settings,
+        LocalHistoryContext? historyContext = null)
     {
         if (settings.Width <= 0) throw new ArgumentOutOfRangeException(nameof(settings.Width));
         if (settings.Height <= 0) throw new ArgumentOutOfRangeException(nameof(settings.Height));
@@ -122,10 +130,16 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         if (RegionBiomeVariantIds.IsMarshVariant(regionTile.BiomeVariantId))
             marshPoolBias += 2;
 
+        var historicalSettlementInfluence = ResolveHistoricalSettlementInfluence(historyContext, coord.WorldX, coord.WorldY);
+        var historicalRoadInfluence = WorldGenFeatureFlags.EnableRoadGeneration
+            ? ResolveHistoricalRoadInfluence(historyContext)
+            : 0f;
+
         var settlementInfluence = Math.Clamp(
             settings.SettlementInfluence +
             (regionTile.HasSettlement ? (0.62f + (regionTile.VegetationDensity * 0.28f)) : 0f) +
-            (CountAdjacentSettlements(region, coord.RegionX, coord.RegionY) * 0.08f),
+            (CountAdjacentSettlements(region, coord.RegionX, coord.RegionY) * 0.08f) +
+            historicalSettlementInfluence,
             0f,
             1f);
         var roadInfluence = WorldGenFeatureFlags.EnableRoadGeneration
@@ -133,13 +147,18 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
                 settings.RoadInfluence +
                 (regionTile.HasRoad ? 0.86f : 0f) +
                 (regionTile.HasSettlement ? 0.12f : 0f) +
-                (CountAdjacentRoads(region, coord.RegionX, coord.RegionY) * 0.10f),
+                (CountAdjacentRoads(region, coord.RegionX, coord.RegionY) * 0.10f) +
+                historicalRoadInfluence,
                 0f,
                 1f)
             : 0f;
-        var settlementAnchors = BuildLocalSettlementAnchors(region, coord.RegionX, coord.RegionY);
+        var settlementAnchors = CombineSettlementAnchors(
+            BuildHistoricalSettlementAnchors(historyContext, coord.WorldX, coord.WorldY),
+            BuildLocalSettlementAnchors(region, coord.RegionX, coord.RegionY));
         var roadPortals = WorldGenFeatureFlags.EnableRoadGeneration
-            ? BuildLocalRoadPortals(region, coord.RegionX, coord.RegionY)
+            ? CombineRoadPortals(
+                BuildHistoricalRoadPortals(historyContext),
+                BuildLocalRoadPortals(region, coord.RegionX, coord.RegionY))
             : null;
         var surfaceTileOverrideId = ResolvePreferredSurfaceTileDefId(regionTile, region.ParentMacroBiomeId);
         var globalRegionX = (coord.WorldX * region.Width) + coord.RegionX;
@@ -379,13 +398,38 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
 
         var portals = new LocalRiverPortal[edges.Count];
         var portalStrength = ResolvePortalStrength(regionTile.RiverDischarge, regionTile.RiverOrder);
+        var straightThroughOffset = TryResolveStraightThroughRiverOffset(region.Seed, regionX, regionY, edges);
         for (var i = 0; i < edges.Count; i++)
         {
-            var offset = ResolvePortalOffset(region.Seed, regionX, regionY, edges[i]);
+            var offset = straightThroughOffset ?? ResolvePortalOffset(region.Seed, regionX, regionY, edges[i]);
             portals[i] = new LocalRiverPortal(edges[i], offset, Strength: portalStrength);
         }
 
         return portals;
+    }
+
+    private static float? TryResolveStraightThroughRiverOffset(int regionSeed, int regionX, int regionY, List<LocalMapEdge> edges)
+    {
+        if (edges.Count != 2)
+            return null;
+
+        var hasNorth = edges.Contains(LocalMapEdge.North);
+        var hasSouth = edges.Contains(LocalMapEdge.South);
+        if (hasNorth && hasSouth)
+        {
+            var unit = SeedHash.Unit(regionSeed, regionX, 3433, 0);
+            return 0.18f + (unit * 0.64f);
+        }
+
+        var hasEast = edges.Contains(LocalMapEdge.East);
+        var hasWest = edges.Contains(LocalMapEdge.West);
+        if (hasEast && hasWest)
+        {
+            var unit = SeedHash.Unit(regionSeed, regionY, 3467, 0);
+            return 0.18f + (unit * 0.64f);
+        }
+
+        return null;
     }
 
     private static List<LocalMapEdge> CollectPortalEdges(
@@ -536,6 +580,358 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         }
 
         return portals;
+    }
+
+    private static float ResolveHistoricalSettlementInfluence(LocalHistoryContext? historyContext, int worldX, int worldY)
+    {
+        if (historyContext is not { HasContinuity: true })
+            return 0f;
+
+        var context = historyContext.Value;
+        var influence = 0f;
+        if (!string.IsNullOrWhiteSpace(context.TerritoryOwnerCivilizationId))
+            influence += 0.06f;
+
+        if (context.PrimarySite is { } primarySite)
+        {
+            influence += ResolveHistoricalSiteInfluence(
+                primarySite,
+                worldX,
+                worldY,
+                isPrimary: true,
+                context.OwnerCivilizationId,
+                context.TerritoryOwnerCivilizationId);
+        }
+
+        if (context.NearbySites is { Length: > 0 } nearbySites)
+        {
+            foreach (var site in nearbySites)
+            {
+                influence += ResolveHistoricalSiteInfluence(
+                    site,
+                    worldX,
+                    worldY,
+                    isPrimary: false,
+                    context.OwnerCivilizationId,
+                    context.TerritoryOwnerCivilizationId);
+            }
+        }
+
+        return Math.Clamp(influence, 0f, 0.72f);
+    }
+
+    private static float ResolveHistoricalRoadInfluence(LocalHistoryContext? historyContext)
+    {
+        if (historyContext is not { HasContinuity: true })
+            return 0f;
+
+        var context = historyContext.Value;
+        if (context.NearbyRoads is not { Length: > 0 } nearbyRoads)
+            return 0f;
+
+        var influence = 0f;
+        var primarySiteId = context.PrimarySite is { } primarySite ? primarySite.Id : null;
+        foreach (var road in nearbyRoads)
+        {
+            if (road.DistanceFromEmbark > 1)
+                continue;
+
+            influence += road.PortalEdges is { Length: > 0 }
+                ? 0.18f + (road.PortalEdges.Length * 0.05f)
+                : 0.05f;
+
+            if (string.Equals(road.OwnerCivilizationId, context.OwnerCivilizationId, StringComparison.Ordinal))
+                influence += 0.05f;
+
+            if (!string.IsNullOrWhiteSpace(primarySiteId) &&
+                (string.Equals(road.FromSiteId, primarySiteId, StringComparison.Ordinal) ||
+                 string.Equals(road.ToSiteId, primarySiteId, StringComparison.Ordinal)))
+            {
+                influence += 0.05f;
+            }
+        }
+
+        return Math.Clamp(influence, 0f, 0.78f);
+    }
+
+    private static float ResolveHistoricalSiteInfluence(
+        LocalHistorySite site,
+        int worldX,
+        int worldY,
+        bool isPrimary,
+        string? ownerCivilizationId,
+        string? territoryOwnerCivilizationId)
+    {
+        var distance = Math.Abs(site.WorldX - worldX) + Math.Abs(site.WorldY - worldY);
+        if (distance > 1)
+            return 0f;
+
+        var influence = distance == 0 ? 0.14f : 0.06f;
+        if (isPrimary)
+            influence += 0.22f;
+
+        influence += Math.Clamp(site.Development, 0f, 1f) * (distance == 0 ? 0.18f : 0.08f);
+        if (string.Equals(site.OwnerCivilizationId, ownerCivilizationId, StringComparison.Ordinal))
+            influence += 0.04f;
+        if (string.Equals(site.OwnerCivilizationId, territoryOwnerCivilizationId, StringComparison.Ordinal))
+            influence += 0.03f;
+
+        return influence;
+    }
+
+    private static LocalSettlementAnchor[]? BuildHistoricalSettlementAnchors(
+        LocalHistoryContext? historyContext,
+        int worldX,
+        int worldY)
+    {
+        if (historyContext is not { HasContinuity: true })
+            return null;
+
+        var context = historyContext.Value;
+        var anchors = new List<LocalSettlementAnchor>(6);
+        if (context.PrimarySite is { } primarySite)
+        {
+            AddHistoricalSettlementAnchor(
+                anchors,
+                primarySite,
+                worldX,
+                worldY,
+                isPrimary: true,
+                context.OwnerCivilizationId,
+                context.TerritoryOwnerCivilizationId);
+        }
+
+        if (context.NearbySites is { Length: > 0 } nearbySites)
+        {
+            foreach (var site in nearbySites)
+            {
+                AddHistoricalSettlementAnchor(
+                    anchors,
+                    site,
+                    worldX,
+                    worldY,
+                    isPrimary: false,
+                    context.OwnerCivilizationId,
+                    context.TerritoryOwnerCivilizationId);
+            }
+        }
+
+        return anchors.Count == 0 ? null : anchors.ToArray();
+    }
+
+    private static void AddHistoricalSettlementAnchor(
+        List<LocalSettlementAnchor> anchors,
+        LocalHistorySite site,
+        int worldX,
+        int worldY,
+        bool isPrimary,
+        string? ownerCivilizationId,
+        string? territoryOwnerCivilizationId)
+    {
+        var dx = site.WorldX - worldX;
+        var dy = site.WorldY - worldY;
+        if (Math.Abs(dx) + Math.Abs(dy) > 1)
+            return;
+
+        var strength = ResolveHistoricalSiteStrength(site, isPrimary, ownerCivilizationId, territoryOwnerCivilizationId);
+        if (dx == 0 && dy == 0)
+        {
+            var (centerX, centerY) = ResolveHistoricalSiteCenter(site, isPrimary);
+            anchors.Add(new LocalSettlementAnchor(centerX, centerY, strength));
+            return;
+        }
+
+        var edge = ResolveHistoricalEdge(dx, dy);
+        var offset = ResolveHistoricalOffset(site.Id, site.Name, salt: 5471);
+        const float edgeInset = 0.16f;
+        var anchor = edge switch
+        {
+            LocalMapEdge.North => new LocalSettlementAnchor(offset, edgeInset, strength),
+            LocalMapEdge.East => new LocalSettlementAnchor(1f - edgeInset, offset, strength),
+            LocalMapEdge.South => new LocalSettlementAnchor(offset, 1f - edgeInset, strength),
+            LocalMapEdge.West => new LocalSettlementAnchor(edgeInset, offset, strength),
+            _ => new LocalSettlementAnchor(0.5f, 0.5f, strength),
+        };
+
+        anchors.Add(anchor);
+    }
+
+    private static LocalRoadPortal[]? BuildHistoricalRoadPortals(LocalHistoryContext? historyContext)
+    {
+        if (historyContext is not { HasContinuity: true })
+            return null;
+
+        var context = historyContext.Value;
+        if (context.NearbyRoads is not { Length: > 0 } nearbyRoads)
+            return null;
+
+        var portals = new List<LocalRoadPortal>(6);
+        var primarySiteId = context.PrimarySite is { } primarySite ? primarySite.Id : null;
+        foreach (var road in nearbyRoads)
+        {
+            if (road.PortalEdges is not { Length: > 0 } portalEdges)
+                continue;
+
+            var width = 1;
+            if (string.Equals(road.OwnerCivilizationId, context.OwnerCivilizationId, StringComparison.Ordinal))
+                width++;
+            if (!string.IsNullOrWhiteSpace(primarySiteId) &&
+                (string.Equals(road.FromSiteId, primarySiteId, StringComparison.Ordinal) ||
+                 string.Equals(road.ToSiteId, primarySiteId, StringComparison.Ordinal)))
+            {
+                width++;
+            }
+
+            var offset = ResolveHistoricalOffset(road.Id, road.OwnerCivilizationId, salt: 6121);
+            foreach (var edge in portalEdges)
+                portals.Add(new LocalRoadPortal(edge, offset, (byte)Math.Clamp(width, 1, 3)));
+        }
+
+        return portals.Count == 0 ? null : portals.ToArray();
+    }
+
+    private static LocalSettlementAnchor[]? CombineSettlementAnchors(
+        LocalSettlementAnchor[]? primary,
+        LocalSettlementAnchor[]? secondary)
+    {
+        if (primary is not { Length: > 0 } && secondary is not { Length: > 0 })
+            return null;
+
+        var combined = new List<LocalSettlementAnchor>((primary?.Length ?? 0) + (secondary?.Length ?? 0));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        AddUniqueSettlementAnchors(combined, seen, primary);
+        AddUniqueSettlementAnchors(combined, seen, secondary);
+        return combined.Count == 0 ? null : combined.ToArray();
+    }
+
+    private static void AddUniqueSettlementAnchors(
+        List<LocalSettlementAnchor> target,
+        HashSet<string> seen,
+        LocalSettlementAnchor[]? anchors)
+    {
+        if (anchors is not { Length: > 0 })
+            return;
+
+        foreach (var anchor in anchors)
+        {
+            var key = $"{Math.Round(anchor.NormalizedX, 3):0.000}:{Math.Round(anchor.NormalizedY, 3):0.000}";
+            if (!seen.Add(key))
+                continue;
+
+            target.Add(anchor);
+        }
+    }
+
+    private static LocalRoadPortal[]? CombineRoadPortals(LocalRoadPortal[]? primary, LocalRoadPortal[]? secondary)
+    {
+        if (primary is not { Length: > 0 } && secondary is not { Length: > 0 })
+            return null;
+
+        var combined = new List<LocalRoadPortal>((primary?.Length ?? 0) + (secondary?.Length ?? 0));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        AddUniqueRoadPortals(combined, seen, primary);
+        AddUniqueRoadPortals(combined, seen, secondary);
+        return combined.Count == 0 ? null : combined.ToArray();
+    }
+
+    private static void AddUniqueRoadPortals(
+        List<LocalRoadPortal> target,
+        HashSet<string> seen,
+        LocalRoadPortal[]? portals)
+    {
+        if (portals is not { Length: > 0 })
+            return;
+
+        foreach (var portal in portals)
+        {
+            var key = $"{portal.Edge}:{Math.Round(portal.NormalizedOffset, 3):0.000}";
+            if (!seen.Add(key))
+                continue;
+
+            target.Add(portal);
+        }
+    }
+
+    private static (float X, float Y) ResolveHistoricalSiteCenter(LocalHistorySite site, bool isPrimary)
+    {
+        var spread = isPrimary ? 0.18f : 0.28f;
+        var inset = isPrimary ? 0.41f : 0.36f;
+        var x = inset + (StableUnitHash(site.Id, site.Name, salt: 5411) * spread);
+        var y = inset + (StableUnitHash(site.Name, site.Id, salt: 5471) * spread);
+        return (x, y);
+    }
+
+    private static byte ResolveHistoricalSiteStrength(
+        LocalHistorySite site,
+        bool isPrimary,
+        string? ownerCivilizationId,
+        string? territoryOwnerCivilizationId)
+    {
+        var strength = isPrimary ? 4 : 2;
+        if (IsMajorHistoricalSite(site.Kind))
+            strength += 2;
+        else if (IsMinorHistoricalSite(site.Kind))
+            strength += 1;
+
+        if (site.Development >= 0.75f)
+            strength += 1;
+        if (string.Equals(site.OwnerCivilizationId, ownerCivilizationId, StringComparison.Ordinal))
+            strength += 1;
+        if (string.Equals(site.OwnerCivilizationId, territoryOwnerCivilizationId, StringComparison.Ordinal))
+            strength += 1;
+
+        return (byte)Math.Clamp(strength, 2, 8);
+    }
+
+    private static bool IsMajorHistoricalSite(string? kind)
+        => string.Equals(kind, "fortress", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(kind, "city", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(kind, "capital", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(kind, "town", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMinorHistoricalSite(string? kind)
+        => string.Equals(kind, "hamlet", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(kind, "village", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(kind, "camp", StringComparison.OrdinalIgnoreCase);
+
+    private static LocalMapEdge ResolveHistoricalEdge(int dx, int dy)
+    {
+        if (dy < 0)
+            return LocalMapEdge.North;
+        if (dx > 0)
+            return LocalMapEdge.East;
+        if (dy > 0)
+            return LocalMapEdge.South;
+        return LocalMapEdge.West;
+    }
+
+    private static float ResolveHistoricalOffset(string? primary, string? secondary, int salt)
+        => 0.22f + (StableUnitHash(primary, secondary, salt) * 0.56f);
+
+    private static float StableUnitHash(string? primary, string? secondary, int salt)
+    {
+        unchecked
+        {
+            var hash = 17;
+            hash = MixStableHash(hash, primary);
+            hash = MixStableHash(hash, secondary);
+            hash = (hash * 31) + salt;
+            return (hash & int.MaxValue) / (float)int.MaxValue;
+        }
+    }
+
+    private static int MixStableHash(int hash, string? value)
+    {
+        unchecked
+        {
+            if (string.IsNullOrEmpty(value))
+                return (hash * 31) + 1;
+
+            foreach (var ch in value)
+                hash = (hash * 31) + ch;
+
+            return (hash * 31) + '|';
+        }
     }
 
     private static List<LocalMapEdge> CollectRoadPortalEdges(

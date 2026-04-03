@@ -36,13 +36,22 @@ unique_name_in_owner = true
 unique_name_in_owner = true
 size_flags_vertical = 3
 current_tab = 0
-tab_count = 9
+tab_count = 10
 
 [node name="Overview" type="ScrollContainer" parent="Margin/VBox/Tabs"]
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="OverviewBox" type="VBoxContainer" parent="Margin/VBox/Tabs/Overview"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="Lore" type="ScrollContainer" parent="Margin/VBox/Tabs"]
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LoreBox" type="VBoxContainer" parent="Margin/VBox/Tabs/Lore"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
@@ -110,11 +119,11 @@ unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
-[node name="Traits" type="ScrollContainer" parent="Margin/VBox/Tabs"]
+[node name="Attributes" type="ScrollContainer" parent="Margin/VBox/Tabs"]
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="TraitsBox" type="VBoxContainer" parent="Margin/VBox/Tabs/Traits"]
+[node name="AttributesBox" type="VBoxContainer" parent="Margin/VBox/Tabs/Attributes"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 theme_override_constants/separation = 6

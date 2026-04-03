@@ -2,6 +2,7 @@ using DwarfFortress.WorldGen.Geology;
 using DwarfFortress.WorldGen.Ids;
 using DwarfFortress.WorldGen.Local;
 using DwarfFortress.WorldGen.Maps;
+using System.Linq;
 
 namespace DwarfFortress.WorldGen.Tests;
 
@@ -42,6 +43,103 @@ public sealed class EmbarkGeneratorTests
         {
             Assert.Equal(mapA.CreatureSpawns[i], mapB.CreatureSpawns[i]);
         }
+    }
+
+    [Fact]
+    public void Generate_CustomSettings_SameSeed_ProducesSameEmbark()
+    {
+        var settings = new LocalGenerationSettings(
+            Width: 48,
+            Height: 48,
+            Depth: 12,
+            BiomeOverrideId: MacroBiomeIds.Highland,
+            TreeDensityBias: -0.18f,
+            OutcropBias: 0.34f,
+            StreamBandBias: 1,
+            MarshPoolBias: 2,
+            ParentWetnessBias: 0.42f,
+            ParentSoilDepthBias: -0.15f,
+            GeologyProfileId: GeologyProfileIds.IgneousUplift,
+            StoneSurfaceOverride: true,
+            RiverPortals:
+            [
+                new LocalRiverPortal(LocalMapEdge.North, 0.25f, Strength: 3),
+                new LocalRiverPortal(LocalMapEdge.South, 0.72f, Strength: 2),
+            ],
+            ForestPatchBias: -0.20f,
+            SettlementInfluence: 0.55f,
+            RoadInfluence: 0.70f,
+            SettlementAnchors:
+            [
+                new LocalSettlementAnchor(0.35f, 0.40f, Strength: 4),
+                new LocalSettlementAnchor(0.68f, 0.58f, Strength: 2),
+            ],
+            RoadPortals:
+            [
+                new LocalRoadPortal(LocalMapEdge.West, 0.48f, Width: 2),
+                new LocalRoadPortal(LocalMapEdge.East, 0.52f, Width: 2),
+            ],
+            SurfaceTileOverrideId: GeneratedTileDefIds.Grass,
+            ForestCoverageTarget: 0.12f,
+            NoiseOriginX: 320,
+            NoiseOriginY: 640);
+
+        var mapA = EmbarkGenerator.Generate(settings, seed: 7331);
+        var mapB = EmbarkGenerator.Generate(settings, seed: 7331);
+
+        for (var x = 0; x < mapA.Width; x++)
+        for (var y = 0; y < mapA.Height; y++)
+        for (var z = 0; z < mapA.Depth; z++)
+        {
+            var a = mapA.GetTile(x, y, z);
+            var b = mapB.GetTile(x, y, z);
+            Assert.Equal(a.TileDefId, b.TileDefId);
+            Assert.Equal(a.MaterialId, b.MaterialId);
+            Assert.Equal(a.IsPassable, b.IsPassable);
+            Assert.Equal(a.FluidType, b.FluidType);
+            Assert.Equal(a.FluidLevel, b.FluidLevel);
+            Assert.Equal(a.OreId, b.OreId);
+            Assert.Equal(a.IsAquifer, b.IsAquifer);
+            Assert.Equal(a.TreeSpeciesId, b.TreeSpeciesId);
+        }
+
+        Assert.Equal(mapA.CreatureSpawns.Count, mapB.CreatureSpawns.Count);
+        for (var i = 0; i < mapA.CreatureSpawns.Count; i++)
+            Assert.Equal(mapA.CreatureSpawns[i], mapB.CreatureSpawns[i]);
+    }
+
+    [Fact]
+    public void Generate_PopulatesStageDiagnostics_InExecutionOrder()
+    {
+        var map = EmbarkGenerator.Generate(width: 32, height: 32, depth: 8, seed: 341, biomeId: MacroBiomeIds.ConiferForest);
+
+        var diagnostics = Assert.IsType<EmbarkGenerationDiagnostics>(map.Diagnostics);
+        Assert.Equal(341, diagnostics.Seed);
+
+        var expectedStages = new[]
+        {
+            EmbarkGenerationStageId.Inputs,
+            EmbarkGenerationStageId.SurfaceShape,
+            EmbarkGenerationStageId.UndergroundStructure,
+            EmbarkGenerationStageId.Hydrology,
+            EmbarkGenerationStageId.Ecology,
+            EmbarkGenerationStageId.HydrologyPolish,
+            EmbarkGenerationStageId.CivilizationOverlay,
+            EmbarkGenerationStageId.Playability,
+            EmbarkGenerationStageId.Population,
+        };
+
+        Assert.Equal(expectedStages, diagnostics.StageSnapshots.Select(s => s.StageId).ToArray());
+
+        var inputsSnapshot = diagnostics.StageSnapshots[0];
+        Assert.Equal(map.Width * map.Height, inputsSnapshot.SurfacePassableTiles);
+        Assert.Equal(map.Width * map.Height * (map.Depth - 1), inputsSnapshot.UndergroundPassableTiles);
+        Assert.Equal(0, inputsSnapshot.CreatureSpawnCount);
+
+        var finalSnapshot = diagnostics.StageSnapshots[^1];
+        Assert.Equal(map.CreatureSpawns.Count, finalSnapshot.CreatureSpawnCount);
+        Assert.True(finalSnapshot.SurfacePassableTiles > 0);
+        Assert.True(finalSnapshot.SurfaceTreeTiles >= 0);
     }
 
     [Fact]

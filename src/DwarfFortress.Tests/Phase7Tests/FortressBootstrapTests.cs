@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data.Defs;
@@ -26,6 +28,7 @@ public sealed class FortressBootstrapTests
         Assert.True(er.CountAlive<Creature>() >= 2);
         Assert.Contains(er.GetAlive<Creature>(), c => c.DefId == DefIds.Cat);
         Assert.Contains(er.GetAlive<Creature>(), c => c.DefId == DefIds.Dog);
+        Assert.Contains(er.GetAlive<Creature>(), c => c.IsHostile && c.Position.Position.Z == 0);
         Assert.True(items.GetAllItems().Count() >= 20);
         Assert.NotEmpty(sim.Context.Get<StockpileManager>().GetAll());
         Assert.Contains(sim.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
@@ -78,6 +81,11 @@ public sealed class FortressBootstrapTests
         Assert.True(dwarfView!.MaxHealth > 0f);
         Assert.True(dwarfView.CurrentHealth <= dwarfView.MaxHealth);
         Assert.False(string.IsNullOrWhiteSpace(dwarfView.Appearance.HairType));
+        Assert.NotNull(dwarfView.Provenance);
+        Assert.False(string.IsNullOrWhiteSpace(dwarfView.Provenance!.FigureId));
+        Assert.False(string.IsNullOrWhiteSpace(dwarfView.Provenance.HouseholdId));
+        Assert.False(string.IsNullOrWhiteSpace(dwarfView.Provenance!.CivilizationId));
+        Assert.False(string.IsNullOrWhiteSpace(dwarfView.Provenance.OriginSiteId));
         Assert.NotNull(dwarfView.Wounds);
         Assert.NotNull(dwarfView.Substances);
         Assert.NotNull(dwarfView.EventLog);
@@ -101,6 +109,13 @@ public sealed class FortressBootstrapTests
         sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 7, Width: 48, Height: 48, Depth: 8));
         var originalAppearanceSignatures = sim.Context.Get<EntityRegistry>().GetAlive<Dwarf>()
             .ToDictionary(dwarf => dwarf.Id, dwarf => dwarf.Appearance.Signature);
+        var originalAttributes = sim.Context.Get<EntityRegistry>().GetAlive<Dwarf>()
+            .ToDictionary(
+                dwarf => dwarf.Id,
+                dwarf => AttributeIds.All.ToDictionary(
+                    attributeId => attributeId,
+                    attributeId => dwarf.Attributes.GetLevel(attributeId),
+                    StringComparer.OrdinalIgnoreCase));
 
         var json = sim.Save();
 
@@ -111,11 +126,35 @@ public sealed class FortressBootstrapTests
         Assert.True(er2.CountAlive<Creature>() >= 2);
         Assert.Contains(er2.GetAlive<Creature>(), c => c.DefId == DefIds.Cat);
         Assert.Contains(er2.GetAlive<Creature>(), c => c.DefId == DefIds.Dog);
+        Assert.Contains(er2.GetAlive<Creature>(), c => c.IsHostile && c.Position.Position.Z == 0);
         Assert.Contains(sim2.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
         Assert.DoesNotContain(sim2.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.Kitchen);
         Assert.DoesNotContain(sim2.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.Still);
         Assert.NotEmpty(sim2.Context.Get<StockpileManager>().GetAll());
         Assert.All(er2.GetAlive<Dwarf>(), dwarf => Assert.Equal(originalAppearanceSignatures[dwarf.Id], dwarf.Appearance.Signature));
+        Assert.All(er2.GetAlive<Dwarf>(), dwarf =>
+        {
+            foreach (var attributeId in AttributeIds.All)
+                Assert.Equal(originalAttributes[dwarf.Id][attributeId], dwarf.Attributes.GetLevel(attributeId));
+
+            Assert.False(string.IsNullOrWhiteSpace(dwarf.Provenance.FigureId));
+            Assert.False(string.IsNullOrWhiteSpace(dwarf.Provenance.HouseholdId));
+            Assert.False(string.IsNullOrWhiteSpace(dwarf.Provenance.CivilizationId));
+            Assert.False(string.IsNullOrWhiteSpace(dwarf.Provenance.OriginSiteId));
+            Assert.False(string.IsNullOrWhiteSpace(dwarf.Provenance.MigrationWaveId));
+        });
+    }
+
+    [Fact]
+    public void DwarfAttributeComponent_RollRandom_CanReach_All_Levels()
+    {
+        var rng = new Random(7);
+        var seen = new HashSet<int>();
+
+        for (var i = 0; i < 512; i++)
+            seen.Add(DwarfAttributeComponent.RollRandom(rng));
+
+        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, seen.OrderBy(value => value).ToArray());
     }
 
     [Fact]
@@ -127,6 +166,24 @@ public sealed class FortressBootstrapTests
 
         var signatures = er.GetAlive<Dwarf>().Select(dwarf => dwarf.Appearance.Signature).ToList();
         Assert.Equal(signatures.Count, signatures.Distinct().Count());
+    }
+
+    [Fact]
+    public void StartFortressCommand_Spawns_Starter_Hostile_Outside_Embark_Center()
+    {
+        var (sim, _, er, _, _) = TestFixtures.BuildFullSim();
+
+        sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 42, Width: 48, Height: 48, Depth: 8));
+
+        var embark = new Vec3i(24, 24, 0);
+        var surfaceHostiles = er.GetAlive<Creature>()
+            .Where(creature => creature.IsHostile && creature.Position.Position.Z == 0)
+            .ToList();
+
+        Assert.NotEmpty(surfaceHostiles);
+        Assert.Contains(surfaceHostiles, creature =>
+            System.Math.Abs(creature.Position.Position.X - embark.X) > 5 ||
+            System.Math.Abs(creature.Position.Position.Y - embark.Y) > 5);
     }
 
     [Fact]
@@ -143,6 +200,24 @@ public sealed class FortressBootstrapTests
         Assert.True(generatedWildlife > 0, "Expected generated embark map to contain wildlife spawns.");
         Assert.True(totalCreatures >= 2 + generatedWildlife,
             $"Expected at least starter pets + generated wildlife ({2 + generatedWildlife}), got {totalCreatures}.");
+    }
+
+    [Fact]
+    public void StartFortressCommand_StarterHostile_Eventually_Triggers_Combat()
+    {
+        var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
+
+        var combatTriggered = false;
+        sim.Context.EventBus.On<CombatHitEvent>(_ => combatTriggered = true);
+        sim.Context.EventBus.On<CombatMissEvent>(_ => combatTriggered = true);
+
+        sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 42, Width: 48, Height: 48, Depth: 8));
+
+        for (int tick = 0; tick < 250 && !combatTriggered; tick++)
+            sim.Tick(0.1f);
+
+        Assert.True(combatTriggered,
+            "Expected the starter hostile to reach the embark and trigger combat shortly after fortress start.");
     }
 
     private static int CountNonEmptyTiles(WorldMap map)

@@ -39,15 +39,48 @@ public sealed class EatStrategy : IJobStrategy
                 return false;
 
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
-        if (itemSystem?.FindFoodItem() is not null)
+        if (itemSystem?.FindCarriedFoodItem(dwarfId) is not null)
             return true;
 
-        return ResolveHarvestTarget(job, dwarfId, ctx) is not null;
+        // Harvest path — no inventory needed
+        if (itemSystem?.FindFoodItem() is null)
+            return ResolveHarvestTarget(job, dwarfId, ctx) is not null;
+
+        // Pickup path — check inventory capacity
+        if (registry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) && dwarf is not null)
+        {
+            var inventory = dwarf.Components.TryGet<InventoryComponent>();
+            if (inventory is not null && inventory.IsFull)
+                return false;
+        }
+
+        return true;
     }
 
     public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
     {
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
+        var carriedFood = itemSystem?.FindCarriedFoodItem(dwarfId);
+        if (carriedFood is not null)
+        {
+            carriedFood.IsClaimed = true;
+            job.ReservedItemIds.Add(carriedFood.Id);
+
+            var registry = ctx.Get<Entities.EntityRegistry>();
+            if (!registry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) || dwarf is null)
+                return Array.Empty<ActionStep>();
+
+            var carriedDiningSpot = FindDiningSpot(dwarfId, ctx);
+            var carriedSteps = new List<ActionStep>();
+            if (carriedDiningSpot is not null)
+                carriedSteps.Add(new MoveToStep(carriedDiningSpot.Target));
+
+            carriedSteps.Add(new WorkAtStep(
+                Duration: carriedDiningSpot?.Duration ?? FloorMealDuration,
+                RequiredPosition: carriedDiningSpot?.Target ?? dwarf.Position.Position));
+            return carriedSteps;
+        }
+
         var food       = itemSystem?.FindFoodItem();
         if (food is null)
         {
@@ -95,8 +128,8 @@ public sealed class EatStrategy : IJobStrategy
         if (job.ReservedItemIds.Count > 0)
         {
             var hungerBefore = dwarf.Needs.Get(NeedIds.Hunger).Level;
-            // Apply trait-based hunger satisfaction multiplier (Gluttony = 0.5x, Fit = 2.0x)
-            var hungerMultiplier = Systems.TraitSystem.GetHungerSatisfactionMultiplier(dwarf);
+            var dataManager = ctx.TryGet<DataManager>();
+            var hungerMultiplier = AttributeEffectSystem.GetHungerSatisfactionMultiplier(dwarf, dataManager);
             dwarf.Needs.Get(NeedIds.Hunger).Satisfy(HungerSatisfaction * hungerMultiplier);
 
             // Emit satisfaction event to trigger cooldown in NeedsSystem

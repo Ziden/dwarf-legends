@@ -41,6 +41,7 @@ public sealed class CutTreeStrategy : IJobStrategy
         var map  = ctx.Get<WorldMap>();
         var tile = map.GetTile(job.TargetPos);
         var logMaterialId = ResolveLogMaterialId(ctx, tile.TreeSpeciesId);
+        var logItemDefId = ResolveLogItemDefId(ctx, logMaterialId);
         var clearedTerrain = TerrainClearanceHelper.ResolveClearedTerrain(ctx, map, job.TargetPos, tile.MaterialId);
         tile.TileDefId  = clearedTerrain.TileDefId;
         tile.MaterialId = clearedTerrain.MaterialId;
@@ -50,7 +51,7 @@ public sealed class CutTreeStrategy : IJobStrategy
         map.SetTile(job.TargetPos, tile);
 
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
-        itemSystem?.CreateItem(Items.ItemDefIds.Log, logMaterialId, job.TargetPos);
+        itemSystem?.CreateItem(logItemDefId, logMaterialId, job.TargetPos);
     }
 
     private static string ResolveLogMaterialId(GameContext ctx, string? treeSpeciesId)
@@ -59,19 +60,24 @@ public sealed class CutTreeStrategy : IJobStrategy
         if (string.IsNullOrWhiteSpace(treeSpeciesId))
             return defaultMaterialId;
 
-        var normalizedSpeciesId = treeSpeciesId.Trim().ToLowerInvariant();
         var data = ctx.TryGet<DataManager>();
         if (data is null)
             return defaultMaterialId;
 
-        var speciesWoodMaterialId = $"{normalizedSpeciesId}_wood";
-        if (data.Materials.Contains(speciesWoodMaterialId))
-            return speciesWoodMaterialId;
-
-        if (data.Materials.Contains(normalizedSpeciesId))
-            return normalizedSpeciesId;
+        var resolvedMaterialId = data.ContentQueries?.ResolveTreeWoodMaterialId(treeSpeciesId);
+        if (!string.IsNullOrWhiteSpace(resolvedMaterialId) && data.Materials.Contains(resolvedMaterialId))
+            return resolvedMaterialId;
 
         return defaultMaterialId;
+    }
+
+    private static string ResolveLogItemDefId(GameContext ctx, string materialId)
+    {
+        var data = ctx.TryGet<DataManager>();
+        var resolvedItemDefId = data?.ContentQueries?.ResolveLogItemDefId(materialId);
+        return !string.IsNullOrWhiteSpace(resolvedItemDefId) && data!.Items.Contains(resolvedItemDefId)
+            ? resolvedItemDefId
+            : Items.ItemDefIds.Log;
     }
 
 }

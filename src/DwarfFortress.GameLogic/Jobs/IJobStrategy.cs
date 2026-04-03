@@ -40,6 +40,7 @@ public interface IJobStrategy
 /// <summary>String constants for job def IDs.</summary>
 public static class JobDefIds
 {
+    public const string EngageHostile = "engage_hostile";
     public const string MineTile   = "mine_tile";
     public const string CutTree    = "cut_tree";
     public const string HarvestPlant = "harvest_plant";

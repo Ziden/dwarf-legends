@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
+using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.World;
 
 namespace DwarfFortress.GameLogic.Systems;
@@ -17,6 +19,7 @@ public sealed class PlacedBuildingData
     public string BuildingDefId { get; init; } = "";
     public Vec3i Origin { get; init; }
     public bool IsWorkshop { get; init; }
+    public string? MaterialId { get; init; }
 }
 
 /// <summary>
@@ -54,6 +57,7 @@ public sealed class BuildingSystem : IGameSystem
             Y = b.Origin.Y,
             Z = b.Origin.Z,
             IsWorkshop = b.IsWorkshop,
+            MaterialId = b.MaterialId,
         }).ToList());
     }
 
@@ -76,11 +80,25 @@ public sealed class BuildingSystem : IGameSystem
                 BuildingDefId = dto.BuildingDefId,
                 Origin = new Vec3i(dto.X, dto.Y, dto.Z),
                 IsWorkshop = dto.IsWorkshop,
+                MaterialId = dto.MaterialId,
             };
+
+            ApplyFootprint(building);
+
+            if (string.IsNullOrWhiteSpace(building.MaterialId))
+            {
+                building = new PlacedBuildingData
+                {
+                    Id = building.Id,
+                    BuildingDefId = building.BuildingDefId,
+                    Origin = building.Origin,
+                    IsWorkshop = building.IsWorkshop,
+                    MaterialId = ResolveAppliedFootprintMaterialId(building),
+                };
+            }
 
             _buildings[building.Id] = building;
             _byOrigin[building.Origin] = building.Id;
-            ApplyFootprint(building);
         }
     }
 
@@ -111,7 +129,7 @@ public sealed class BuildingSystem : IGameSystem
         }
 
         var itemSystem = _ctx.TryGet<ItemSystem>();
-        if (itemSystem is null || !itemSystem.TryConsumeInputs(def.ConstructionInputs))
+        if (itemSystem is null || !itemSystem.TryConsumeInputs(def.ConstructionInputs, out var consumedInputs))
         {
             _ctx.Logger?.Warn($"BuildingSystem: missing construction inputs for '{cmd.BuildingDefId}'.");
             _ctx.EventBus.Emit(new BuildingPlacementRejectedEvent(cmd.BuildingDefId, cmd.Origin, "Missing construction materials."));
@@ -124,6 +142,7 @@ public sealed class BuildingSystem : IGameSystem
             BuildingDefId = def.Id,
             Origin = cmd.Origin,
             IsWorkshop = def.IsWorkshop,
+            MaterialId = ResolveConstructionMaterialId(dm, def, consumedInputs),
         };
 
         _buildings[building.Id] = building;
@@ -174,7 +193,7 @@ public sealed class BuildingSystem : IGameSystem
             map.SetTile(pos, new TileData
             {
                 TileDefId = tileDef.Id,
-                MaterialId = InferMaterial(def, tileDef, existing.MaterialId),
+                MaterialId = ResolveFootprintMaterialId(dm, def, tileDef, building.MaterialId, existing.MaterialId),
                 IsPassable = tileDef.IsPassable,
                 IsUnderConstruction = false,
                 FluidLevel = existing.FluidLevel,
@@ -199,6 +218,14 @@ public sealed class BuildingSystem : IGameSystem
         }
     }
 
+    private string? ResolveAppliedFootprintMaterialId(PlacedBuildingData building)
+    {
+        var map = _ctx!.Get<WorldMap>();
+        return FootprintCells(building)
+            .Select(pos => map.GetTile(pos).MaterialId)
+            .FirstOrDefault(materialId => !string.IsNullOrWhiteSpace(materialId));
+    }
+
     private static string InferMaterial(BuildingDef def, TileDef tileDef, string? fallback)
     {
         if (def.Tags.Contains(TagIds.Wooden) || tileDef.Id == TileDefIds.WoodFloor)
@@ -210,6 +237,93 @@ public sealed class BuildingSystem : IGameSystem
         return fallback ?? MaterialIds.Granite;
     }
 
+    private static string ResolveFootprintMaterialId(
+        DataManager data,
+        BuildingDef def,
+        TileDef tileDef,
+        string? buildingMaterialId,
+        string? existingMaterialId)
+    {
+        if (!string.IsNullOrWhiteSpace(buildingMaterialId))
+            return buildingMaterialId!;
+
+        if (MatchesBuildingMaterialFamily(data, def, tileDef, existingMaterialId))
+            return existingMaterialId!;
+
+        return InferMaterial(def, tileDef, existingMaterialId);
+    }
+
+    private static string? ResolveConstructionMaterialId(
+        DataManager data,
+        BuildingDef def,
+        IReadOnlyList<Item> consumedInputs)
+    {
+        var materialIds = consumedInputs
+            .Select(item => item.MaterialId)
+            .Where(materialId => !string.IsNullOrWhiteSpace(materialId))
+            .Cast<string>()
+            .ToArray();
+
+        if (materialIds.Length == 0)
+            return null;
+
+        var preferredMaterials = materialIds
+            .Where(materialId => MatchesBuildingMaterialFamily(data, def, null, materialId))
+            .ToArray();
+
+        return SelectDominantMaterialId(preferredMaterials.Length > 0 ? preferredMaterials : materialIds);
+    }
+
+    private static string SelectDominantMaterialId(IReadOnlyList<string> materialIds)
+    {
+        return materialIds
+            .GroupBy(materialId => materialId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new
+            {
+                MaterialId = group.First(),
+                Count = group.Count(),
+            })
+            .OrderByDescending(group => group.Count)
+            .ThenBy(group => group.MaterialId, StringComparer.OrdinalIgnoreCase)
+            .First()
+            .MaterialId;
+    }
+
+    private static bool MatchesBuildingMaterialFamily(
+        DataManager data,
+        BuildingDef def,
+        TileDef? tileDef,
+        string? materialId)
+    {
+        if (string.IsNullOrWhiteSpace(materialId))
+            return false;
+
+        if (def.Tags.Contains(TagIds.Stone) ||
+            tileDef?.Id == TileDefIds.StoneFloor ||
+            tileDef?.Id == TileDefIds.StoneBrick)
+        {
+            return data.Materials.GetOrNull(materialId!)?.Tags.Contains(TagIds.Stone) == true;
+        }
+
+        if (def.Tags.Contains(TagIds.Wooden) || tileDef?.Id == TileDefIds.WoodFloor)
+            return IsWoodLikeMaterial(data, materialId!);
+
+        return true;
+    }
+
+    private static bool IsWoodLikeMaterial(DataManager data, string materialId)
+    {
+        if (string.Equals(materialId, MaterialIds.Wood, StringComparison.OrdinalIgnoreCase) ||
+            materialId.EndsWith("_wood", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var material = data.Materials.GetOrNull(materialId);
+        return material?.Tags.Contains(TagIds.Wood) == true ||
+               !string.IsNullOrWhiteSpace(data.ContentQueries?.ResolveLogItemDefId(materialId));
+    }
+
     private sealed class BuildingDto
     {
         public int Id { get; set; }
@@ -218,5 +332,6 @@ public sealed class BuildingSystem : IGameSystem
         public int Y { get; set; }
         public int Z { get; set; }
         public bool IsWorkshop { get; set; }
+        public string? MaterialId { get; set; }
     }
 }

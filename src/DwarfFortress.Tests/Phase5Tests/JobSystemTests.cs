@@ -179,6 +179,96 @@ public sealed class JobSystemTests
     }
 
     [Fact]
+    public void Newly_Exposed_Damp_Wall_Auto_Cancels_Mining_Designation()
+    {
+        var (js, _, wm, sim) = CreateSim();
+        var open = new Vec3i(2, 4, 1);
+        var firstWall = new Vec3i(3, 4, 1);
+        var dampWall = new Vec3i(4, 4, 1);
+
+        wm.SetTile(open, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = "granite",
+            IsPassable = true,
+        });
+        wm.SetTile(firstWall, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(dampWall, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "limestone", IsPassable = false, IsAquifer = true });
+        wm.SetTile(dampWall + Vec3i.North, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(dampWall + Vec3i.South, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(dampWall + Vec3i.East, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+
+        MiningDesignationSafetyCancelledEvent? cancelled = null;
+        sim.Context.EventBus.On<MiningDesignationSafetyCancelledEvent>(e => cancelled = e);
+
+        sim.Context.Commands.Dispatch(new DesignateMineCommand(firstWall, dampWall));
+
+        Assert.Contains(js.GetPendingJobs(), job => job.TargetPos == dampWall);
+        Assert.True(wm.GetTile(dampWall).IsDesignated);
+
+        wm.SetTile(firstWall, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = "granite",
+            IsPassable = true,
+        });
+
+        Assert.DoesNotContain(js.GetAllJobs(), job => job.TargetPos == dampWall && job.Status is JobStatus.Pending or JobStatus.InProgress);
+        Assert.False(wm.GetTile(dampWall).IsDesignated);
+        Assert.Equal(dampWall, cancelled?.Position);
+    }
+
+    [Fact]
+    public void Newly_Exposed_Warm_Wall_Auto_Cancels_Mining_Designation()
+    {
+        var (js, _, wm, sim) = CreateSim();
+        var open = new Vec3i(2, 4, 1);
+        var firstWall = new Vec3i(3, 4, 1);
+        var warmWall = new Vec3i(4, 4, 1);
+        var magma = new Vec3i(4, 4, 2);
+
+        wm.SetTile(open, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = "granite",
+            IsPassable = true,
+        });
+        wm.SetTile(firstWall, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(warmWall, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(warmWall + Vec3i.North, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(warmWall + Vec3i.South, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(warmWall + Vec3i.East, new TileData { TileDefId = TileDefIds.GraniteWall, MaterialId = "granite", IsPassable = false });
+        wm.SetTile(magma, new TileData
+        {
+            TileDefId = TileDefIds.Magma,
+            MaterialId = "magma",
+            IsPassable = true,
+            FluidType = FluidType.Magma,
+            FluidLevel = 7,
+        });
+
+        MiningDesignationSafetyCancelledEvent? cancelled = null;
+        sim.Context.EventBus.On<MiningDesignationSafetyCancelledEvent>(e => cancelled = e);
+
+        sim.Context.Commands.Dispatch(new DesignateMineCommand(firstWall, warmWall));
+
+        Assert.Contains(js.GetPendingJobs(), job => job.TargetPos == warmWall);
+        Assert.True(wm.GetTile(warmWall).IsDesignated);
+
+        wm.SetTile(firstWall, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = "granite",
+            IsPassable = true,
+        });
+
+        Assert.DoesNotContain(js.GetAllJobs(), job => job.TargetPos == warmWall && job.Status is JobStatus.Pending or JobStatus.InProgress);
+        Assert.False(wm.GetTile(warmWall).IsDesignated);
+        Assert.Equal(warmWall, cancelled?.Position);
+        Assert.Equal("warm", cancelled?.HazardKind);
+    }
+
+    [Fact]
     public void Jobs_Are_Assigned_Unique_Ids()
     {
         var (js, _, _, _) = CreateSim();

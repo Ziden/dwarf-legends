@@ -6,7 +6,7 @@ namespace DwarfFortress.GameLogic.World;
 
 /// <summary>
 /// A* pathfinder over the 3D WorldMap.
-/// Handles horizontal movement and vertical movement via ramps/stairs.
+/// Handles horizontal movement and legal vertical movement through the world's traversal connectors.
 /// Uses struct-based nodes to minimize GC allocations during pathfinding.
 /// Thread-safe for reads; the WorldMap must not change during pathfinding.
 /// </summary>
@@ -89,6 +89,7 @@ public static class Pathfinder
         var open = new List<int>(maxNodes);
         var closed = new HashSet<Vec3i>(maxNodes);
         var posToIndex = new Dictionary<Vec3i, int>(maxNodes);
+        var neighbors = new List<Vec3i>(6);
 
         // Create start node
         var startIdx = nodeCount++;
@@ -129,10 +130,9 @@ public static class Pathfinder
 
             closed.Add(current.Pos);
 
-            foreach (var neighbourPos in current.Pos.Neighbours6())
+            map.CollectTraversableNeighbors(current.Pos, canSwim, requiresSwimming, neighbors);
+            foreach (var neighbourPos in neighbors)
             {
-                if (!map.IsInBounds(neighbourPos)) continue;
-                if (!map.IsTraversable(neighbourPos, canSwim, requiresSwimming)) continue;
                 if (isBlocked?.Invoke(neighbourPos) == true) continue;
                 if (closed.Contains(neighbourPos)) continue;
 
@@ -171,7 +171,7 @@ public static class Pathfinder
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static float Heuristic(Vec3i a, Vec3i b)
-        // Manhattan distance; z-movement is more expensive (requires ramp/stair)
+        // Manhattan distance; z-movement is more expensive because it requires an explicit vertical connector.
         => MathF.Abs(a.X - b.X) + MathF.Abs(a.Y - b.Y) + MathF.Abs(a.Z - b.Z) * 2f;
 
     private static float MoveCost(Vec3i from, Vec3i to)

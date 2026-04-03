@@ -14,6 +14,7 @@ public sealed class Creature : Entity
     public PositionComponent      Position      => Components.Get<PositionComponent>();
     public StatComponent          Stats         => Components.Get<StatComponent>();
     public InventoryComponent     Inventory     => Components.Get<InventoryComponent>();
+    public HaulingComponent       Hauling       => Components.Get<HaulingComponent>();
     public NeedsComponent         Needs         => Components.Get<NeedsComponent>();
     public HealthComponent        Health        => Components.Get<HealthComponent>();
     public BodyPartComponent      BodyParts     => Components.Get<BodyPartComponent>();
@@ -29,6 +30,7 @@ public sealed class Creature : Entity
         Components.Add(new PositionComponent(spawnPos));
         Components.Add(new StatComponent());
         Components.Add(new InventoryComponent());
+        Components.Add(new HaulingComponent());
         Components.Add(new NeedsComponent());
         Components.Add(new HealthComponent(maxHealth));
 
@@ -44,9 +46,7 @@ public sealed class Creature : Entity
         if (def is null)
             return;
 
-        Stats.Speed.BaseValue = def.BaseSpeed;
-        Stats.Strength.BaseValue = def.BaseStrength;
-        Stats.Toughness.BaseValue = def.BaseToughness;
+        Stats.ApplyBaseProfile(def.BaseSpeed, def.BaseStrength, def.BaseToughness);
         IsHostile = IsHostile || def.IsHostile();
     }
 }

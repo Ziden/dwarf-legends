@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using DwarfFortress.WorldGen.Config;
 using DwarfFortress.WorldGen.Creatures;
 using DwarfFortress.WorldGen.Geology;
 using DwarfFortress.WorldGen.Generation;
@@ -23,32 +24,80 @@ public static class EmbarkGenerator
     private readonly record struct AnchoredPoint(int X, int Y, byte Strength);
     private readonly record struct RoadEndpoint(int X, int Y, byte Width);
 
-    private sealed record BiomePreset(
-        string Id,
-        float TreeCoverMin,
-        float TreeCoverMax,
-        int OutcropMin,
-        int OutcropMax,
-        int StreamBands,
-        int MarshPoolCount,
-        bool StoneSurface);
+    private sealed class LocalGenerationContext
+    {
+        public LocalGenerationContext(
+            LocalGenerationSettings settings,
+            int seed,
+            GeneratedEmbarkMap map,
+            Random rng,
+            string biomeId,
+            float wetnessBias,
+            float soilDepthBias,
+            float forestPatchBias,
+            float treeCoverMin,
+            float treeCoverMax,
+            int outcropMin,
+            int outcropMax,
+            int streamBands,
+            int marshPoolCount,
+            StrataProfile strataProfile,
+            bool useStoneSurface,
+            float[,] terrain,
+            float[,] moisture,
+            float[,] canopyMask,
+            float[,] forestPatchMask,
+            IReadOnlyList<int> caveLayers,
+            GeneratedTile surface)
+        {
+            Settings = settings;
+            Seed = seed;
+            Map = map;
+            Rng = rng;
+            BiomeId = biomeId;
+            WetnessBias = wetnessBias;
+            SoilDepthBias = soilDepthBias;
+            ForestPatchBias = forestPatchBias;
+            TreeCoverMin = treeCoverMin;
+            TreeCoverMax = treeCoverMax;
+            OutcropMin = outcropMin;
+            OutcropMax = outcropMax;
+            StreamBands = streamBands;
+            MarshPoolCount = marshPoolCount;
+            StrataProfile = strataProfile;
+            UseStoneSurface = useStoneSurface;
+            Terrain = terrain;
+            Moisture = moisture;
+            CanopyMask = canopyMask;
+            ForestPatchMask = forestPatchMask;
+            CaveLayers = caveLayers;
+            Surface = surface;
+        }
 
-    private static readonly BiomePreset[] Presets =
-    [
-        new(MacroBiomeIds.TemperatePlains, TreeCoverMin: 0.09f, TreeCoverMax: 0.19f, OutcropMin: 0, OutcropMax: 2, StreamBands: 1, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.ConiferForest, TreeCoverMin: 0.22f, TreeCoverMax: 0.38f, OutcropMin: 0, OutcropMax: 2, StreamBands: 1, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.Highland, TreeCoverMin: 0.02f, TreeCoverMax: 0.08f, OutcropMin: 10, OutcropMax: 20, StreamBands: 1, MarshPoolCount: 0, StoneSurface: true),
-        new(MacroBiomeIds.MistyMarsh, TreeCoverMin: 0.06f, TreeCoverMax: 0.14f, OutcropMin: 0, OutcropMax: 1, StreamBands: 2, MarshPoolCount: 10, StoneSurface: false),
-        new(MacroBiomeIds.WindsweptSteppe, TreeCoverMin: 0.01f, TreeCoverMax: 0.05f, OutcropMin: 1, OutcropMax: 4, StreamBands: 0, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.TropicalRainforest, TreeCoverMin: 0.32f, TreeCoverMax: 0.52f, OutcropMin: 0, OutcropMax: 2, StreamBands: 2, MarshPoolCount: 4, StoneSurface: false),
-        new(MacroBiomeIds.Savanna, TreeCoverMin: 0.03f, TreeCoverMax: 0.09f, OutcropMin: 1, OutcropMax: 5, StreamBands: 1, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.Desert, TreeCoverMin: 0.00f, TreeCoverMax: 0.01f, OutcropMin: 3, OutcropMax: 9, StreamBands: 0, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.Tundra, TreeCoverMin: 0.00f, TreeCoverMax: 0.02f, OutcropMin: 2, OutcropMax: 8, StreamBands: 0, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.BorealForest, TreeCoverMin: 0.25f, TreeCoverMax: 0.42f, OutcropMin: 1, OutcropMax: 4, StreamBands: 1, MarshPoolCount: 1, StoneSurface: false),
-        new(MacroBiomeIds.IcePlains, TreeCoverMin: 0.00f, TreeCoverMax: 0.00f, OutcropMin: 2, OutcropMax: 7, StreamBands: 0, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.OceanShallow, TreeCoverMin: 0.00f, TreeCoverMax: 0.00f, OutcropMin: 0, OutcropMax: 1, StreamBands: 0, MarshPoolCount: 0, StoneSurface: false),
-        new(MacroBiomeIds.OceanDeep, TreeCoverMin: 0.00f, TreeCoverMax: 0.00f, OutcropMin: 0, OutcropMax: 0, StreamBands: 0, MarshPoolCount: 0, StoneSurface: false),
-    ];
+        public LocalGenerationSettings Settings { get; }
+        public int Seed { get; }
+        public GeneratedEmbarkMap Map { get; }
+        public Random Rng { get; }
+        public string BiomeId { get; }
+        public float WetnessBias { get; }
+        public float SoilDepthBias { get; }
+        public float ForestPatchBias { get; }
+        public float TreeCoverMin { get; }
+        public float TreeCoverMax { get; }
+        public int OutcropMin { get; }
+        public int OutcropMax { get; }
+        public int StreamBands { get; }
+        public int MarshPoolCount { get; }
+        public StrataProfile StrataProfile { get; }
+        public bool UseStoneSurface { get; }
+        public float[,] Terrain { get; }
+        public float[,] Moisture { get; }
+        public float[,] CanopyMask { get; }
+        public float[,] ForestPatchMask { get; }
+        public IReadOnlyList<int> CaveLayers { get; }
+        public GeneratedTile Surface { get; }
+        public List<EmbarkGenerationStageSnapshot> StageSnapshots { get; } = [];
+    }
 
     public static GeneratedEmbarkMap Generate(
         int width = 48,
@@ -63,10 +112,41 @@ public static class EmbarkGenerator
 
     public static GeneratedEmbarkMap Generate(LocalGenerationSettings settings, int seed = 0)
     {
+        ValidateSettings(settings);
+
+        var context = CreateGenerationContext(settings, seed);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.Inputs);
+        RunSurfaceShapeStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.SurfaceShape);
+        RunUndergroundStructureStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.UndergroundStructure);
+        RunHydrologyStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.Hydrology);
+        RunEcologyStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.Ecology);
+        RunHydrologyPolishStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.HydrologyPolish);
+        RunCivilizationOverlayStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.CivilizationOverlay);
+        RunPlayabilityStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.Playability);
+        RunPopulationStage(context);
+        CaptureStageSnapshot(context, EmbarkGenerationStageId.Population);
+
+        context.Map.Diagnostics = new EmbarkGenerationDiagnostics(context.Seed, context.StageSnapshots.ToArray());
+
+        return context.Map;
+    }
+
+    private static void ValidateSettings(LocalGenerationSettings settings)
+    {
         if (settings.Width <= 0) throw new ArgumentOutOfRangeException(nameof(settings.Width));
         if (settings.Height <= 0) throw new ArgumentOutOfRangeException(nameof(settings.Height));
         if (settings.Depth <= 0) throw new ArgumentOutOfRangeException(nameof(settings.Depth));
+    }
 
+    private static LocalGenerationContext CreateGenerationContext(LocalGenerationSettings settings, int seed)
+    {
         var map = new GeneratedEmbarkMap(settings.Width, settings.Height, settings.Depth);
         var rng = new Random(seed);
         var biome = ResolveBiomePreset(settings.BiomeOverrideId, seed);
@@ -79,19 +159,19 @@ public static class EmbarkGenerator
         var marshBonus = (int)MathF.Round(Math.Max(0f, wetnessBias) * 4f);
 
         var (treeCoverMin, treeCoverMax) = ApplyCoverageBias(biome.TreeCoverMin, biome.TreeCoverMax, ecologyTreeBias);
-        (treeCoverMin, treeCoverMax) = ApplyForestCoverageTarget(treeCoverMin, treeCoverMax, settings.ForestCoverageTarget, biome.Id);
+        (treeCoverMin, treeCoverMax) = ApplyForestCoverageTarget(treeCoverMin, treeCoverMax, settings.ForestCoverageTarget, biome);
         var (outcropMin, outcropMax) = ApplyRangeBias(biome.OutcropMin, biome.OutcropMax, ecologyOutcropBias, 0);
         var streamBands = Math.Max(0, biome.StreamBands + settings.StreamBandBias + streamBonus);
         var marshPoolCount = Math.Max(0, biome.MarshPoolCount + settings.MarshPoolBias + marshBonus);
         var strataProfile = StrataProfileRegistry.Resolve(settings.GeologyProfileId);
         var useStoneSurface = settings.StoneSurfaceOverride ?? biome.StoneSurface;
-        var terrain = BuildSurfaceTerrainMap(settings.Width, settings.Height, seed, biome.Id, settings.NoiseOriginX, settings.NoiseOriginY);
+        var terrain = BuildSurfaceTerrainMap(settings.Width, settings.Height, seed, biome, settings.NoiseOriginX, settings.NoiseOriginY);
         var moisture = BuildSurfaceMoistureMap(
             settings.Width,
             settings.Height,
             seed,
             terrain,
-            biome.Id,
+            biome,
             wetnessBias,
             soilDepthBias,
             settings.NoiseOriginX,
@@ -99,53 +179,179 @@ public static class EmbarkGenerator
         var canopyMask = BuildCanopyMaskMap(settings.Width, settings.Height, seed, settings.NoiseOriginX, settings.NoiseOriginY);
         var forestPatchMask = BuildForestPatchMaskMap(settings.Width, settings.Height, seed, forestPatchBias, settings.NoiseOriginX, settings.NoiseOriginY);
         var caveLayers = ResolveCaveLayerDepths(map.Depth);
-
         var surface = ResolveSurfaceTile(biome.Id, useStoneSurface, settings.SurfaceTileOverrideId);
 
-        FillSurface(map, surface);
-        ApplyBiomeSurfaceTransitions(map, biome.Id, useStoneSurface, terrain, moisture, seed, settings.SurfaceTileOverrideId);
-        var strataAssignments = FillUnderground(map, strataProfile, seed);
-        AddCaveSystems(map, seed, caveLayers);
-        AddMineralVeins(map, strataProfile, strataAssignments, seed);
-        ApplyAquiferBand(map, strataProfile);
-        FillMagmaSea(map);
-        if (settings.RiverPortals is { Length: > 0 })
+        return new LocalGenerationContext(
+            settings,
+            seed,
+            map,
+            rng,
+            biome.Id,
+            wetnessBias,
+            soilDepthBias,
+            forestPatchBias,
+            treeCoverMin,
+            treeCoverMax,
+            outcropMin,
+            outcropMax,
+            streamBands,
+            marshPoolCount,
+            strataProfile,
+            useStoneSurface,
+            terrain,
+            moisture,
+            canopyMask,
+            forestPatchMask,
+            caveLayers,
+            surface);
+    }
+
+    private static void RunSurfaceShapeStage(LocalGenerationContext context)
+    {
+        FillSurface(context.Map, context.Surface);
+        ApplyBiomeSurfaceTransitions(
+            context.Map,
+            context.BiomeId,
+            context.UseStoneSurface,
+            context.Terrain,
+            context.Moisture,
+            context.Seed,
+            context.Settings.SurfaceTileOverrideId);
+    }
+
+    private static void RunUndergroundStructureStage(LocalGenerationContext context)
+    {
+        var strataAssignments = FillUnderground(context.Map, context.StrataProfile, context.Seed);
+        AddCaveSystems(context.Map, context.Seed, context.CaveLayers);
+        AddMineralVeins(context.Map, context.StrataProfile, strataAssignments, context.Seed);
+        ApplyAquiferBand(context.Map, context.StrataProfile);
+        FillMagmaSea(context.Map);
+    }
+
+    private static void RunHydrologyStage(LocalGenerationContext context)
+    {
+        if (context.Settings.RiverPortals is { Length: > 0 })
         {
-            AddAnchoredStreams(map, rng, terrain, settings.RiverPortals);
-            if (streamBands > 0)
-                AddStreams(map, rng, Math.Max(0, streamBands - 1), terrain);
+            AddAnchoredStreams(context.Map, context.Rng, context.Terrain, context.Settings.RiverPortals);
+            if (context.StreamBands > 0)
+                AddStreams(context.Map, context.Rng, Math.Max(0, context.StreamBands - 1), context.Terrain);
         }
         else
         {
-            AddStreams(map, rng, streamBands, terrain);
+            AddStreams(context.Map, context.Rng, context.StreamBands, context.Terrain);
         }
 
-        AddSurfaceToCaveWaterConnections(map, rng, caveLayers);
-        ApplySurfaceWaterMoistureFeedback(map, moisture);
-        AddTrees(map, rng, treeCoverMin, treeCoverMax, terrain, moisture, canopyMask, forestPatchMask, biome.Id, forestPatchBias);
-        AddOutcrops(map, rng, outcropMin, outcropMax, terrain);
-        AddMarshPools(map, rng, marshPoolCount, terrain, moisture);
-        FloodOceanSurface(map, rng, biome.Id, terrain);
-        HarmonizeSurfaceWaterDepths(map, terrain, biome.Id);
-        ApplyRiparianSurfaceTransitions(map, biome.Id, seed);
+        AddSurfaceToCaveWaterConnections(context.Map, context.Rng, context.CaveLayers);
+    }
+
+    private static void RunEcologyStage(LocalGenerationContext context)
+    {
+        ApplySurfaceWaterMoistureFeedback(context.Map, context.Moisture);
+        AddTrees(
+            context.Map,
+            context.Rng,
+            context.TreeCoverMin,
+            context.TreeCoverMax,
+            context.Terrain,
+            context.Moisture,
+            context.CanopyMask,
+            context.ForestPatchMask,
+            context.BiomeId,
+            context.ForestPatchBias);
+        AddOutcrops(context.Map, context.Rng, context.OutcropMin, context.OutcropMax, context.Terrain);
+        AddMarshPools(context.Map, context.Rng, context.MarshPoolCount, context.Terrain, context.Moisture);
+    }
+
+    private static void RunHydrologyPolishStage(LocalGenerationContext context)
+    {
+        FloodOceanSurface(context.Map, context.Rng, context.BiomeId, context.Terrain);
+        HarmonizeSurfaceWaterDepths(context.Map, context.Terrain, context.BiomeId);
+        ApplyRiparianSurfaceTransitions(context.Map, context.BiomeId, context.Seed);
+    }
+
+    private static void RunCivilizationOverlayStage(LocalGenerationContext context)
+    {
         ApplySettlementAndRoadOverlay(
-            map,
-            seed,
-            surface,
-            biome.Id,
-            settings.SettlementInfluence,
-            settings.RoadInfluence,
-            settings.SettlementAnchors,
-            settings.RoadPortals);
+            context.Map,
+            context.Seed,
+            context.Surface,
+            context.BiomeId,
+            context.Settings.SettlementInfluence,
+            context.Settings.RoadInfluence,
+            context.Settings.SettlementAnchors,
+            context.Settings.RoadPortals);
+    }
 
-        EnsureBorderPassable(map, surface);
-        EnsureCentralEmbarkZone(map, surface);
-        PlaceCentralStaircase(map);
-        AddPlants(map, rng, terrain, moisture, biome.Id);
-        AddSurfaceCreatureSpawns(map, rng, biome.Id);
-        AddCaveCreatureSpawns(map, rng, caveLayers);
+    private static void RunPlayabilityStage(LocalGenerationContext context)
+    {
+        EnsureBorderPassable(context.Map, context.Surface);
+        EnsureCentralEmbarkZone(context.Map, context.Surface);
+        PlaceCentralStaircase(context.Map);
+            AddPlants(context.Map, context.Seed, context.Rng, context.Terrain, context.Moisture, context.BiomeId);
+    }
 
-        return map;
+    private static void RunPopulationStage(LocalGenerationContext context)
+    {
+        AddSurfaceCreatureSpawns(context.Map, context.Rng, context.BiomeId);
+        AddCaveCreatureSpawns(context.Map, context.Rng, context.CaveLayers);
+    }
+
+    private static void CaptureStageSnapshot(LocalGenerationContext context, EmbarkGenerationStageId stageId)
+    {
+        context.StageSnapshots.Add(CreateStageSnapshot(context.Map, stageId));
+    }
+
+    private static EmbarkGenerationStageSnapshot CreateStageSnapshot(GeneratedEmbarkMap map, EmbarkGenerationStageId stageId)
+    {
+        var surfacePassableTiles = 0;
+        var surfaceWaterTiles = 0;
+        var surfaceTreeTiles = 0;
+        var surfaceWallTiles = 0;
+        var undergroundPassableTiles = 0;
+        var aquiferTiles = 0;
+        var oreTiles = 0;
+        var magmaTiles = 0;
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            var surfaceTile = map.GetTile(x, y, 0);
+            if (surfaceTile.IsPassable)
+                surfacePassableTiles++;
+            else
+                surfaceWallTiles++;
+
+            if (surfaceTile.TileDefId == GeneratedTileDefIds.Tree)
+                surfaceTreeTiles++;
+
+            if (surfaceTile.TileDefId == GeneratedTileDefIds.Water || surfaceTile.FluidType == GeneratedFluidType.Water)
+                surfaceWaterTiles++;
+
+            for (var z = 1; z < map.Depth; z++)
+            {
+                var tile = map.GetTile(x, y, z);
+                if (tile.IsPassable)
+                    undergroundPassableTiles++;
+                if (tile.IsAquifer)
+                    aquiferTiles++;
+                if (!string.IsNullOrWhiteSpace(tile.OreId))
+                    oreTiles++;
+                if (tile.TileDefId == GeneratedTileDefIds.Magma || tile.FluidType == GeneratedFluidType.Magma)
+                    magmaTiles++;
+            }
+        }
+
+        return new EmbarkGenerationStageSnapshot(
+            StageId: stageId,
+            SurfacePassableTiles: surfacePassableTiles,
+            SurfaceWaterTiles: surfaceWaterTiles,
+            SurfaceTreeTiles: surfaceTreeTiles,
+            SurfaceWallTiles: surfaceWallTiles,
+            UndergroundPassableTiles: undergroundPassableTiles,
+            AquiferTiles: aquiferTiles,
+            OreTiles: oreTiles,
+            MagmaTiles: magmaTiles,
+            CreatureSpawnCount: map.CreatureSpawns.Count);
     }
 
     private static (int Min, int Max) ApplyRangeBias(int min, int max, float bias, int floor)
@@ -180,7 +386,7 @@ public static class EmbarkGenerator
         float min,
         float max,
         float? targetCoverage,
-        string biomeId)
+        BiomeGenerationProfile biome)
     {
         if (!targetCoverage.HasValue)
             return (min, max);
@@ -188,7 +394,7 @@ public static class EmbarkGenerator
         var target = Math.Clamp(targetCoverage.Value, 0f, 0.95f);
         var center = Math.Clamp((min + max) * 0.5f, 0f, 0.95f);
         var span = Math.Clamp(max - min, 0.02f, 0.40f);
-        var denseForestBiome = IsDenseForestBiome(biomeId);
+        var denseForestBiome = biome.DenseForest;
         var blend = denseForestBiome ? 0.72f : 0.60f;
         var adjustedCenter = Math.Clamp(center + ((target - center) * blend), 0f, 0.95f);
         var adjustedSpan = Math.Clamp(
@@ -200,20 +406,8 @@ public static class EmbarkGenerator
         return (adjustedMin, adjustedMax);
     }
 
-    private static BiomePreset ResolveBiomePreset(string? biomeId, int seed)
-    {
-        if (!string.IsNullOrWhiteSpace(biomeId))
-        {
-            foreach (var preset in Presets)
-            {
-                if (string.Equals(preset.Id, biomeId, StringComparison.OrdinalIgnoreCase))
-                    return preset;
-            }
-        }
-
-        var idx = (int)((seed & int.MaxValue) % Presets.Length);
-        return Presets[idx];
-    }
+    private static BiomeGenerationProfile ResolveBiomePreset(string? biomeId, int seed)
+        => WorldGenContentRegistry.Current.ResolveBiomePreset(biomeId, seed);
 
     private static void FillSurface(GeneratedEmbarkMap map, GeneratedTile baseTile)
     {
@@ -1088,27 +1282,12 @@ public static class EmbarkGenerator
         int width,
         int height,
         int seed,
-        string biomeId,
+        BiomeGenerationProfile biome,
         int noiseOriginX,
         int noiseOriginY)
     {
         var map = new float[width, height];
-        var biomeRuggedness = biomeId switch
-        {
-            MacroBiomeIds.Highland => 1.0f,
-            MacroBiomeIds.Tundra => 0.78f,
-            MacroBiomeIds.IcePlains => 0.72f,
-            MacroBiomeIds.Desert => 0.74f,
-            MacroBiomeIds.WindsweptSteppe => 0.66f,
-            MacroBiomeIds.MistyMarsh => 0.42f,
-            MacroBiomeIds.TropicalRainforest => 0.48f,
-            MacroBiomeIds.Savanna => 0.56f,
-            MacroBiomeIds.BorealForest => 0.58f,
-            MacroBiomeIds.ConiferForest => 0.54f,
-            MacroBiomeIds.OceanShallow => 0.22f,
-            MacroBiomeIds.OceanDeep => 0.18f,
-            _ => 0.48f,
-        };
+        var biomeRuggedness = Math.Clamp(biome.TerrainRuggedness, 0f, 1f);
 
         for (var x = 0; x < width; x++)
         for (var y = 0; y < height; y++)
@@ -1142,30 +1321,14 @@ public static class EmbarkGenerator
         int height,
         int seed,
         float[,] terrain,
-        string biomeId,
+        BiomeGenerationProfile biome,
         float wetnessBias,
         float soilDepthBias,
         int noiseOriginX,
         int noiseOriginY)
     {
         var map = new float[width, height];
-        var biomeWetness = biomeId switch
-        {
-            MacroBiomeIds.MistyMarsh => 0.90f,
-            MacroBiomeIds.TropicalRainforest => 0.82f,
-            MacroBiomeIds.ConiferForest => 0.70f,
-            MacroBiomeIds.BorealForest => 0.66f,
-            MacroBiomeIds.TemperatePlains => 0.56f,
-            MacroBiomeIds.Highland => 0.44f,
-            MacroBiomeIds.Savanna => 0.34f,
-            MacroBiomeIds.WindsweptSteppe => 0.20f,
-            MacroBiomeIds.Tundra => 0.24f,
-            MacroBiomeIds.IcePlains => 0.16f,
-            MacroBiomeIds.Desert => 0.08f,
-            MacroBiomeIds.OceanShallow => 0.98f,
-            MacroBiomeIds.OceanDeep => 1.00f,
-            _ => 0.50f,
-        };
+        var biomeWetness = Math.Clamp(biome.BaseMoisture, 0f, 1f);
 
         for (var x = 0; x < width; x++)
         for (var y = 0; y < height; y++)
@@ -2129,10 +2292,11 @@ public static class EmbarkGenerator
         if (clampedMax <= 0f)
             return;
 
+        var biomeProfile = WorldGenContentRegistry.Current.ResolveBiomePreset(biomeId, seed: 0);
         var clampedPatchBias = Math.Clamp(forestPatchBias, -1f, 1f);
-        var biomeCoverageBoost = ResolveBiomeCoverageBoost(biomeId);
-        var suitabilityFloor = ResolveTreeSuitabilityFloor(biomeId);
-        var denseForestBiome = IsDenseForestBiome(biomeId);
+        var biomeCoverageBoost = biomeProfile.TreeCoverageBoost;
+        var suitabilityFloor = biomeProfile.TreeSuitabilityFloor;
+        var denseForestBiome = biomeProfile.DenseForest;
         var canopyWeight = 0.14f - (Math.Max(0f, clampedPatchBias) * 0.03f);
         var patchWeight = 0.28f + (Math.Max(0f, clampedPatchBias) * 0.14f);
         var moistureWeight = 0.40f + (Math.Max(0f, clampedPatchBias) * 0.04f);
@@ -2299,59 +2463,6 @@ public static class EmbarkGenerator
         return placed;
     }
 
-    private static bool IsDenseForestBiome(string biomeId)
-    {
-        return string.Equals(biomeId, MacroBiomeIds.ConiferForest, StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(biomeId, MacroBiomeIds.BorealForest, StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(biomeId, MacroBiomeIds.TropicalRainforest, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static float ResolveBiomeCoverageBoost(string biomeId)
-    {
-        if (string.Equals(biomeId, MacroBiomeIds.TropicalRainforest, StringComparison.OrdinalIgnoreCase))
-            return 0.16f;
-        if (string.Equals(biomeId, MacroBiomeIds.ConiferForest, StringComparison.OrdinalIgnoreCase))
-            return 0.12f;
-        if (string.Equals(biomeId, MacroBiomeIds.BorealForest, StringComparison.OrdinalIgnoreCase))
-            return 0.14f;
-        if (string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase))
-            return 0.08f;
-        if (string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase))
-            return 0.04f;
-
-        return 0f;
-    }
-
-    private static float ResolveTreeSuitabilityFloor(string biomeId)
-    {
-        if (string.Equals(biomeId, MacroBiomeIds.TropicalRainforest, StringComparison.OrdinalIgnoreCase))
-            return 0.08f;
-        if (string.Equals(biomeId, MacroBiomeIds.BorealForest, StringComparison.OrdinalIgnoreCase))
-            return 0.11f;
-        if (string.Equals(biomeId, MacroBiomeIds.ConiferForest, StringComparison.OrdinalIgnoreCase))
-            return 0.13f;
-        if (string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase))
-            return 0.16f;
-        if (string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase))
-            return 0.21f;
-        if (string.Equals(biomeId, MacroBiomeIds.Savanna, StringComparison.OrdinalIgnoreCase))
-            return 0.24f;
-        if (string.Equals(biomeId, MacroBiomeIds.WindsweptSteppe, StringComparison.OrdinalIgnoreCase))
-            return 0.28f;
-        if (string.Equals(biomeId, MacroBiomeIds.Highland, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.Tundra, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0.32f;
-        }
-        if (string.Equals(biomeId, MacroBiomeIds.Desert, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.IcePlains, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0.40f;
-        }
-
-        return 0.24f;
-    }
-
     private static bool TryPlaceTree(
         GeneratedEmbarkMap map,
         bool[,] treePlaced,
@@ -2409,19 +2520,7 @@ public static class EmbarkGenerator
     }
 
     private static string ResolveTreeSubsurfaceMaterialId(string biomeId, float moisture, float terrain)
-    {
-        if (string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase))
-            return "mud";
-
-        if (string.Equals(biomeId, MacroBiomeIds.Desert, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.Savanna, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.WindsweptSteppe, StringComparison.OrdinalIgnoreCase))
-        {
-            return "sand";
-        }
-
-        return "soil";
-    }
+        => WorldGenContentRegistry.Current.ResolveTreeSubsurfaceMaterialId(biomeId);
 
     private static int CountAdjacentPlacedTrees(bool[,] treePlaced, int x, int y, int width, int height)
     {
@@ -2478,71 +2577,36 @@ public static class EmbarkGenerator
     }
 
     private static string ResolveTreeSpeciesId(string biomeId, float moisture, float terrain, float riparianBoost, Random rng)
-    {
-        if (string.Equals(biomeId, MacroBiomeIds.ConiferForest, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.BorealForest, StringComparison.OrdinalIgnoreCase))
-        {
-            return rng.NextDouble() < 0.54 ? TreeSpeciesIds.Spruce : TreeSpeciesIds.Pine;
-        }
-
-        if (string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase))
-            return TreeSpeciesIds.Willow;
-
-        if (string.Equals(biomeId, MacroBiomeIds.TropicalRainforest, StringComparison.OrdinalIgnoreCase))
-            return rng.NextDouble() < 0.62 ? TreeSpeciesIds.Palm : TreeSpeciesIds.Baobab;
-
-        if (string.Equals(biomeId, MacroBiomeIds.Savanna, StringComparison.OrdinalIgnoreCase))
-            return rng.NextDouble() < 0.70 ? TreeSpeciesIds.Baobab : TreeSpeciesIds.Palm;
-
-        if (string.Equals(biomeId, MacroBiomeIds.Highland, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.Tundra, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.IcePlains, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.Desert, StringComparison.OrdinalIgnoreCase))
-        {
-            return TreeSpeciesIds.Deadwood;
-        }
-
-        if (riparianBoost >= 0.85f && string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase))
-            return rng.NextDouble() < 0.58 ? TreeSpeciesIds.Willow : TreeSpeciesIds.Birch;
-
-        if (string.Equals(biomeId, MacroBiomeIds.WindsweptSteppe, StringComparison.OrdinalIgnoreCase))
-        {
-            if (riparianBoost >= 0.80f)
-                return TreeSpeciesIds.Birch;
-            return moisture >= 0.45f && terrain <= 0.55f ? TreeSpeciesIds.Birch : TreeSpeciesIds.Deadwood;
-        }
-
-        if (string.Equals(biomeId, MacroBiomeIds.Savanna, StringComparison.OrdinalIgnoreCase))
-        {
-            if (moisture >= 0.24f && moisture <= 0.64f && terrain <= 0.62f && rng.NextDouble() < 0.22)
-                return TreeSpeciesIds.Fig;
-
-            return rng.NextDouble() < 0.64 ? TreeSpeciesIds.Baobab : TreeSpeciesIds.Palm;
-        }
-
-        if (string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase))
-        {
-            if (riparianBoost >= 0.85f)
-                return rng.NextDouble() < 0.46 ? TreeSpeciesIds.Willow : TreeSpeciesIds.Birch;
-            if (moisture >= 0.26f && moisture <= 0.72f && terrain <= 0.62f && rng.NextDouble() < 0.18)
-                return TreeSpeciesIds.Apple;
-        }
-
-        return rng.NextDouble() < 0.64 ? TreeSpeciesIds.Oak : TreeSpeciesIds.Birch;
-    }
+        => WorldGenContentRegistry.Current.ResolveTreeSpeciesId(biomeId, moisture, terrain, riparianBoost, rng);
 
     private static void AddPlants(
         GeneratedEmbarkMap map,
+        int seed,
         Random rng,
         float[,] terrain,
         float[,] moisture,
         string biomeId)
     {
-        SeedFruitCanopies(map, rng);
+        var plantCatalog = WorldGenPlantRegistry.Current;
+        SeedFruitCanopies(map, rng, terrain, moisture, biomeId, plantCatalog);
 
-        var density = ResolveGroundPlantDensity(biomeId);
+        var density = WorldGenContentRegistry.Current.ResolveGroundPlantDensity(biomeId);
         if (density <= 0f)
             return;
+
+        // Build a clustering noise layer so plants form natural patches rather than uniform grids.
+        // Low-frequency noise creates large-scale "fertile" and "barren" zones.
+        var plantClusterNoise = BuildPlantClusterNoise(map.Width, map.Height, seed + 7919);
+
+        // Track placed plants for soft crowding penalty.
+        var plantPlaced = new bool[map.Width, map.Height];
+        for (var x = 1; x < map.Width - 1; x++)
+        for (var y = 1; y < map.Height - 1; y++)
+        {
+            var tile = map.GetTile(x, y, 0);
+            if (!string.IsNullOrWhiteSpace(tile.PlantDefId))
+                plantPlaced[x, y] = true;
+        }
 
         for (var x = 1; x < map.Width - 1; x++)
         for (var y = 1; y < map.Height - 1; y++)
@@ -2555,41 +2619,130 @@ public static class EmbarkGenerator
                 continue;
 
             var riparianBoost = EstimateRiparianBoost(map, x, y);
-            var plantId = ResolveGroundPlantSpeciesId(biomeId, tile.TileDefId, moisture[x, y], terrain[x, y], riparianBoost, rng, out var score);
-            if (plantId is null)
+            if (!plantCatalog.TryResolveBestGroundPlant(
+                    biomeId,
+                    tile.TileDefId,
+                    moisture[x, y],
+                    terrain[x, y],
+                    riparianBoost,
+                    out var plantDefinition,
+                    out var score) || plantDefinition is null)
+            {
                 continue;
+            }
 
-            var threshold = 0.58f - (density * 0.18f);
+            // Apply cluster noise: high-noise areas are more favorable for plant clusters.
+            // This creates natural patches where plants group together.
+            var clusterValue = plantClusterNoise[x, y];
+            var clusterBoost = (clusterValue - 0.5f) * 0.30f; // +/- 15% boost/penalty
+            var adjustedScore = Math.Clamp(score + clusterBoost, 0f, 1f);
+
+            // Soft crowding penalty: each nearby plant slightly reduces placement chance.
+            // Unlike hard exclusion, this allows some plants to be close together naturally.
+            var nearbyCount = CountNearbyPlacedPlants(plantPlaced, x, y, radius: 3, map.Width, map.Height);
+            var crowdingPenalty = nearbyCount * 0.08f; // Each nearby plant reduces score by 8%
+
+            // Threshold scales with biome density: dense biomes accept lower scores.
+            var threshold = 0.72f - (density * 0.20f);
             if (tile.TileDefId == GeneratedTileDefIds.Mud)
                 threshold -= 0.04f;
 
-            var jitter = ((float)rng.NextDouble() - 0.5f) * 0.08f;
-            if (score + jitter < threshold)
+            var jitter = ((float)rng.NextDouble() - 0.5f) * 0.14f;
+            var finalScore = adjustedScore - crowdingPenalty + jitter;
+            if (finalScore < threshold)
                 continue;
 
-            var stageRoll = (float)rng.NextDouble();
-            var stage = stageRoll < 0.08f
-                ? GeneratedPlantGrowthStages.Seed
-                : stageRoll < 0.34f
-                    ? GeneratedPlantGrowthStages.Sprout
-                    : stageRoll < 0.70f
-                        ? GeneratedPlantGrowthStages.Young
-                        : GeneratedPlantGrowthStages.Mature;
+            var stage = ResolvePlantGrowthStage(rng, plantDefinition.MaxGrowthStage);
 
             var yield = stage >= GeneratedPlantGrowthStages.Mature && rng.NextDouble() < 0.55d ? (byte)1 : (byte)0;
             var seedLevel = stage == GeneratedPlantGrowthStages.Seed ? (byte)1 : (byte)0;
             map.SetTile(x, y, 0, tile with
             {
-                PlantDefId = plantId,
+                PlantDefId = plantDefinition.Id,
                 PlantGrowthStage = stage,
                 PlantGrowthProgressSeconds = 0f,
                 PlantYieldLevel = yield,
                 PlantSeedLevel = seedLevel,
             });
+            plantPlaced[x, y] = true;
         }
     }
 
-    private static void SeedFruitCanopies(GeneratedEmbarkMap map, Random rng)
+    private static float[,] BuildPlantClusterNoise(int width, int height, int seed)
+    {
+        var noise = new float[width, height];
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
+        {
+            var fx = width <= 1 ? 0f : x / (float)(width - 1);
+            var fy = height <= 1 ? 0f : y / (float)(height - 1);
+
+            // Low-frequency noise for large-scale clustering (patches of 5-10 tiles).
+            var coarse = CoherentNoise.DomainWarpedFractal2D(
+                seed, fx * 2.8f, fy * 2.8f, octaves: 3, lacunarity: 2f, gain: 0.55f, warpStrength: 0.30f, salt: 701);
+            // Medium-frequency noise for sub-patch variation.
+            var medium = CoherentNoise.Fractal2D(
+                seed, fx * 6.5f, fy * 6.5f, octaves: 2, lacunarity: 2f, gain: 0.5f, salt: 709);
+
+            noise[x, y] = Math.Clamp((coarse * 0.70f) + (medium * 0.30f), 0f, 1f);
+        }
+
+        // Smooth to soften harsh transitions between cluster zones.
+        SmoothPlantNoise(noise, width, height, passes: 2);
+        return noise;
+    }
+
+    private static void SmoothPlantNoise(float[,] noise, int width, int height, int passes)
+    {
+        var scratch = new float[width, height];
+        for (var pass = 0; pass < passes; pass++)
+        {
+            for (var x = 0; x < width; x++)
+            for (var y = 0; y < height; y++)
+            {
+                var sum = noise[x, y] * 2f;
+                var weight = 2f;
+                for (var dx = -1; dx <= 1; dx++)
+                for (var dy = -1; dy <= 1; dy++)
+                {
+                    if (dx == 0 && dy == 0) continue;
+                    var nx = x + dx;
+                    var ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                    var w = (dx == 0 || dy == 0) ? 1f : 0.7f;
+                    sum += noise[nx, ny] * w;
+                    weight += w;
+                }
+                scratch[x, y] = Math.Clamp(sum / weight, 0f, 1f);
+            }
+            for (var x = 0; x < width; x++)
+            for (var y = 0; y < height; y++)
+                noise[x, y] = scratch[x, y];
+        }
+    }
+
+    private static int CountNearbyPlacedPlants(bool[,] plantPlaced, int x, int y, int radius, int width, int height)
+    {
+        var count = 0;
+        for (var dy = -radius; dy <= radius; dy++)
+        for (var dx = -radius; dx <= radius; dx++)
+        {
+            if (dx == 0 && dy == 0) continue;
+            var nx = x + dx;
+            var ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+            if (plantPlaced[nx, ny]) count++;
+        }
+        return count;
+    }
+
+    private static void SeedFruitCanopies(
+        GeneratedEmbarkMap map,
+        Random rng,
+        float[,] terrain,
+        float[,] moisture,
+        string biomeId,
+        WorldGenPlantCatalog plantCatalog)
     {
         for (var x = 0; x < map.Width; x++)
         for (var y = 0; y < map.Height; y++)
@@ -2598,23 +2751,31 @@ public static class EmbarkGenerator
             if (tile.TileDefId != GeneratedTileDefIds.Tree || string.IsNullOrWhiteSpace(tile.TreeSpeciesId))
                 continue;
 
-            var canopyPlantId = tile.TreeSpeciesId switch
+            var riparianBoost = EstimateRiparianBoost(map, x, y);
+            if (!plantCatalog.TryResolveBestTreeCanopyPlant(
+                    biomeId,
+                    tile.TreeSpeciesId,
+                    moisture[x, y],
+                    terrain[x, y],
+                    riparianBoost,
+                    out var canopyDefinition,
+                    out var score) || canopyDefinition is null)
             {
-                var species when string.Equals(species, TreeSpeciesIds.Apple, StringComparison.OrdinalIgnoreCase) => PlantSpeciesIds.AppleCanopy,
-                var species when string.Equals(species, TreeSpeciesIds.Fig, StringComparison.OrdinalIgnoreCase) => PlantSpeciesIds.FigCanopy,
-                _ => null,
-            };
-
-            if (canopyPlantId is null)
                 continue;
+            }
+
+            if (score < 0.36f)
+                continue;
+
+            var stage = Math.Min(GeneratedPlantGrowthStages.Mature, canopyDefinition.MaxGrowthStage);
 
             map.SetTile(x, y, 0, tile with
             {
-                PlantDefId = canopyPlantId,
-                PlantGrowthStage = GeneratedPlantGrowthStages.Mature,
+                PlantDefId = canopyDefinition.Id,
+                PlantGrowthStage = (byte)stage,
                 PlantGrowthProgressSeconds = 0f,
-                PlantYieldLevel = rng.NextDouble() < 0.60d ? (byte)1 : (byte)0,
-                PlantSeedLevel = 0,
+                PlantYieldLevel = stage >= GeneratedPlantGrowthStages.Mature && rng.NextDouble() < 0.60d ? (byte)1 : (byte)0,
+                PlantSeedLevel = stage == GeneratedPlantGrowthStages.Seed ? (byte)1 : (byte)0,
             });
         }
     }
@@ -2625,120 +2786,17 @@ public static class EmbarkGenerator
            && tile.FluidType == GeneratedFluidType.None
            && string.IsNullOrWhiteSpace(tile.PlantDefId);
 
-    private static float ResolveGroundPlantDensity(string biomeId)
+    private static byte ResolvePlantGrowthStage(Random rng, byte maxGrowthStage)
     {
-        if (string.Equals(biomeId, MacroBiomeIds.TropicalRainforest, StringComparison.OrdinalIgnoreCase))
-            return 0.28f;
-        if (string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase))
-            return 0.24f;
-        if (string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.BorealForest, StringComparison.OrdinalIgnoreCase))
+        var rolledStage = (float)rng.NextDouble() switch
         {
-            return 0.20f;
-        }
-        if (string.Equals(biomeId, MacroBiomeIds.Savanna, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.WindsweptSteppe, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.Highland, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0.16f;
-        }
-        if (string.Equals(biomeId, MacroBiomeIds.Desert, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(biomeId, MacroBiomeIds.IcePlains, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0.08f;
-        }
+            < 0.08f => GeneratedPlantGrowthStages.Seed,
+            < 0.34f => GeneratedPlantGrowthStages.Sprout,
+            < 0.70f => GeneratedPlantGrowthStages.Young,
+            _ => GeneratedPlantGrowthStages.Mature,
+        };
 
-        return 0.12f;
-    }
-
-    private static string? ResolveGroundPlantSpeciesId(
-        string biomeId,
-        string tileDefId,
-        float moisture,
-        float terrain,
-        float riparianBoost,
-        Random rng,
-        out float bestScore)
-    {
-        bestScore = 0f;
-        string? bestId = null;
-
-        ConsiderGroundPlant(PlantSpeciesIds.BerryBush, ScoreBerryBush(biomeId, tileDefId, moisture, terrain, riparianBoost), ref bestId, ref bestScore);
-        ConsiderGroundPlant(PlantSpeciesIds.Sunroot, ScoreSunroot(biomeId, tileDefId, moisture, terrain, riparianBoost), ref bestId, ref bestScore);
-        ConsiderGroundPlant(PlantSpeciesIds.StoneTuber, ScoreStoneTuber(biomeId, tileDefId, moisture, terrain, riparianBoost), ref bestId, ref bestScore);
-        ConsiderGroundPlant(PlantSpeciesIds.MarshReed, ScoreMarshReed(biomeId, tileDefId, moisture, terrain, riparianBoost), ref bestId, ref bestScore);
-
-        if (bestId is null)
-            return null;
-
-        bestScore = Math.Clamp(bestScore + (((float)rng.NextDouble() - 0.5f) * 0.04f), 0f, 1f);
-        return bestScore < 0.36f ? null : bestId;
-    }
-
-    private static void ConsiderGroundPlant(string plantId, float score, ref string? bestId, ref float bestScore)
-    {
-        if (score <= bestScore)
-            return;
-
-        bestScore = score;
-        bestId = plantId;
-    }
-
-    private static float ScoreBerryBush(string biomeId, string tileDefId, float moisture, float terrain, float riparianBoost)
-    {
-        if (tileDefId is not (GeneratedTileDefIds.Grass or GeneratedTileDefIds.Soil or GeneratedTileDefIds.Mud))
-            return 0f;
-        if (!string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.BorealForest, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0f;
-        }
-
-        return Math.Clamp((moisture * 0.56f) + (riparianBoost * 0.28f) + ((1f - terrain) * 0.10f), 0f, 1f);
-    }
-
-    private static float ScoreSunroot(string biomeId, string tileDefId, float moisture, float terrain, float riparianBoost)
-    {
-        if (tileDefId is not (GeneratedTileDefIds.Grass or GeneratedTileDefIds.Soil or GeneratedTileDefIds.Sand))
-            return 0f;
-        if (!string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.Savanna, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.WindsweptSteppe, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0f;
-        }
-
-        var moistureFit = 1f - Math.Abs(0.44f - moisture);
-        return Math.Clamp((moistureFit * 0.52f) + ((1f - riparianBoost) * 0.20f) + ((1f - terrain) * 0.18f), 0f, 1f);
-    }
-
-    private static float ScoreStoneTuber(string biomeId, string tileDefId, float moisture, float terrain, float riparianBoost)
-    {
-        if (tileDefId is not (GeneratedTileDefIds.Soil or GeneratedTileDefIds.Grass or GeneratedTileDefIds.StoneFloor))
-            return 0f;
-        if (!string.Equals(biomeId, MacroBiomeIds.Highland, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.WindsweptSteppe, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.Tundra, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0f;
-        }
-
-        return Math.Clamp((terrain * 0.36f) + ((1f - moisture) * 0.28f) + ((1f - riparianBoost) * 0.16f), 0f, 1f);
-    }
-
-    private static float ScoreMarshReed(string biomeId, string tileDefId, float moisture, float terrain, float riparianBoost)
-    {
-        if (tileDefId is not (GeneratedTileDefIds.Mud or GeneratedTileDefIds.Soil or GeneratedTileDefIds.Grass))
-            return 0f;
-        if (!string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.TropicalRainforest, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(biomeId, MacroBiomeIds.TemperatePlains, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0f;
-        }
-
-        return Math.Clamp((moisture * 0.58f) + (riparianBoost * 0.26f) + ((1f - terrain) * 0.08f), 0f, 1f);
+        return (byte)Math.Min(Math.Clamp((int)maxGrowthStage, GeneratedPlantGrowthStages.Seed, GeneratedPlantGrowthStages.Mature), rolledStage);
     }
 
     private static void AddOutcrops(GeneratedEmbarkMap map, Random rng, int min, int max, float[,] terrain)
@@ -3552,21 +3610,7 @@ public static class EmbarkGenerator
     {
         var area = map.Width * map.Height;
         var areaBaseline = Math.Clamp((int)MathF.Round(area / 400f), 2, 14);
-        var biomeBias = biomeId switch
-        {
-            MacroBiomeIds.TropicalRainforest => 3,
-            MacroBiomeIds.ConiferForest => 2,
-            MacroBiomeIds.BorealForest => 2,
-            MacroBiomeIds.MistyMarsh => 1,
-            MacroBiomeIds.OceanShallow => 3,
-            MacroBiomeIds.OceanDeep => 4,
-            MacroBiomeIds.Savanna => 1,
-            MacroBiomeIds.Desert => -2,
-            MacroBiomeIds.Tundra => -2,
-            MacroBiomeIds.IcePlains => -3,
-            MacroBiomeIds.Highland => -1,
-            _ => 0,
-        };
+        var biomeBias = WorldGenContentRegistry.Current.ResolveSurfaceCreatureGroupBias(biomeId);
 
         var jitter = rng.Next(-1, 2);
         return Math.Clamp(areaBaseline + biomeBias + jitter, 1, 16);

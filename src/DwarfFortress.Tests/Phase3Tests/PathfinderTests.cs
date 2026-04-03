@@ -1,4 +1,5 @@
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.World;
 using DwarfFortress.GameLogic.Tests;
 using Xunit;
@@ -200,5 +201,60 @@ public sealed class PathfinderTests
         Assert.NotEmpty(swimPath);
         Assert.Contains(new Vec3i(3, 3, 0), swimPath);
         Assert.Equal(goal, swimPath[^1]);
+    }
+
+    [Fact]
+    public void FindPath_DoesNotChangeZWithoutConnectedStairs()
+    {
+        var map = CreatePassableMap(size: 5);
+        var start = new Vec3i(2, 2, 0);
+        var goal = new Vec3i(2, 2, 1);
+
+        map.SetTile(goal, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            IsPassable = true,
+        });
+
+        var path = Pathfinder.FindPath(map, start, goal);
+
+        Assert.Empty(path);
+    }
+
+    [Fact]
+    public void FindPath_CanChangeZThroughConnectedStairs()
+    {
+        var map = CreatePassableMap(size: 5);
+        var start = new Vec3i(0, 2, 0);
+        var lowerStair = new Vec3i(1, 2, 0);
+        var upperStair = new Vec3i(1, 2, 1);
+        var goal = new Vec3i(2, 2, 1);
+
+        map.SetTile(lowerStair, new TileData
+        {
+            TileDefId = TileDefIds.Staircase,
+            MaterialId = MaterialIds.Granite,
+            IsPassable = true,
+        });
+        map.SetTile(upperStair, new TileData
+        {
+            TileDefId = TileDefIds.Staircase,
+            MaterialId = MaterialIds.Granite,
+            IsPassable = true,
+        });
+        map.SetTile(goal, new TileData
+        {
+            TileDefId = TileDefIds.StoneFloor,
+            MaterialId = MaterialIds.Granite,
+            IsPassable = true,
+        });
+
+        var path = Pathfinder.FindPath(map, start, goal);
+
+        Assert.NotEmpty(path);
+        Assert.Equal(start, path[0]);
+        Assert.Equal(goal, path[^1]);
+        Assert.Contains(lowerStair, path);
+        Assert.Contains(upperStair, path);
     }
 }

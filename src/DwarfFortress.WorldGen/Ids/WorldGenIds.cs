@@ -118,6 +118,13 @@ public static class CreatureDefIds
     public const string Troll = "troll";
 }
 
+public static class FactionUnitRoleIds
+{
+    public const string CivilizedPrimary = "civilized_primary";
+    public const string HostilePrimary = "hostile_primary";
+    public const string HostileAlternate = "hostile_alternate";
+}
+
 public static class RegionBiomeVariantIds
 {
     public const string DenseConifer = "dense_conifer";

@@ -17,6 +17,10 @@ theme_override_constants/separation = 12
 [node name="TimeLabel" type="Label" parent="Margin/HBox"]
 unique_name_in_owner = true
 
+[node name="DebugButton" type="Button" parent="Margin/HBox"]
+unique_name_in_owner = true
+text = "DEBUG"
+
 [node name="Separator" type="VSeparator" parent="Margin/HBox"]
 
 [node name="HintLabel" type="Label" parent="Margin/HBox"]

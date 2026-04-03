@@ -7,10 +7,12 @@ public sealed class Need
 {
     public string Name          { get; }
     public float  Level         { get; private set; }
-    public float  DecayPerTick  { get; }              // decrease per simulation second
+    public float  BaseDecayPerTick  { get; }          // base decrease per simulation second
+    public float  DecayMultiplier   { get; set; } = 1f; // attribute-based multiplier
     public float  CriticalThreshold { get; }          // below this → critical event
     public float  TimeAtZeroSeconds { get; private set; }
 
+    public float DecayPerTick => BaseDecayPerTick * DecayMultiplier;
     public bool IsCritical => Level < CriticalThreshold;
     public bool IsSatisfied => Level >= 0.75f;
 
@@ -18,7 +20,7 @@ public sealed class Need
     {
         Name              = name;
         Level             = 1.0f;
-        DecayPerTick      = decayPerTick;
+        BaseDecayPerTick  = decayPerTick;
         CriticalThreshold = criticalThreshold;
     }
 

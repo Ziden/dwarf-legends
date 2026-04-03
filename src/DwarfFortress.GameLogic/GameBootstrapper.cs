@@ -32,6 +32,8 @@ public static class GameBootstrapper
         // ── World ─────────────────────────────────────────────────────────
         sim.RegisterSystem(new WorldMap());
         sim.RegisterSystem(new MapGenerationService());
+        sim.RegisterSystem(new WorldHistoryRuntimeService());
+        sim.RegisterSystem(new WorldMacroStateService());
         sim.RegisterSystem(new WorldLoreSystem());
         sim.RegisterSystem(new BuildingSystem());
 
@@ -49,10 +51,9 @@ public static class GameBootstrapper
         sim.RegisterSystem(new SleepSystem());
         sim.RegisterSystem(new NauseaSystem());
         sim.RegisterSystem(new NutritionSystem());
-        sim.RegisterSystem(new TraitSystem());
+        sim.RegisterSystem(new AttributeEffectSystem());
         sim.RegisterSystem(new WeightSystem());
         sim.RegisterSystem(new VegetationSystem());
-        sim.RegisterSystem(new PlantHarvestSystem());
         sim.RegisterSystem(new ThoughtSystem());
         sim.RegisterSystem(new MoodSystem());
         sim.RegisterSystem(new SkillSystem());
@@ -60,8 +61,10 @@ public static class GameBootstrapper
         sim.RegisterSystem(new DeathSystem());
         sim.RegisterSystem(new EntityEventLogSystem());
         sim.RegisterSystem(new FortressAnnouncementSystem());
+        sim.RegisterSystem(new CombatResponseSystem());
 
         // ── Jobs ──────────────────────────────────────────────────────────
+        sim.RegisterSystem(new MovementPresentationSystem());
         var jobSystem = new JobSystem();
         sim.RegisterSystem(jobSystem);
 
@@ -103,6 +106,7 @@ public static class GameBootstrapper
         jobSystem.RegisterStrategy(new EatStrategy());
         jobSystem.RegisterStrategy(new DrinkStrategy());
         jobSystem.RegisterStrategy(new SleepStrategy());
+        jobSystem.RegisterStrategy(new EngageHostileStrategy());
         jobSystem.RegisterStrategy(new IdleStrategy());
 
         return sim;

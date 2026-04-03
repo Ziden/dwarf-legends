@@ -27,6 +27,7 @@ public static class BuildingDefIds
     public const string Chair = "chair";
     public const string Table = "table";
     public const string CarpenterWorkshop = "carpenter_workshop";
+    public const string Smelter = "smelter";
     public const string Kitchen = "kitchen";
     public const string Still = "still";
 }

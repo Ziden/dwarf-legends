@@ -4,6 +4,9 @@ using System.Text;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 public static class TileInspectionFormatter
 {
     public static string BuildHoverSummary(WorldQuerySystem query, Vector2I hovered, int z)
@@ -15,14 +18,21 @@ public static class TileInspectionFormatter
         if (tile is not null)
         {
             AddDistinct(labels, tile.IsVisible ? FormatTileSummary(tile) : "Unknown");
+            if (tile.IsDamp)
+                AddDistinct(labels, "Damp wall");
+            if (tile.IsWarm)
+                AddDistinct(labels, "Warm wall");
             if (!string.IsNullOrWhiteSpace(tile.OreItemDefId))
                 AddDistinct(labels, $"{Humanize(tile.OreItemDefId!)} vein");
             if (!string.IsNullOrWhiteSpace(tile.PlantDefId))
                 AddDistinct(labels, BuildPlantSummary(tile));
         }
 
+        foreach (var container in result.Containers.Take(2))
+            AddDistinct(labels, container.Storage.StoredItemCount > 0 ? $"{container.DefId} ({container.Storage.StoredItemCount})" : container.DefId);
+
         foreach (var item in result.Items.Take(3))
-            AddDistinct(labels, FormatItemSummary(item));
+            AddDistinct(labels, ItemTextFormatter.BuildHoverSummary(item));
 
         return labels.Count > 0 ? string.Join(", ", labels.Take(3)) : "-";
     }
@@ -53,9 +63,54 @@ public static class TileInspectionFormatter
     public static string BuildDetailedText(WorldQuerySystem query, Vector2I tilePos, int z)
     {
         var result = query.QueryTile(new DwarfFortress.GameLogic.Core.Vec3i(tilePos.X, tilePos.Y, z));
+        return BuildDetailedText(result);
+    }
+
+    public static string BuildDetailedText(TileQueryResult result)
+        => BuildTileDetailedText(result);
+
+    public static string BuildItemDetailedText(ItemView item, TileQueryResult tileResult)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("[Selected Item]");
+        sb.AppendLine(ItemTextFormatter.BuildContainedCardTitle(item));
+        sb.AppendLine($"Item #{item.Id}");
+        sb.AppendLine($"Position: ({item.Position.X}, {item.Position.Y}, z:{item.Position.Z})");
+
+        if (item.Corpse is not null)
+        {
+            sb.AppendLine($"Formerly: {item.Corpse.DisplayName}");
+            sb.AppendLine($"Former type: {Humanize(item.Corpse.FormerDefId)}");
+            sb.AppendLine($"Cause of death: {Humanize(item.Corpse.DeathCause)}");
+            sb.AppendLine($"Rot stage: {Humanize(item.Corpse.RotStage)}");
+        }
+        else if (!string.IsNullOrWhiteSpace(item.MaterialId))
+        {
+            sb.AppendLine($"Material: {Humanize(item.MaterialId!)}");
+        }
+
+        if (item.StackSize > 1)
+            sb.AppendLine($"Stack size: {item.StackSize}");
+
+        if (item.Weight > 0f)
+            sb.AppendLine($"Weight: {item.Weight:F1} kg");
+
+        sb.AppendLine($"Location: {ResolveItemLocation(item)}");
+
+        if (item.Storage is not null)
+            sb.AppendLine($"Stores: {item.Storage.StoredItemCount} item(s)");
+
+        sb.AppendLine();
+        sb.AppendLine("Tile:");
+        sb.Append(BuildTileDetailedText(tileResult, item.Id));
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildTileDetailedText(TileQueryResult result, int? excludedItemId = null)
+    {
         var tile = result.Tile;
         if (tile is null)
-            return $"({tilePos.X}, {tilePos.Y}, z:{z})\n-";
+            return $"({result.Position.X}, {result.Position.Y}, z:{result.Position.Z})\n-";
 
         var sb = new StringBuilder();
         if (!tile.IsVisible)
@@ -70,6 +125,10 @@ public static class TileInspectionFormatter
         sb.AppendLine($"({tile.X}, {tile.Y}, z:{tile.Z})");
         if (tile.MaterialId is not null)
             sb.AppendLine($"  {Humanize(tile.MaterialId)}");
+        if (tile.IsDamp)
+            sb.AppendLine("  Damp wall");
+        if (tile.IsWarm)
+            sb.AppendLine("  Warm wall");
         if (tile.OreItemDefId is not null)
             sb.AppendLine($"  Ore vein: {Humanize(tile.OreItemDefId)}");
         sb.AppendLine(tile.IsPassable ? "  walkable" : "  solid");
@@ -99,26 +158,36 @@ public static class TileInspectionFormatter
             }
         }
 
-        var items = result.Items;
-        if (items.Count > 0)
+        var items = excludedItemId is int itemId
+            ? result.Items.Where(item => item.Id != itemId).ToArray()
+            : result.Items.ToArray();
+        if (items.Length > 0)
         {
             sb.AppendLine("Items:");
             foreach (var item in items.Take(5))
             {
-                sb.AppendLine($"  {FormatDetailedItem(item)}");
+                sb.AppendLine($"  {ItemTextFormatter.BuildDetailedInspection(item)}");
 
-                if (item.Corpse?.Contents.Length > 0)
+                if (item.Storage?.StoredItemCount > 0)
                 {
-                    foreach (var contained in item.Corpse.Contents.Take(4))
-                        sb.AppendLine($"    contains: {FormatDetailedItem(contained)}");
+                    foreach (var contained in item.Storage.Contents.Take(4))
+                        sb.AppendLine($"    contains: {ItemTextFormatter.BuildDetailedInspection(contained)}");
 
-                    if (item.Corpse.Contents.Length > 4)
-                        sb.AppendLine($"    +{item.Corpse.Contents.Length - 4} more inside...");
+                    if (item.Storage.StoredItemCount > 4)
+                        sb.AppendLine($"    +{item.Storage.StoredItemCount - 4} more inside...");
                 }
             }
 
-            if (items.Count > 5)
-                sb.AppendLine($"  +{items.Count - 5} more...");
+            if (items.Length > 5)
+                sb.AppendLine($"  +{items.Length - 5} more...");
+        }
+
+        var containers = result.Containers;
+        if (containers.Count > 0)
+        {
+            sb.AppendLine("Containers:");
+            foreach (var container in containers)
+                sb.AppendLine($"  {Humanize(container.DefId)} [{container.Storage.StoredItemCount}/{container.Storage.Capacity}]");
         }
 
         var stockpile = result.Stockpile;
@@ -126,6 +195,23 @@ public static class TileInspectionFormatter
             sb.AppendLine($"Stockpile #{stockpile.Id} [{string.Join(", ", stockpile.AcceptedTags)}]");
 
         return sb.ToString();
+    }
+
+    private static string ResolveItemLocation(ItemView item)
+    {
+        if (item.CarriedByEntityId >= 0)
+            return $"Carried by entity #{item.CarriedByEntityId}";
+
+        if (item.ContainerBuildingId >= 0)
+            return $"Stored in building #{item.ContainerBuildingId}";
+
+        if (item.ContainerItemId >= 0)
+            return $"Inside container #{item.ContainerItemId}";
+
+        if (item.StockpileId >= 0)
+            return $"On ground in stockpile #{item.StockpileId}";
+
+        return "On ground";
     }
 
     private static void AddDistinct(ICollection<string> labels, string? rawValue)
@@ -151,29 +237,6 @@ public static class TileInspectionFormatter
         return Humanize(tile.TileDefId);
     }
 
-    private static string FormatItemSummary(ItemView item)
-    {
-        if (item.Corpse is not null)
-            return $"{item.Corpse.DisplayName} corpse ({item.Corpse.RotStage})";
-
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(item.MaterialId))
-            parts.Add(Humanize(item.MaterialId!));
-
-        parts.Add(Humanize(item.DefId));
-        return string.Join(" ", parts);
-    }
-
-    private static string FormatDetailedItem(ItemView item)
-    {
-        if (item.Corpse is not null)
-            return $"{item.Corpse.DisplayName} corpse [{item.Corpse.RotStage}, rot {item.Corpse.RotProgress:P0}, died of {Humanize(item.Corpse.DeathCause)}]";
-
-        var mat = item.MaterialId is not null ? $" ({Humanize(item.MaterialId)})" : "";
-        var qty = item.StackSize > 1 ? $" x{item.StackSize}" : "";
-        return $"{Humanize(item.DefId)}{mat}{qty}";
-    }
-
     private static string BuildPlantSummary(TileView tile)
     {
         if (string.IsNullOrWhiteSpace(tile.PlantDefId))
@@ -191,5 +254,5 @@ public static class TileInspectionFormatter
         return $"{Humanize(tile.PlantDefId!)} ({suffix})";
     }
 
-    private static string Humanize(string rawValue) => rawValue.Replace('_', ' ');
+    private static string Humanize(string rawValue) => ItemTextFormatter.Humanize(rawValue);
 }

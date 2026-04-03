@@ -100,55 +100,7 @@ public sealed class DiscoverySystem : IGameSystem
         var itemSystem = _ctx.TryGet<ItemSystem>();
         if (itemSystem is null) return false;
 
-        return TryMatchInputIds(inputs, itemSystem.GetAllItems().ToList(), out _);
-    }
-
-    private bool TryMatchInputIds(IReadOnlyList<RecipeInput> inputs, IReadOnlyList<Item> availableItems, out List<int> matchedIds)
-    {
-        var requiredTags = inputs
-            .SelectMany(input => Enumerable.Repeat(input.RequiredTags, input.Quantity))
-            .OrderByDescending(tags => tags.Count)
-            .ToList();
-
-        matchedIds = new List<int>();
-        return TryMatchInputs(requiredTags, 0, availableItems, new HashSet<int>(), matchedIds);
-    }
-
-    private bool TryMatchInputs(
-        IReadOnlyList<TagSet> requiredTags,
-        int index,
-        IReadOnlyList<Item> availableItems,
-        HashSet<int> matchedIds,
-        List<int> consumedIds)
-    {
-        if (index >= requiredTags.Count)
-            return true;
-
-        var tags = requiredTags[index];
-        var candidates = availableItems
-            .Where(item => !matchedIds.Contains(item.Id) && MatchesInput(item, tags))
-            .ToList();
-
-        foreach (var candidate in candidates)
-        {
-            matchedIds.Add(candidate.Id);
-            consumedIds.Add(candidate.Id);
-
-            if (TryMatchInputs(requiredTags, index + 1, availableItems, matchedIds, consumedIds))
-                return true;
-
-            consumedIds.RemoveAt(consumedIds.Count - 1);
-            matchedIds.Remove(candidate.Id);
-        }
-
-        return false;
-    }
-
-    private bool MatchesInput(Item item, TagSet requiredTags)
-    {
-        if (_data is null) return false;
-        var def = _data.Items.GetOrNull(item.DefId);
-        return def?.Tags.HasAll(requiredTags.All.ToArray()) ?? false;
+        return RecipeResolver.TryMatchInputs(_data, inputs, itemSystem.GetAllItems().ToList(), out _);
     }
 
     // ── Public Query API ────────────────────────────────────────────────────
@@ -249,10 +201,8 @@ public sealed class DiscoverySystem : IGameSystem
         foreach (var recipe in _data.Recipes.All())
         {
             if (!_unlockedRecipes.Contains(recipe.Id)) continue;
-            foreach (var output in recipe.Outputs)
-            {
-                yield return output.ItemDefId;
-            }
+            foreach (var outputItemId in RecipeResolver.ResolveCraftableOutputItemIds(_data, recipe))
+                yield return outputItemId;
         }
     }
 

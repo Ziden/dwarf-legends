@@ -23,8 +23,8 @@ public record struct EntityWakeEvent(int EntityId, Vec3i Position);
 
 /// <summary>
 /// Manages sleep behavior for dwarves and creatures.
-/// Handles sleep location scoring, trait effects, and emergent sleep patterns.
-/// Order 5 — runs after NeedsSystem (order 4) and before TraitSystem (order 7).
+/// Handles sleep location scoring, attribute effects, and emergent sleep patterns.
+/// Order 5 — runs after NeedsSystem (order 4) and before AttributeEffectSystem (order 7).
 /// </summary>
 public sealed class SleepSystem : IGameSystem
 {
@@ -56,12 +56,20 @@ public sealed class SleepSystem : IGameSystem
     {
         _elapsed += delta;
         var registry = _ctx!.Get<EntityRegistry>();
+        var jobSystem = _ctx.TryGet<JobSystem>();
 
         // Tick dwarf sleep behavior
         foreach (var dwarf in registry.GetAlive<Dwarf>())
         {
             dwarf.Emotes.Tick(delta);
-            TickDwarfSleep(dwarf, delta);
+            TickDwarfSleep(dwarf, delta, jobSystem);
+        }
+
+        foreach (var creature in registry.GetAlive<Creature>())
+        {
+            creature.Emotes.Tick(delta);
+            if (_sleepingCreatures.Contains(creature.Id))
+                EnsureSleepEmote(creature.Emotes);
         }
 
         // Tick creature sleep behavior
@@ -94,37 +102,39 @@ public sealed class SleepSystem : IGameSystem
 
     // ── Dwarf Sleep ────────────────────────────────────────────────────────
 
-    private void TickDwarfSleep(Dwarf dwarf, float delta)
+    private void TickDwarfSleep(Dwarf dwarf, float delta, JobSystem? jobSystem)
     {
-        var jobSystem = _ctx!.TryGet<JobSystem>();
         var currentJob = jobSystem?.GetAssignedJob(dwarf.Id);
-        var isSleeping = currentJob?.JobDefId == JobDefIds.Sleep;
+        var currentStep = currentJob is null ? null : jobSystem?.GetCurrentStep(currentJob.Id);
+        var isSleeping = IsActivelySleeping(currentJob, currentStep, dwarf.Position.Position);
 
         if (isSleeping)
         {
             if (!_sleepingDwarves.Contains(dwarf.Id))
             {
                 _sleepingDwarves.Add(dwarf.Id);
-                dwarf.Emotes.SetEmote(EmoteIds.Sleep, EmoteDuration);
                 _ctx!.EventBus.Emit(new EntitySleepEvent(dwarf.Id, dwarf.Position.Position, IsNearBed(dwarf)));
             }
 
-            // Apply Energetic trait: sleep recovers faster
-            if (dwarf.Traits.HasTrait(TraitIds.Energetic))
+            EnsureSleepEmote(dwarf.Emotes);
+
+            // Apply energetic attribute: sleep recovers faster (stamina >= 4)
+            var staminaLevel = dwarf.Attributes.GetLevel(AttributeIds.Stamina);
+            if (staminaLevel >= 4)
             {
                 var sleepNeed = dwarf.Needs.Get(NeedIds.Sleep);
-                // Extra recovery per tick for energetic dwarves
                 sleepNeed.Satisfy(0.02f * delta);
             }
 
-            // Check Gluttony midnight snack
-            if (dwarf.Traits.HasTrait(TraitIds.Gluttony))
+            // Check low stamina: may wake up hungry (appetite >= 4)
+            var appetiteLevel = dwarf.Attributes.GetLevel(AttributeIds.Appetite);
+            if (appetiteLevel >= 4)
             {
                 var hungerLevel = dwarf.Needs.Get(NeedIds.Hunger).Level;
                 if (hungerLevel >= GluttonyMidnightThreshold)
                 {
                     // Wake up hungry - interrupt sleep
-                    WakeUpDwarf(dwarf, jobSystem!);
+                    WakeUpDwarf(dwarf);
                     dwarf.Emotes.SetEmote(EmoteIds.Hungry, EmoteDuration);
                     dwarf.Thoughts.AddThought(new Thought(
                         "woke_up_hungry",
@@ -142,14 +152,15 @@ public sealed class SleepSystem : IGameSystem
         {
             if (_sleepingDwarves.Contains(dwarf.Id))
             {
-                WakeUpDwarf(dwarf, jobSystem!);
+                WakeUpDwarf(dwarf);
             }
         }
     }
 
-    private void WakeUpDwarf(Dwarf dwarf, JobSystem jobSystem)
+    private void WakeUpDwarf(Dwarf dwarf)
     {
         _sleepingDwarves.Remove(dwarf.Id);
+        ClearSleepEmoteIfActive(dwarf.Emotes);
         _ctx!.EventBus.Emit(new EntityWakeEvent(dwarf.Id, dwarf.Position.Position));
 
         // Check if slept in bed or on ground
@@ -171,8 +182,10 @@ public sealed class SleepSystem : IGameSystem
                 duration: 7200f)); // 2 hours
         }
 
-        // Lazy trait: add wake-up delay
-        if (dwarf.Traits.HasTrait(TraitIds.Lazy))
+        // Low focus/stamina: add wake-up delay (focus <= 2 or stamina <= 2)
+        var focusLevel = dwarf.Attributes.GetLevel(AttributeIds.Focus);
+        var staminaLevel = dwarf.Attributes.GetLevel(AttributeIds.Stamina);
+        if (focusLevel <= 2 || staminaLevel <= 2)
         {
             _lazyWakeUpTimers[dwarf.Id] = LazyWakeUpDelay;
             dwarf.Emotes.SetEmote(EmoteIds.Sad, EmoteDuration);
@@ -199,7 +212,6 @@ public sealed class SleepSystem : IGameSystem
 
     private void ProcessLazyWakeUp(float delta)
     {
-        var jobSystem = _ctx!.TryGet<JobSystem>();
         var expiredIds = new List<int>();
 
         foreach (var kvp in _lazyWakeUpTimers)
@@ -230,7 +242,6 @@ public sealed class SleepSystem : IGameSystem
 
         foreach (var creature in registry.GetAlive<Creature>())
         {
-            creature.Emotes.Tick(delta);
             var sleepNeed = creature.Needs.Get(NeedIds.Sleep);
 
             if (_sleepingCreatures.Contains(creature.Id))
@@ -240,6 +251,7 @@ public sealed class SleepSystem : IGameSystem
                 if (!sleepNeed.IsCritical)
                 {
                     _sleepingCreatures.Remove(creature.Id);
+                    ClearSleepEmoteIfActive(creature.Emotes);
                     _ctx!.EventBus.Emit(new EntityWakeEvent(creature.Id, creature.Position.Position));
                 }
 
@@ -248,26 +260,67 @@ public sealed class SleepSystem : IGameSystem
 
             if (sleepNeed.IsCritical)
             {
-                // Find a safe sleep location
                 var sleepTarget = FindCreatureSleepLocation(creature, registry);
-                _sleepingCreatures.Add(creature.Id);
-                creature.Emotes.SetEmote(EmoteIds.Sleep, EmoteDuration);
-
-                if (sleepTarget.HasValue)
+                if (sleepTarget.HasValue && sleepTarget.Value != creature.Position.Position)
                 {
-                    var oldPos = creature.Position.Position;
-                    var newPos = sleepTarget.Value;
-                    if (oldPos != newPos)
+                    var (_, requiresSwimming) = CreatureTraversalProfile.Resolve(creature, _ctx!);
+                    if (requiresSwimming)
                     {
-                        creature.Position.Position = newPos;
-                        _ctx!.TryGet<ItemSystem>()?.UpdateCarriedItemsPosition(creature.Id, newPos);
-                        _ctx.EventBus.Emit(new EntityMovedEvent(creature.Id, oldPos, newPos));
+                        RelocateCreature(creature, sleepTarget.Value);
+                    }
+                    else if (TryMoveCreatureTowardSleepLocation(creature, sleepTarget.Value))
+                    {
+                        continue;
                     }
                 }
 
-                _ctx!.EventBus.Emit(new EntitySleepEvent(creature.Id, creature.Position.Position, false));
+                StartCreatureSleeping(creature);
             }
         }
+    }
+
+    private void StartCreatureSleeping(Creature creature)
+    {
+        if (!_sleepingCreatures.Add(creature.Id))
+            return;
+
+        EnsureSleepEmote(creature.Emotes);
+        _ctx!.EventBus.Emit(new EntitySleepEvent(creature.Id, creature.Position.Position, false));
+    }
+
+    private bool TryMoveCreatureTowardSleepLocation(Creature creature, Vec3i target)
+    {
+        var origin = creature.Position.Position;
+        if (origin == target)
+            return false;
+
+        var map = _ctx!.Get<WorldMap>();
+        var (canSwim, requiresSwimming) = CreatureTraversalProfile.Resolve(creature, _ctx!);
+        var spatial = _ctx.TryGet<SpatialIndexSystem>();
+        var path = Pathfinder.FindPath(
+            map,
+            origin,
+            target,
+            canSwim,
+            requiresSwimming,
+            pos => IsOccupiedByOtherEntity(spatial, pos, creature.Id));
+        if (path.Count <= 1)
+            return false;
+
+        var next = path[1];
+        if (origin.ManhattanDistanceTo(next) != 1)
+            return false;
+
+        return EntityMovement.TryMove(_ctx!, creature, next);
+    }
+
+    private void RelocateCreature(Creature creature, Vec3i newPos)
+    {
+        var oldPos = creature.Position.Position;
+        if (oldPos == newPos)
+            return;
+
+        EntityMovement.TryMove(_ctx!, creature, newPos);
     }
 
     private Vec3i? FindCreatureSleepLocation(Creature creature, EntityRegistry registry)
@@ -313,18 +366,23 @@ public sealed class SleepSystem : IGameSystem
 
         Vec3i? nearest = null;
         var nearestDistance = int.MaxValue;
-        for (var dx = -2; dx <= 2; dx++)
-        for (var dy = -2; dy <= 2; dy++)
+        byte bestFluidLevel = 0;
+        for (var dx = -CreatureSleepSearchRadius; dx <= CreatureSleepSearchRadius; dx++)
+        for (var dy = -CreatureSleepSearchRadius; dy <= CreatureSleepSearchRadius; dy++)
         {
             var pos = new Vec3i(center.X + dx, center.Y + dy, center.Z);
             if (!map.IsInBounds(pos) || !map.IsSwimmable(pos))
                 continue;
 
+            var fluidLevel = map.GetTile(pos).FluidLevel;
             var distance = center.ManhattanDistanceTo(pos);
-            if (distance >= nearestDistance)
+            if (fluidLevel < bestFluidLevel)
+                continue;
+            if (fluidLevel == bestFluidLevel && distance >= nearestDistance)
                 continue;
 
             nearest = pos;
+            bestFluidLevel = fluidLevel;
             nearestDistance = distance;
         }
 
@@ -401,6 +459,44 @@ public sealed class SleepSystem : IGameSystem
         return score;
     }
 
+    private static bool IsActivelySleeping(Job? currentJob, ActionStep? currentStep, Vec3i currentPosition)
+    {
+        if (!string.Equals(currentJob?.JobDefId, JobDefIds.Sleep, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return currentStep is WorkAtStep work
+            && (!work.RequiredPosition.HasValue || work.RequiredPosition.Value == currentPosition);
+    }
+
+    private static void EnsureSleepEmote(EmoteComponent emotes)
+    {
+        var currentEmote = emotes.CurrentEmote;
+        if (!string.Equals(currentEmote?.Id, EmoteIds.Sleep, StringComparison.Ordinal) || currentEmote.TimeLeft <= 1f)
+            emotes.SetEmote(EmoteIds.Sleep, EmoteDuration);
+    }
+
+    private static void ClearSleepEmoteIfActive(EmoteComponent emotes)
+    {
+        if (string.Equals(emotes.CurrentEmote?.Id, EmoteIds.Sleep, StringComparison.Ordinal))
+            emotes.ClearEmote();
+    }
+
+    private static bool IsOccupiedByOtherEntity(SpatialIndexSystem? spatial, Vec3i position, int entityId)
+    {
+        if (spatial is null)
+            return false;
+
+        foreach (var dwarfId in spatial.GetDwarvesAt(position))
+            if (dwarfId != entityId)
+                return true;
+
+        foreach (var creatureId in spatial.GetCreaturesAt(position))
+            if (creatureId != entityId)
+                return true;
+
+        return false;
+    }
+
     // ── Public API ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -414,20 +510,24 @@ public sealed class SleepSystem : IGameSystem
     public bool IsCreatureSleeping(int creatureId) => _sleepingCreatures.Contains(creatureId);
 
     /// <summary>
-    /// Returns the sleep decay multiplier based on traits.
-    /// Sleepy = 2.0x (need increases faster).
+    /// Returns the configured sleep decay multiplier for the dwarf's stamina level.
     /// </summary>
-    public static float GetSleepDecayMultiplier(Dwarf dwarf)
-    {
-        return dwarf.Traits.HasTrait(TraitIds.Sleepy) ? 2.0f : 1.0f;
-    }
+    public static float GetSleepDecayMultiplier(Dwarf dwarf, DataManager? dataManager = null)
+        => AttributeEffectSystem.GetConfiguredMultiplier(
+            dwarf,
+            dataManager,
+            AttributeIds.Stamina,
+            "sleep_need_decay_multiplier",
+            1.0f);
 
     /// <summary>
-    /// Returns the sleep recovery multiplier based on traits.
-    /// Energetic = 2.0x (sleep recovers faster).
+    /// Returns the configured sleep recovery multiplier for the dwarf's stamina level.
     /// </summary>
-    public static float GetSleepRecoveryMultiplier(Dwarf dwarf)
-    {
-        return dwarf.Traits.HasTrait(TraitIds.Energetic) ? 2.0f : 1.0f;
-    }
+    public static float GetSleepRecoveryMultiplier(Dwarf dwarf, DataManager? dataManager = null)
+        => AttributeEffectSystem.GetConfiguredMultiplier(
+            dwarf,
+            dataManager,
+            AttributeIds.Stamina,
+            "sleep_recovery_multiplier",
+            1.0f);
 }

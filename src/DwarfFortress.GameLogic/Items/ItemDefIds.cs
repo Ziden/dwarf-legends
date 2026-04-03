@@ -36,6 +36,7 @@ public static class ItemDefIds
     public const string Drink           = "drink";
     public const string Seed            = "seed";
     public const string PlantMatter     = "plant_matter";
+    public const string RawMeat         = "raw_meat";
     public const string BerryCluster    = "berry_cluster";
     public const string SunrootBulb     = "sunroot_bulb";
     public const string StoneTuber      = "stone_tuber";

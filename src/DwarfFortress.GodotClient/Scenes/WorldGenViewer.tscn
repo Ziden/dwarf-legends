@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://Scripts/WorldGenViewerRoot.cs" id="1"]
+[ext_resource type="Script" path="res://Scripts/WorldGen/WorldGenViewerRoot.cs" id="1"]
+[ext_resource type="Script" path="res://Scripts/UI/StoryInspectorPanel.cs" id="2"]
 
 [node name="WorldGenViewerRoot" type="Node2D"]
 script = ExtResource("1")
@@ -181,6 +182,10 @@ unique_name_in_owner = true
 size_flags_horizontal = 3
 text = "Reset"
 
+[node name="StoryInspectorBtn" type="Button" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Story Inspector"
+
 [node name="ZLabel" type="Label" parent="UI/UIRoot/LeftPanel/Margin/VBox"]
 unique_name_in_owner = true
 text = "Z Layer: 0"
@@ -264,3 +269,16 @@ anchor_bottom = 1.0
 horizontal_alignment = 1
 vertical_alignment = 1
 text = "Generating..."
+
+[node name="StoryInspectorPanel" type="PanelContainer" parent="UI/UIRoot"]
+unique_name_in_owner = true
+visible = false
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -480.0
+offset_top = -340.0
+offset_right = 480.0
+offset_bottom = 340.0
+script = ExtResource("2")

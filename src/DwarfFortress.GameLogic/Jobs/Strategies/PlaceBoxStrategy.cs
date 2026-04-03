@@ -74,7 +74,6 @@ public sealed class PlaceBoxStrategy : IJobStrategy
 
             var pos = item.Position.Position;
             item.IsClaimed = false;
-            item.CarriedByEntityId = -1;
 
             // Consume the box item and spawn a Box entity at the same tile
             itemSystem.DestroyItem(id);

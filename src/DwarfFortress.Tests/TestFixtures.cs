@@ -64,19 +64,92 @@ public static class TestFixtures
     /// <summary>Minimal JSON for core jobs.</summary>
     public static string CoreJobsJson => """
         [
+                    { "id": "engage_hostile", "displayName": "Engage Hostile", "labor": "misc",        "workTime": 1.0 },
           { "id": "mine_tile",  "displayName": "Mine",     "labor": "mining",      "workTime": 5.0 },
           { "id": "cut_tree",   "displayName": "Cut Tree", "labor": "wood_cutting","workTime": 4.0 },
           { "id": "haul_item",  "displayName": "Haul",     "labor": "hauling",     "workTime": 1.0 }
         ]
         """;
 
-    /// <summary>Minimal JSON for dwarf creature def.</summary>
-    public static string CoreCreaturesJson => """
-        [
-          { "id": "dwarf", "displayName": "Dwarf", "tags": ["sapient", "playable"],
-            "isPlayable": true, "isSapient": true, "maxHealth": 100 }
-        ]
+    public static string CoreDwarfCreatureBundleJson => """
+        {
+          "id": "dwarf",
+          "displayName": "Dwarf",
+          "tags": ["sapient", "playable"],
+          "isPlayable": true,
+          "isSapient": true,
+          "maxHealth": 100,
+          "society": {
+            "factionRoles": [
+              { "id": "civilized_primary", "weight": 1.0 }
+            ]
+          }
+        }
         """;
+
+    public static void AddCoreCreatureBundles(InMemoryDataSource ds)
+    {
+        ds.AddFile("data/Content/Game/creatures/sapients/dwarf/creature.json", CoreDwarfCreatureBundleJson);
+    }
+
+    public static void AddFullCreatureBundles(InMemoryDataSource ds)
+    {
+        AddCoreCreatureBundles(ds);
+        ds.AddFile("data/Content/Game/creatures/hostile/goblin/creature.json", """
+            {
+              "id": "goblin",
+              "displayName": "Goblin",
+              "tags": ["hostile", "carnivore"],
+              "isHostile": true,
+              "diet": "carnivore",
+              "maxHealth": 60,
+              "society": {
+                "factionRoles": [
+                  { "id": "hostile_primary", "weight": 1.0 }
+                ]
+              }
+            }
+            """);
+        ds.AddFile("data/Content/Game/creatures/wildlife/elk/creature.json", """
+            {
+              "id": "elk",
+              "displayName": "Elk",
+              "tags": ["animal", "grazer", "herbivore"],
+              "diet": "herbivore",
+              "maxHealth": 85
+            }
+            """);
+        ds.AddFile("data/Content/Game/creatures/pets/cat/creature.json", """
+            {
+              "id": "cat",
+              "displayName": "Cat",
+              "tags": ["animal", "pet", "groomer", "carnivore"],
+              "canGroom": true,
+              "diet": "carnivore",
+              "maxHealth": 20
+            }
+            """);
+        ds.AddFile("data/Content/Game/creatures/pets/dog/creature.json", """
+            {
+              "id": "dog",
+              "displayName": "Dog",
+              "tags": ["animal", "pet", "groomer", "omnivore"],
+              "canGroom": true,
+              "diet": "omnivore",
+              "maxHealth": 30
+            }
+            """);
+        ds.AddFile("data/Content/Game/creatures/aquatic/giant_carp/creature.json", """
+            {
+              "id": "giant_carp",
+              "displayName": "Giant Carp",
+              "tags": ["animal", "aquatic", "fish", "aquatic_grazer"],
+              "diet": "aquatic_grazer",
+              "movementMode": "aquatic",
+              "maxHealth": 55
+            }
+            """);
+    }
 
     /// <summary>Adds all minimal data files to the data source.</summary>
     public static void AddCoreData(InMemoryDataSource ds)
@@ -85,7 +158,7 @@ public static class TestFixtures
         ds.AddFile("data/ConfigBundle/tiles.json",      CoreTilesJson);
         ds.AddFile("data/ConfigBundle/items.json",      CoreItemsJson);
         ds.AddFile("data/ConfigBundle/jobs.json",       CoreJobsJson);
-        ds.AddFile("data/ConfigBundle/creatures.json",  CoreCreaturesJson);
+        AddCoreCreatureBundles(ds);
     }
 
     /// <summary>
@@ -130,6 +203,7 @@ public static class TestFixtures
 
         ds.AddFile("data/ConfigBundle/jobs.json", """
             [
+                            { "id": "engage_hostile",     "displayName": "Engage Hostile", "labor": "misc",         "workTime": 1.0  },
               { "id": "mine_tile",        "displayName": "Mine",      "labor": "mining",       "workTime": 5.0  },
               { "id": "cut_tree",         "displayName": "Cut Tree",  "labor": "wood_cutting", "workTime": 4.0  },
               { "id": "haul_item",        "displayName": "Haul",      "labor": "hauling",      "workTime": 1.0  },
@@ -141,23 +215,14 @@ public static class TestFixtures
             ]
             """);
 
-        ds.AddFile("data/ConfigBundle/creatures.json", """
-            [
-              { "id": "dwarf",   "displayName": "Dwarf",  "tags": ["sapient","playable"],            "isPlayable": true,  "isSapient": true, "maxHealth": 100 },
-              { "id": "goblin",  "displayName": "Goblin", "tags": ["hostile", "carnivore"],           "isHostile":  true,  "maxHealth": 60  },
-              { "id": "elk",     "displayName": "Elk",    "tags": ["animal", "grazer", "herbivore"],                          "maxHealth": 85  },
-              { "id": "cat",     "displayName": "Cat",    "tags": ["animal", "pet", "groomer", "carnivore"],                 "maxHealth": 20  },
-              { "id": "dog",     "displayName": "Dog",    "tags": ["animal", "pet", "groomer", "omnivore"],                  "maxHealth": 30  },
-              { "id": "giant_carp", "displayName": "Giant Carp", "tags": ["animal", "aquatic", "fish", "aquatic_grazer"],    "maxHealth": 55  }
-            ]
-            """);
+        AddFullCreatureBundles(ds);
 
         ds.AddFile("data/ConfigBundle/recipes.json", """
             [
               { "id": "craft_plank", "displayName": "Craft Plank",
                 "workshop": "carpenter_workshop",
                 "inputs":  [{ "tags": ["log"], "qty": 1 }],
-                "outputs": [{ "itemId": "plank", "qty": 2 }],
+                "outputs": [{ "qty": 2, "materialFrom": "tag:log", "formRole": "plank" }],
                 "workTime": 8.0, "labor": "carpentry" }
             ]
             """);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.WorldGen.Generation;
 using DwarfFortress.WorldGen.History;
@@ -33,7 +34,8 @@ public readonly record struct GeneratedEmbarkContext(
     RegionCoord RegionCoord,
     string MacroBiomeId,
     string RegionBiomeVariantId,
-    string EffectiveBiomeId);
+    string EffectiveBiomeId,
+    LocalHistoryContext? LocalHistory = null);
 
 public interface IMapGenerationService
 {
@@ -191,7 +193,9 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
         if (_localCache.TryGetValue(key, out var cached))
             return cached;
 
-        var generated = _localGenerator.Generate(region, regionCoord, settings);
+        var history = GetOrCreateHistory(seed, generationSettings);
+        var localHistory = BuildLocalHistoryContext(history, worldCoord);
+        var generated = _localGenerator.Generate(region, regionCoord, settings, localHistory);
         _localCache[key] = generated;
         return generated;
     }
@@ -228,6 +232,8 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
         var localMap = GetOrCreateLocal(seed, regionCoord, effectiveSettings, resolvedGenerationSettings);
         WorldGenerator.ApplyGeneratedEmbark(targetMap, localMap);
 
+        var history = GetOrCreateHistory(seed, resolvedGenerationSettings);
+        var localHistory = BuildLocalHistoryContext(history, new WorldCoord(regionCoord.WorldX, regionCoord.WorldY));
         var world = GetOrCreateWorld(seed, resolvedGenerationSettings);
         var region = GetOrCreateRegion(seed, new WorldCoord(regionCoord.WorldX, regionCoord.WorldY), resolvedGenerationSettings);
         var worldTile = world.GetTile(regionCoord.WorldX, regionCoord.WorldY);
@@ -239,13 +245,164 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
             RegionCoord: regionCoord,
             MacroBiomeId: worldTile.MacroBiomeId,
             RegionBiomeVariantId: regionTile.BiomeVariantId,
-            EffectiveBiomeId: effectiveSettings.BiomeOverrideId ?? worldTile.MacroBiomeId);
+            EffectiveBiomeId: effectiveSettings.BiomeOverrideId ?? worldTile.MacroBiomeId,
+            LocalHistory: localHistory);
 
         LastGeneratedEmbark = context;
         LastGeneratedLocalMap = localMap;
-        LastGeneratedHistory = GetOrCreateHistory(seed, resolvedGenerationSettings);
+        LastGeneratedHistory = history;
         return context;
     }
+
+    private static LocalHistoryContext? BuildLocalHistoryContext(GeneratedWorldHistory? history, WorldCoord embarkCoord)
+    {
+        if (history is null)
+            return null;
+
+        string? territoryOwnerCivilizationId = null;
+        if (history.TryGetOwner(embarkCoord, out var territoryOwner))
+            territoryOwnerCivilizationId = territoryOwner;
+
+        var nearbySites = history.Sites
+            .Where(site => ManhattanDistance(site.Location, embarkCoord) <= 1)
+            .Select(site => new LocalHistorySite(
+                site.Id,
+                site.Name,
+                site.Kind,
+                site.OwnerCivilizationId,
+                site.Location.X,
+                site.Location.Y,
+                site.Development,
+                site.Security))
+            .OrderBy(site => site.WorldX == embarkCoord.X && site.WorldY == embarkCoord.Y ? 0 : 1)
+            .ThenBy(site => string.Equals(site.OwnerCivilizationId, territoryOwnerCivilizationId, StringComparison.Ordinal) ? 0 : 1)
+            .ThenBy(site => ManhattanDistance(site.WorldX, site.WorldY, embarkCoord.X, embarkCoord.Y))
+            .ThenByDescending(site => site.Development)
+            .ThenBy(site => site.Name, StringComparer.Ordinal)
+            .ToList();
+
+        var nearbyRoads = history.Roads
+            .Select(road => ToLocalHistoryRoad(road, embarkCoord))
+            .Where(road => road.DistanceFromEmbark <= 1)
+            .ToList();
+
+        if (nearbySites.Count == 0 && nearbyRoads.Count == 0 && string.IsNullOrWhiteSpace(territoryOwnerCivilizationId))
+            return null;
+
+        var primarySite = SelectPrimarySite(nearbySites, embarkCoord, territoryOwnerCivilizationId);
+        var ownerCivilizationId = territoryOwnerCivilizationId ?? primarySite?.OwnerCivilizationId;
+        if (string.IsNullOrWhiteSpace(ownerCivilizationId))
+        {
+            ownerCivilizationId = nearbySites
+                .OrderBy(site => site.WorldX == embarkCoord.X && site.WorldY == embarkCoord.Y ? 0 : 1)
+                .ThenByDescending(site => site.Development)
+                .Select(site => site.OwnerCivilizationId)
+                .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        }
+
+        if (string.IsNullOrWhiteSpace(ownerCivilizationId))
+        {
+            ownerCivilizationId = nearbyRoads
+                .Select(road => road.OwnerCivilizationId)
+                .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        }
+
+        var supportingSites = nearbySites
+            .Where(site => primarySite is null || !string.Equals(site.Id, primarySite.Value.Id, StringComparison.Ordinal))
+            .Take(8)
+            .ToArray();
+
+        var supportingRoads = nearbyRoads
+            .OrderBy(road => road.DistanceFromEmbark)
+            .ThenBy(road => road.PortalEdges.Length == 0 ? 1 : 0)
+            .ThenBy(road => string.Equals(road.OwnerCivilizationId, ownerCivilizationId, StringComparison.Ordinal) ? 0 : 1)
+            .ThenBy(road => road.Id, StringComparer.Ordinal)
+            .Take(8)
+            .ToArray();
+
+        return new LocalHistoryContext(
+            ownerCivilizationId,
+            territoryOwnerCivilizationId,
+            primarySite,
+            supportingSites,
+            supportingRoads);
+    }
+
+    private static LocalHistorySite? SelectPrimarySite(
+        IReadOnlyList<LocalHistorySite> sites,
+        WorldCoord embarkCoord,
+        string? territoryOwnerCivilizationId)
+    {
+        if (sites.Count == 0)
+            return null;
+
+        var selected = sites
+            .OrderBy(site => site.WorldX == embarkCoord.X && site.WorldY == embarkCoord.Y ? 0 : 1)
+            .ThenBy(site => string.Equals(site.OwnerCivilizationId, territoryOwnerCivilizationId, StringComparison.Ordinal) ? 0 : 1)
+            .ThenBy(site => ManhattanDistance(site.WorldX, site.WorldY, embarkCoord.X, embarkCoord.Y))
+            .ThenByDescending(site => site.Development)
+            .ThenByDescending(site => site.Security)
+            .ThenBy(site => site.Name, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        return string.IsNullOrWhiteSpace(selected.Id) ? null : selected;
+    }
+
+    private static LocalHistoryRoad ToLocalHistoryRoad(RoadRecord road, WorldCoord embarkCoord)
+    {
+        var minDistance = int.MaxValue;
+        foreach (var coord in road.Path)
+            minDistance = Math.Min(minDistance, ManhattanDistance(coord, embarkCoord));
+
+        return new LocalHistoryRoad(
+            road.Id,
+            road.OwnerCivilizationId,
+            string.IsNullOrWhiteSpace(road.FromSiteId) ? null : road.FromSiteId,
+            string.IsNullOrWhiteSpace(road.ToSiteId) ? null : road.ToSiteId,
+            minDistance,
+            ResolveRoadPortalEdges(road.Path, embarkCoord));
+    }
+
+    private static LocalMapEdge[] ResolveRoadPortalEdges(IReadOnlyList<WorldCoord> path, WorldCoord embarkCoord)
+    {
+        var edges = new List<LocalMapEdge>(4);
+        for (var i = 0; i < path.Count; i++)
+        {
+            if (!path[i].Equals(embarkCoord))
+                continue;
+
+            if (i > 0)
+                AddPortalEdge(edges, embarkCoord, path[i - 1]);
+            if (i + 1 < path.Count)
+                AddPortalEdge(edges, embarkCoord, path[i + 1]);
+        }
+
+        return edges.ToArray();
+    }
+
+    private static void AddPortalEdge(List<LocalMapEdge> edges, WorldCoord center, WorldCoord neighbor)
+    {
+        var dx = neighbor.X - center.X;
+        var dy = neighbor.Y - center.Y;
+        if (Math.Abs(dx) + Math.Abs(dy) != 1)
+            return;
+
+        var edge = dx switch
+        {
+            < 0 => LocalMapEdge.West,
+            > 0 => LocalMapEdge.East,
+            _ => dy < 0 ? LocalMapEdge.North : LocalMapEdge.South,
+        };
+
+        if (!edges.Contains(edge))
+            edges.Add(edge);
+    }
+
+    private static int ManhattanDistance(WorldCoord a, WorldCoord b)
+        => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
+
+    private static int ManhattanDistance(int ax, int ay, int bx, int by)
+        => Math.Abs(ax - bx) + Math.Abs(ay - by);
 
     private void ClearCaches()
     {

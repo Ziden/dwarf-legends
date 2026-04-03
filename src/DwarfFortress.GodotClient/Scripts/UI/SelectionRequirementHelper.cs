@@ -6,6 +6,9 @@ using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Systems;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 public sealed record RequirementAnalysis(bool CanFulfill, string NeededSummary, string MissingSummary);
 
 public static class SelectionRequirementHelper

@@ -5,7 +5,7 @@
     "workshop": "carpenter_workshop",
     "labor": "carpentry",
     "inputs":  [{ "tags": ["log"], "qty": 1 }],
-    "outputs": [{ "itemId": "plank", "qty": 2 }],
+    "outputs": [{ "qty": 2, "materialFrom": "tag:log", "formRole": "plank" }],
     "workTime": 8.0,
     "skillXp": 15
   },
@@ -15,7 +15,7 @@
     "workshop": "carpenter_workshop",
     "labor": "carpentry",
     "inputs":  [{ "tags": ["plank"], "qty": 1 }],
-    "outputs": [{ "itemId": "box", "qty": 1 }],
+    "outputs": [{ "itemId": "box", "qty": 1, "materialFrom": "tag:plank" }],
     "workTime": 6.0,
     "skillXp": 10
   },
@@ -25,7 +25,7 @@
     "workshop": "carpenter_workshop",
     "labor": "carpentry",
     "inputs":  [{ "tags": ["plank"], "qty": 2 }],
-    "outputs": [{ "itemId": "bed", "qty": 1 }],
+    "outputs": [{ "itemId": "bed", "qty": 1, "materialFrom": "tag:plank" }],
     "workTime": 10.0,
     "skillXp": 20
   },
@@ -35,7 +35,7 @@
     "workshop": "carpenter_workshop",
     "labor": "carpentry",
     "inputs":  [{ "tags": ["plank"], "qty": 2 }],
-    "outputs": [{ "itemId": "table", "qty": 1 }],
+    "outputs": [{ "itemId": "table", "qty": 1, "materialFrom": "tag:plank" }],
     "workTime": 8.0,
     "skillXp": 16
   },
@@ -45,7 +45,7 @@
     "workshop": "carpenter_workshop",
     "labor": "carpentry",
     "inputs":  [{ "tags": ["plank"], "qty": 1 }],
-    "outputs": [{ "itemId": "chair", "qty": 1 }],
+    "outputs": [{ "itemId": "chair", "qty": 1, "materialFrom": "tag:plank" }],
     "workTime": 6.0,
     "skillXp": 12
   },
@@ -55,7 +55,7 @@
     "workshop": "carpenter_workshop",
     "labor": "carpentry",
     "inputs":  [{ "tags": ["plank"], "qty": 2 }],
-    "outputs": [{ "itemId": "barrel", "qty": 1 }],
+    "outputs": [{ "itemId": "barrel", "qty": 1, "materialFrom": "tag:plank" }],
     "workTime": 8.0,
     "skillXp": 15
   },
@@ -65,7 +65,7 @@
     "workshop": "carpenter_workshop",
     "labor": "carpentry",
     "inputs":  [{ "tags": ["plank"], "qty": 1 }],
-    "outputs": [{ "itemId": "bucket", "qty": 1 }],
+    "outputs": [{ "itemId": "bucket", "qty": 1, "materialFrom": "tag:plank" }],
     "workTime": 6.0,
     "skillXp": 12
   },
@@ -74,8 +74,8 @@
     "displayName": "Smelt Iron",
     "workshop": "smelter",
     "labor": "smithing",
-    "inputs":  [{ "tags": ["ore"], "qty": 2 }, { "tags": ["fuel"], "qty": 1 }],
-    "outputs": [{ "itemId": "iron_bar", "qty": 1 }],
+    "inputs":  [{ "tags": ["ore"], "itemId": "iron_ore", "qty": 2 }, { "tags": ["fuel"], "qty": 1 }],
+    "outputs": [{ "qty": 1, "materialFrom": "item:iron_ore", "formRole": "bar" }],
     "workTime": 12.0,
     "skillXp": 20
   },

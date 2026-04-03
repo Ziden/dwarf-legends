@@ -1,0 +1,31 @@
+{
+  "id": "goblin",
+  "displayName": "Goblin",
+  "tags": ["hostile"],
+  "isHostile": true,
+  "diet": "carnivore",
+  "maxHealth": 60,
+  "speed": 1.1,
+  "visuals": {
+    "proceduralProfile": "goblin",
+    "waterEffectStyle": "default",
+    "viewerColor": "#75E659",
+    "spriteSheet": "res://Graphics/graphics/Meph/goblins.png",
+    "spriteColumn": 0,
+    "spriteRow": 0
+  },
+  "ecology": {
+    "caveWildlife": [
+      { "layers": [1, 2, 3], "weight": 0.56, "minGroup": 1, "maxGroup": 3, "avoidEmbarkCenter": false }
+    ]
+  },
+  "history": {
+    "figureNamePool": ["Snaga", "Ghash", "Urgat", "Muzg", "Ronk", "Bagul", "Krosh", "Zuglar"],
+    "defaultProfessionIds": ["militia"]
+  },
+  "society": {
+    "factionRoles": [
+      { "id": "hostile_primary", "weight": 1.0 }
+    ]
+  }
+}

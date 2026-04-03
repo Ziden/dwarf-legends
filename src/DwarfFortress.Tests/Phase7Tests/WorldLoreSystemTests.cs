@@ -1,6 +1,7 @@
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Systems;
+using DwarfFortress.GameLogic.World;
 
 namespace DwarfFortress.GameLogic.Tests.Phase7Tests;
 
@@ -60,21 +61,41 @@ public sealed class WorldLoreSystemTests
     }
 
     [Fact]
-    public void WorldLoreSystem_Scales_Event_Intensity()
+    public void WorldMacroStateService_Scales_Event_Intensity()
     {
         var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
-        var lore = sim.Context.Get<WorldLoreSystem>();
+        var macroState = sim.Context.Get<WorldMacroStateService>();
 
         sim.Context.Commands.Dispatch(new GenerateWorldCommand(Seed: 99, Width: 48, Height: 48, Depth: 8));
 
-        var migrants = lore.ScaleMigrantCount(3);
-        var raids = lore.ScaleRaidCount(2);
-        var tunedRaidProb = lore.TuneEventProbability(WorldEventIds.GoblinRaid, 0.3f);
-        var tunedMigrantProb = lore.TuneEventProbability(WorldEventIds.MigrantWave, 0.5f);
+        var migrants = macroState.ScaleMigrantCount(3);
+        var raids = macroState.ScaleRaidCount(2);
+        var tunedRaidProb = macroState.TuneEventProbability(WorldEventIds.GoblinRaid, 0.3f);
+        var tunedMigrantProb = macroState.TuneEventProbability(WorldEventIds.MigrantWave, 0.5f);
 
         Assert.InRange(migrants, 1, 8);
         Assert.InRange(raids, 1, 8);
         Assert.InRange(tunedRaidProb, 0.05f, 0.95f);
         Assert.InRange(tunedMigrantProb, 0.05f, 0.95f);
+    }
+
+    [Fact]
+    public void StartFortress_Seeds_Canonical_MacroState_FromHistoryRuntime()
+    {
+        var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
+
+        sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 17, Width: 48, Height: 48, Depth: 8));
+
+        var historySummary = sim.Context.Get<WorldHistoryRuntimeService>().CurrentSummary;
+        var macroState = sim.Context.Get<WorldMacroStateService>().Current;
+
+        Assert.NotNull(historySummary);
+        Assert.NotNull(macroState);
+        Assert.Equal(historySummary!.OwnerCivilizationId, macroState!.OwnerCivilizationId);
+        Assert.Equal(historySummary.PrimarySiteId, macroState.PrimarySiteId);
+        Assert.InRange(macroState.Threat, 0f, 1f);
+        Assert.InRange(macroState.Prosperity, 0f, 1f);
+        Assert.InRange(macroState.FactionPressure, 0f, 1f);
+        Assert.InRange(macroState.MigrationPull, 0f, 1f);
     }
 }

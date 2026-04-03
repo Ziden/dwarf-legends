@@ -1,5 +1,6 @@
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Jobs;
@@ -212,10 +213,46 @@ public sealed class CraftingTests
 
         Assert.Contains(items.GetAllItems(), item =>
             item.DefId == ItemDefIds.Plank &&
+            item.MaterialId == "wood" &&
             item.Position.Position == workshop.Origin);
 
         var queue = sim.Context.Get<RecipeSystem>().GetOrCreateQueue(workshop.Id);
         Assert.Null(queue.Peek());
+    }
+
+    [Fact]
+    public void RecipeSystem_Picks_Compatible_Materials_For_Derived_Wood_Output()
+    {
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
+
+        var dwarf = new Dwarf(er.NextId(), "Carpenter", new Vec3i(5, 5, 0));
+        er.Register(dwarf);
+        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(1, 1, 0));
+        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(2, 1, 0));
+
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
+            BuildingDefId: "carpenter_workshop",
+            Origin: new Vec3i(5, 5, 0)));
+
+        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
+        Assert.NotNull(workshop);
+
+        items.CreateItem(ItemDefIds.Plank, "oak", new Vec3i(4, 5, 0));
+        items.CreateItem(ItemDefIds.Plank, "pine", new Vec3i(4, 6, 0));
+        items.CreateItem(ItemDefIds.Plank, "oak", new Vec3i(4, 7, 0));
+
+        sim.Context.Commands.Dispatch(new SetProductionOrderCommand(
+            WorkshopEntityId: workshop!.Id,
+            RecipeDefId: "make_bed",
+            Quantity: 1));
+
+        for (int i = 0; i < 250; i++) sim.Tick(0.1f);
+
+        Assert.Contains(items.GetAllItems(), item =>
+            item.DefId == ItemDefIds.Bed &&
+            item.MaterialId == "oak" &&
+            item.Position.Position == workshop.Origin);
+        Assert.Contains(items.GetAllItems(), item => item.DefId == ItemDefIds.Plank && item.MaterialId == "pine");
     }
 
     [Fact]
@@ -251,7 +288,7 @@ public sealed class CraftingTests
             JobDefId: JobDefIds.Craft,
             EntityId: workshop.Id));
 
-        Assert.Contains(items.GetAllItems(), item => item.DefId == ItemDefIds.IronBar);
+        Assert.Contains(items.GetAllItems(), item => item.DefId == ItemDefIds.IronBar && item.MaterialId == "iron");
         Assert.DoesNotContain(items.GetAllItems(), item => item.DefId == ItemDefIds.IronOre);
         Assert.DoesNotContain(items.GetAllItems(), item => item.DefId == ItemDefIds.CoalOre);
     }
@@ -269,6 +306,24 @@ public sealed class CraftingTests
 
         Assert.NotNull(sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0)));
         Assert.DoesNotContain(items.GetAllItems(), item => item.DefId == ItemDefIds.Log);
+    }
+
+    [Fact]
+    public void BuildingPlacement_Preserves_Consumed_Wood_Material_On_Footprint()
+    {
+        var (sim, map, _, _, items) = TestFixtures.BuildFullSim();
+
+        items.CreateItem(ItemDefIds.Log, "oak_wood", new Vec3i(2, 2, 0));
+
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
+            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
+            Origin: new Vec3i(5, 5, 0)));
+
+        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
+        Assert.NotNull(building);
+        Assert.Equal("oak_wood", building!.MaterialId);
+        Assert.Equal("oak_wood", map.GetTile(new Vec3i(5, 5, 0)).MaterialId);
+        Assert.Equal("oak_wood", map.GetTile(new Vec3i(6, 6, 0)).MaterialId);
     }
 
     [Fact]

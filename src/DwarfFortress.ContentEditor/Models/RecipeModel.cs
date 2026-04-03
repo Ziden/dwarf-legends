@@ -4,12 +4,16 @@ public class RecipeInput
 {
     public List<string> Tags { get; set; } = [];
     public int Qty { get; set; } = 1;
+    public string ItemId { get; set; } = "";
+    public string MaterialId { get; set; } = "";
 }
 
 public class RecipeOutput
 {
     public string ItemId { get; set; } = "";
     public int Qty { get; set; } = 1;
+    public string MaterialFrom { get; set; } = "";
+    public string FormRole { get; set; } = "";
 }
 
 public class RecipeModel

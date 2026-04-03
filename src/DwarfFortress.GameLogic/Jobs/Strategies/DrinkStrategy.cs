@@ -30,19 +30,22 @@ public sealed class DrinkStrategy : IJobStrategy
 
     public bool CanExecute(Job job, int dwarfId, GameContext ctx)
     {
-        // Refuse if nauseous
         var registry = ctx.Get<EntityRegistry>();
-        if (registry.TryGetById<Dwarf>(dwarfId, out var d) && d is not null)
-            if (d.Components.TryGet<StatusEffectComponent>()?.Has(StatusEffectIds.Nausea) == true)
-                return false;
+        if (!registry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null)
+            return false;
+
+        if (!dwarf.Needs.Thirst.IsCritical)
+            return false;
+
+        // Refuse if nauseous
+        if (dwarf.Components.TryGet<StatusEffectComponent>()?.Has(StatusEffectIds.Nausea) == true)
+            return false;
 
         var itemSystem = ctx.TryGet<ItemSystem>();
         if (itemSystem?.FindDrinkItem() is not null)
             return true;
 
-        if (!TryGetDwarfAndMap(dwarfId, ctx, out var dwarf, out var map))
-            return false;
-
+        var map = ctx.Get<WorldMap>();
         return CanDrinkAt(map, dwarf.Position.Position)
             || TryFindNearestDrinkablePosition(map, dwarf.Position.Position, out _);
     }

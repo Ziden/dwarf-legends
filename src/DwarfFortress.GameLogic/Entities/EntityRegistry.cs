@@ -83,11 +83,29 @@ public sealed class EntityRegistry : IGameSystem
                     Level   = kv.Value.Level,
                     Xp      = kv.Value.Xp,
                 }).ToList(),
+                AttributeLevels = d.Attributes.AllLevels.ToDictionary(
+                    kv => kv.Key,
+                    kv => kv.Value,
+                    StringComparer.OrdinalIgnoreCase),
                 EnabledLabors = d.Labors.EnabledLabors.ToList(),
                 LikedFoodId     = d.Preferences.LikedFoodId,
                 LikeStrength    = d.Preferences.LikeStrength,
                 DislikedFoodId  = d.Preferences.DislikedFoodId,
                 DislikeStrength = d.Preferences.DislikeStrength,
+                Provenance = new DwarfProvenanceDto
+                {
+                    WorldSeed = d.Provenance.WorldSeed,
+                    FigureId = d.Provenance.FigureId,
+                    HouseholdId = d.Provenance.HouseholdId,
+                    CivilizationId = d.Provenance.CivilizationId,
+                    OriginSiteId = d.Provenance.OriginSiteId,
+                    BirthSiteId = d.Provenance.BirthSiteId,
+                    MigrationWaveId = d.Provenance.MigrationWaveId,
+                    WorldX = d.Provenance.WorldX,
+                    WorldY = d.Provenance.WorldY,
+                    RegionX = d.Provenance.RegionX,
+                    RegionY = d.Provenance.RegionY,
+                },
             };
         }).ToList();
 
@@ -159,6 +177,7 @@ public sealed class EntityRegistry : IGameSystem
         {
             var spawnPos = new Vec3i(dto.X, dto.Y, dto.Z);
             var dwarf    = new Dwarf(dto.Id, dto.FirstName, spawnPos, dto.MaxHealth);
+            dwarf.ApplyBaseStats(_ctx?.TryGet<DataManager>()?.Creatures.GetOrNull(DefIds.Dwarf));
             dwarf.NickName     = dto.NickName;
             dwarf.ProfessionId = dto.ProfessionId;
 
@@ -186,6 +205,8 @@ public sealed class EntityRegistry : IGameSystem
             foreach (var sk in dto.Skills)
                 dwarf.Skills.RestoreSkill(sk.SkillId, sk.Level, sk.Xp);
 
+            dwarf.Attributes.SetLevels(dto.AttributeLevels);
+
             // Restore labors (override the default-all-on set by Dwarf ctor)
             dwarf.Labors.DisableAll();
             dwarf.Labors.EnableAll(dto.EnabledLabors);
@@ -195,6 +216,21 @@ public sealed class EntityRegistry : IGameSystem
             dwarf.Preferences.LikeStrength    = dto.LikeStrength;
             dwarf.Preferences.DislikedFoodId  = dto.DislikedFoodId;
             dwarf.Preferences.DislikeStrength = dto.DislikeStrength;
+
+            if (dto.Provenance is not null)
+            {
+                dwarf.Provenance.WorldSeed = dto.Provenance.WorldSeed;
+                dwarf.Provenance.FigureId = dto.Provenance.FigureId;
+                dwarf.Provenance.HouseholdId = dto.Provenance.HouseholdId;
+                dwarf.Provenance.CivilizationId = dto.Provenance.CivilizationId;
+                dwarf.Provenance.OriginSiteId = dto.Provenance.OriginSiteId;
+                dwarf.Provenance.BirthSiteId = dto.Provenance.BirthSiteId;
+                dwarf.Provenance.MigrationWaveId = dto.Provenance.MigrationWaveId;
+                dwarf.Provenance.WorldX = dto.Provenance.WorldX;
+                dwarf.Provenance.WorldY = dto.Provenance.WorldY;
+                dwarf.Provenance.RegionX = dto.Provenance.RegionX;
+                dwarf.Provenance.RegionY = dto.Provenance.RegionY;
+            }
 
             // Register without re-emitting EntitySpawnedEvent
             _entities[dwarf.Id] = dwarf;
@@ -269,11 +305,28 @@ public sealed class EntityRegistry : IGameSystem
         public int    MouthType       { get; set; }
         public int    FaceType        { get; set; }
         public List<SkillDto>  Skills        { get; set; } = new();
+        public Dictionary<string, int> AttributeLevels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public List<string>    EnabledLabors { get; set; } = new();
         public string? LikedFoodId     { get; set; }
         public byte    LikeStrength    { get; set; }
         public string? DislikedFoodId  { get; set; }
         public byte    DislikeStrength { get; set; }
+        public DwarfProvenanceDto? Provenance { get; set; }
+    }
+
+    private sealed class DwarfProvenanceDto
+    {
+        public int WorldSeed { get; set; }
+        public string? FigureId { get; set; }
+        public string? HouseholdId { get; set; }
+        public string? CivilizationId { get; set; }
+        public string? OriginSiteId { get; set; }
+        public string? BirthSiteId { get; set; }
+        public string? MigrationWaveId { get; set; }
+        public int? WorldX { get; set; }
+        public int? WorldY { get; set; }
+        public int? RegionX { get; set; }
+        public int? RegionY { get; set; }
     }
 
     private sealed class WoundDto

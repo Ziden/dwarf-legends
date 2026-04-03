@@ -1,6 +1,10 @@
+using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
+
+namespace DwarfFortress.GodotClient.UI;
+
 
 /// <summary>
 /// Compact panel that surfaces world-lore context for the current run.
@@ -36,8 +40,16 @@ public partial class WorldLorePanel : PanelContainer
         Visible = true;
 
         _titleLabel!.Text = lore.RegionName;
-        _metaLabel!.Text =
-            $"{lore.BiomeId.Replace('_', ' ')} | {lore.SimulatedYears} years of history";
+        var metaParts = new List<string>
+        {
+            lore.BiomeId.Replace('_', ' '),
+            $"{lore.SimulatedYears} years of history",
+        };
+        if (lore.PrimarySitePopulation is > 0)
+            metaParts.Add($"{lore.PrimarySitePopulation.Value} residents");
+        if (lore.PrimarySiteMilitaryCount is > 0)
+            metaParts.Add($"{lore.PrimarySiteMilitaryCount.Value} militia");
+        _metaLabel!.Text = string.Join(" | ", metaParts);
 
         _threatBar!.Value = lore.Threat;
         _threatBar.TooltipText = $"Threat {(lore.Threat * 100f):0}%";

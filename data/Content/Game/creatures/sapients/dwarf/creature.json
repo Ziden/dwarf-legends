@@ -1,0 +1,32 @@
+{
+  "id": "dwarf",
+  "displayName": "Dwarf",
+  "tags": ["sapient", "playable"],
+  "isPlayable": true,
+  "isSapient": true,
+  "maxHealth": 100,
+  "speed": 1.0,
+  "visuals": {
+    "proceduralProfile": "dwarf",
+    "waterEffectStyle": "default",
+    "viewerColor": "#C8C0A6",
+    "spriteSheet": "res://Graphics/graphics/Meph/dwarves.png",
+    "spriteColumn": 0,
+    "spriteRow": 0
+  },
+  "history": {
+    "figureNamePool": ["Urist", "Bomrek", "Domas", "Mistem", "Atir", "Stukos", "Kadol", "Mosus", "Meng", "Rigoth", "Sodel", "Vucar"],
+    "defaultProfessionIds": ["miner", "woodworker", "crafter", "mason", "farmer", "brewer", "cook", "hauler", "militia", "peasant"],
+    "professionRules": [
+      { "memberIndex": 0, "founderBias": true, "professionIds": ["miner", "woodworker", "crafter", "mason"] },
+      { "siteKindContains": "watch", "memberIndex": 0, "professionIds": ["militia"] },
+      { "siteKindContains": "shrine", "memberIndex": 0, "professionIds": ["brewer"] },
+      { "siteKindContains": "hamlet", "memberIndex": 0, "professionIds": ["farmer"] }
+    ]
+  },
+  "society": {
+    "factionRoles": [
+      { "id": "civilized_primary", "weight": 1.0 }
+    ]
+  }
+}

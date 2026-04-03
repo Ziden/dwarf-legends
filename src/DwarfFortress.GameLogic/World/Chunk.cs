@@ -23,6 +23,12 @@ public sealed class Chunk
     /// </summary>
     public bool IsDirty { get; private set; } = true;
 
+    /// <summary>
+    /// Monotonic version for render consumers that need to compare chunk content
+    /// across snapshot recaptures and offscreen residency changes.
+    /// </summary>
+    public int Version { get; private set; } = 1;
+
     public Chunk(Vec3i origin)
     {
         Origin = origin;
@@ -44,6 +50,7 @@ public sealed class Chunk
     {
         _tiles[lx, ly, lz] = tile;
         IsDirty = true;
+        Version++;
     }
 
     /// <summary>Called after a consumer finishes processing dirty chunk state.</summary>

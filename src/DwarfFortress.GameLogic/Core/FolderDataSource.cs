@@ -35,13 +35,14 @@ public sealed class FolderDataSource : IDataSource
         return File.ReadAllText(full);
     }
 
-    public string[] ListFiles(string directory, string extension = ".json")
+    public string[] ListFiles(string directory, string extension = ".json", bool recursive = false)
     {
         var full = Resolve(directory);
         if (!Directory.Exists(full)) return Array.Empty<string>();
 
+        var search = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
         return Directory
-            .GetFiles(full, $"*{extension}", SearchOption.TopDirectoryOnly)
+            .GetFiles(full, $"*{extension}", search)
             .Select(f => ToForwardSlash(Path.GetRelativePath(_root, f)))
             .ToArray();
     }

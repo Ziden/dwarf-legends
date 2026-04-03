@@ -15,6 +15,8 @@ public readonly record struct PlantHarvestResult(
     string HarvestItemDefId,
     string HarvestDisplayName,
     string? SeedItemDefId,
+    int? HarvestItemEntityId,
+    int? SeedItemEntityId,
     bool DroppedHarvestItem,
     bool DroppedSeedItem);
 
@@ -87,7 +89,7 @@ public static class PlantHarvesting
         if (tile.PlantGrowthStage < PlantGrowthStages.Mature)
             return false;
 
-        return !string.IsNullOrWhiteSpace(ResolveHarvestItemDefId(plantDef));
+        return !string.IsNullOrWhiteSpace(ResolveHarvestItemDefId(data, plantDef));
     }
 
     public static Vec3i? ResolveHarvestStandPosition(WorldMap map, Vec3i plantPos)
@@ -109,7 +111,7 @@ public static class PlantHarvesting
         }
 
         var tile = map.GetTile(pos);
-        var harvestItemDefId = ResolveHarvestItemDefId(plantDef);
+        var harvestItemDefId = ResolveHarvestItemDefId(data, plantDef);
         if (string.IsNullOrWhiteSpace(harvestItemDefId))
         {
             result = default;
@@ -117,16 +119,18 @@ public static class PlantHarvesting
         }
 
         var itemSystem = ctx.TryGet<ItemSystem>();
+        var harvestItemEntityId = default(int?);
         var droppedHarvestItem = dropHarvestItem && itemSystem is not null;
         if (droppedHarvestItem)
-            itemSystem!.CreateItem(harvestItemDefId, MaterialIds.Food, pos);
+            harvestItemEntityId = itemSystem!.CreateItem(harvestItemDefId, MaterialIds.Food, pos).Id;
 
-        var seedItemDefId = tile.PlantSeedLevel > 0 && !string.IsNullOrWhiteSpace(plantDef.SeedItemDefId)
-            ? plantDef.SeedItemDefId!
+        var seedItemDefId = tile.PlantSeedLevel > 0 && !string.IsNullOrWhiteSpace(data.ContentQueries?.ResolveSeedItemDefId(plantDef.Id) ?? plantDef.SeedItemDefId)
+            ? (data.ContentQueries?.ResolveSeedItemDefId(plantDef.Id) ?? plantDef.SeedItemDefId)!
             : null;
+        var seedItemEntityId = default(int?);
         var droppedSeedItem = dropSeedItem && seedItemDefId is not null && itemSystem is not null;
         if (droppedSeedItem)
-            itemSystem!.CreateItem(seedItemDefId!, MaterialIds.Food, pos);
+            seedItemEntityId = itemSystem!.CreateItem(seedItemDefId!, MaterialIds.Food, pos).Id;
 
         ResetAfterHarvest(ref tile, plantDef);
         map.SetTile(pos, tile);
@@ -138,6 +142,8 @@ public static class PlantHarvesting
             harvestItemDefId,
             harvestDisplayName,
             seedItemDefId,
+            harvestItemEntityId,
+            seedItemEntityId,
             droppedHarvestItem,
             droppedSeedItem);
         return true;
@@ -145,6 +151,7 @@ public static class PlantHarvesting
 
     private static void ResetAfterHarvest(ref TileData tile, PlantDef plantDef)
     {
+        tile.IsDesignated = false;
         tile.PlantYieldLevel = 0;
         tile.PlantSeedLevel = 0;
         tile.PlantGrowthProgressSeconds = 0f;
@@ -158,8 +165,9 @@ public static class PlantHarvesting
         tile.PlantGrowthStage = (byte)Math.Max(PlantGrowthStages.Sprout, plantDef.MaxGrowthStage - 1);
     }
 
-    private static string? ResolveHarvestItemDefId(PlantDef plantDef)
-        => !string.IsNullOrWhiteSpace(plantDef.HarvestItemDefId)
-            ? plantDef.HarvestItemDefId
-            : plantDef.FruitItemDefId;
+    private static string? ResolveHarvestItemDefId(DataManager data, PlantDef plantDef)
+        => data.ContentQueries?.ResolveHarvestItemDefId(plantDef.Id)
+           ?? (!string.IsNullOrWhiteSpace(plantDef.HarvestItemDefId)
+               ? plantDef.HarvestItemDefId
+               : plantDef.FruitItemDefId);
 }

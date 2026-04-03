@@ -92,7 +92,8 @@ public sealed class DataServiceTests : IDisposable
     public void LoadMaterials_ReturnsAllMaterials()
     {
         var mats = Svc.LoadMaterials();
-        Assert.Equal(2, mats.Count);
+        Assert.Equal(3, mats.Count);
+        Assert.Contains(mats, x => x.Id == "granite");
         Assert.Contains(mats, x => x.Id == "iron");
         Assert.Contains(mats, x => x.Id == "oak");
     }
@@ -101,7 +102,7 @@ public sealed class DataServiceTests : IDisposable
     public void SaveMaterials_ThenLoad_RoundTrip()
     {
         var mats = Svc.LoadMaterials();
-        mats.First().Hardness = 9.9f;
+        mats.Single(x => x.Id == "iron").Hardness = 9.9f;
         Svc.SaveMaterials(mats);
 
         var reloaded = Svc.LoadMaterials();
@@ -162,6 +163,25 @@ public sealed class DataServiceTests : IDisposable
 
         var reloaded = Svc.LoadRecipes();
         Assert.Equal(50, reloaded[0].SkillXp);
+    }
+
+    [Fact]
+    public void SaveRecipes_Preserves_Derived_Output_Selectors()
+    {
+        var recipes = Svc.LoadRecipes();
+        recipes[0].Inputs[0].ItemId = "log";
+        recipes[0].Inputs[0].MaterialId = "oak";
+        recipes[0].Outputs[0].ItemId = "";
+        recipes[0].Outputs[0].FormRole = "bar";
+        recipes[0].Outputs[0].MaterialFrom = "material:iron";
+        Svc.SaveRecipes(recipes);
+
+        var reloaded = Svc.LoadRecipes();
+        Assert.Equal("log", reloaded[0].Inputs[0].ItemId);
+        Assert.Equal("oak", reloaded[0].Inputs[0].MaterialId);
+        Assert.Equal("bar", reloaded[0].Outputs[0].FormRole);
+        Assert.Equal("material:iron", reloaded[0].Outputs[0].MaterialFrom);
+        Assert.Equal("", reloaded[0].Outputs[0].ItemId);
     }
 
     // ── Buildings ─────────────────────────────────────────────────────────

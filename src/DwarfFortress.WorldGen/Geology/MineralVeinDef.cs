@@ -9,9 +9,14 @@ public enum VeinShape : byte
 }
 
 public readonly record struct MineralVeinDef(
-    string OreId,
+    string MaterialId,
+    string ResourceItemDefId,
+    string ResourceFormRole,
     VeinShape Shape,
     float Frequency,
     string RequiredRockType,
     int SizeMin,
-    int SizeMax);
+    int SizeMax)
+{
+    public string OreId => ResourceItemDefId;
+}

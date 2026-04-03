@@ -45,6 +45,82 @@ public static class WorldGenAnalyzer
             CornerPathExists: HasCornerToCornerSurfacePath(map));
     }
 
+    public static EmbarkStageReport AnalyzeEmbarkStages(GeneratedEmbarkMap map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+
+        var diagnostics = map.Diagnostics ?? throw new InvalidOperationException(
+            "Embark stage diagnostics are not available for this map.");
+
+        var stageSnapshots = diagnostics.StageSnapshots;
+        var expectedStages = GetExpectedEmbarkStageOrder();
+        var actualStages = stageSnapshots.Select(s => s.StageId).ToArray();
+        var surfaceTileCount = map.Width * map.Height;
+        var undergroundTileCount = surfaceTileCount * Math.Max(0, map.Depth - 1);
+        var mapMetrics = AnalyzeMap(map);
+
+        var inputsSnapshot = stageSnapshots.Count > 0
+            ? stageSnapshots[0]
+            : default;
+        var playabilitySnapshot = stageSnapshots.FirstOrDefault(s => s.StageId == EmbarkGenerationStageId.Playability);
+        var populationSnapshot = stageSnapshots.FirstOrDefault(s => s.StageId == EmbarkGenerationStageId.Population);
+
+        var budgets = new List<DepthBudgetResult>
+        {
+            Budget(
+                "Embark Stage Coverage",
+                stageSnapshots.Count == expectedStages.Length,
+                $"captured {stageSnapshots.Count} stages, expected {expectedStages.Length}"),
+            Budget(
+                "Embark Stage Order",
+                actualStages.SequenceEqual(expectedStages),
+                $"sequence=[{string.Join(", ", actualStages)}], expected=[{string.Join(", ", expectedStages)}]"),
+            Budget(
+                "Embark Inputs Baseline",
+                inputsSnapshot.StageId == EmbarkGenerationStageId.Inputs &&
+                inputsSnapshot.SurfacePassableTiles == surfaceTileCount &&
+                inputsSnapshot.SurfaceWaterTiles == 0 &&
+                inputsSnapshot.SurfaceTreeTiles == 0 &&
+                inputsSnapshot.SurfaceWallTiles == 0 &&
+                inputsSnapshot.UndergroundPassableTiles == undergroundTileCount &&
+                inputsSnapshot.AquiferTiles == 0 &&
+                inputsSnapshot.OreTiles == 0 &&
+                inputsSnapshot.MagmaTiles == 0 &&
+                inputsSnapshot.CreatureSpawnCount == 0,
+                $"surfacePassable={inputsSnapshot.SurfacePassableTiles}/{surfaceTileCount}, undergroundPassable={inputsSnapshot.UndergroundPassableTiles}/{undergroundTileCount}, water={inputsSnapshot.SurfaceWaterTiles}, trees={inputsSnapshot.SurfaceTreeTiles}, walls={inputsSnapshot.SurfaceWallTiles}, aquifer={inputsSnapshot.AquiferTiles}, ore={inputsSnapshot.OreTiles}, magma={inputsSnapshot.MagmaTiles}, spawns={inputsSnapshot.CreatureSpawnCount}"),
+            Budget(
+                "Population Stage Non-Destructive",
+                playabilitySnapshot.StageId == EmbarkGenerationStageId.Playability &&
+                populationSnapshot.StageId == EmbarkGenerationStageId.Population &&
+                populationSnapshot.SurfacePassableTiles == playabilitySnapshot.SurfacePassableTiles &&
+                populationSnapshot.SurfaceWaterTiles == playabilitySnapshot.SurfaceWaterTiles &&
+                populationSnapshot.SurfaceTreeTiles == playabilitySnapshot.SurfaceTreeTiles &&
+                populationSnapshot.SurfaceWallTiles == playabilitySnapshot.SurfaceWallTiles &&
+                populationSnapshot.UndergroundPassableTiles == playabilitySnapshot.UndergroundPassableTiles &&
+                populationSnapshot.AquiferTiles == playabilitySnapshot.AquiferTiles &&
+                populationSnapshot.OreTiles == playabilitySnapshot.OreTiles &&
+                populationSnapshot.MagmaTiles == playabilitySnapshot.MagmaTiles &&
+                populationSnapshot.CreatureSpawnCount >= playabilitySnapshot.CreatureSpawnCount,
+                $"playability spawns={playabilitySnapshot.CreatureSpawnCount}, population spawns={populationSnapshot.CreatureSpawnCount}"),
+            Budget(
+                "Embark Final Snapshot Consistency",
+                populationSnapshot.StageId == EmbarkGenerationStageId.Population &&
+                populationSnapshot.SurfacePassableTiles == mapMetrics.PassableSurfaceTiles &&
+                populationSnapshot.SurfaceWaterTiles == mapMetrics.WaterTiles &&
+                populationSnapshot.SurfaceTreeTiles == mapMetrics.TreeTiles &&
+                populationSnapshot.SurfaceWallTiles == mapMetrics.WallTiles &&
+                populationSnapshot.CreatureSpawnCount == map.CreatureSpawns.Count,
+                $"final snapshot surfacePassable={populationSnapshot.SurfacePassableTiles}, water={populationSnapshot.SurfaceWaterTiles}, trees={populationSnapshot.SurfaceTreeTiles}, walls={populationSnapshot.SurfaceWallTiles}, spawns={populationSnapshot.CreatureSpawnCount}"),
+        };
+
+        return new EmbarkStageReport(
+            Seed: diagnostics.Seed,
+            SurfaceTileCount: surfaceTileCount,
+            UndergroundTileCount: undergroundTileCount,
+            StageSnapshots: stageSnapshots,
+            Budgets: budgets);
+    }
+
     public static LoreMetrics AnalyzeLore(WorldLoreState lore)
     {
         var treaty = 0;
@@ -283,6 +359,9 @@ public static class WorldGenAnalyzer
         var regionSuitability = new List<float>(seedCount * 1024);
         var localTreeDensity = new List<float>(seedCount * sampledRegionsPerWorld);
         var localSuitability = new List<float>(seedCount * sampledRegionsPerWorld);
+        var localEmbarkStageReportCount = 0;
+        var localEmbarkStageDiagnosticsPresentCount = 0;
+        var localEmbarkStagePassCount = 0;
         var localTreeDensityByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
         var localLargestPatchRatioByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
         var worldForestRegionSignals = new List<float>(seedCount * sampledRegionsPerWorld);
@@ -376,6 +455,14 @@ public static class WorldGenAnalyzer
                     region,
                     new RegionCoord(coord.X, coord.Y, centerX, centerY),
                     new LocalGenerationSettings(localWidth, localHeight, localDepth));
+
+                localEmbarkStageReportCount++;
+                if (local.Diagnostics is not null)
+                    localEmbarkStageDiagnosticsPresentCount++;
+
+                var localStageReport = AnalyzeEmbarkStages(local);
+                if (localStageReport.Passed)
+                    localEmbarkStagePassCount++;
 
                 var treeCount = CountSurfaceTiles(local, GeneratedTileDefIds.Tree);
                 var treeDensity = treeCount / (float)(local.Width * local.Height);
@@ -582,6 +669,14 @@ public static class WorldGenAnalyzer
                 "Local Tree Density Bounds",
                 avgLocalTreeDensity >= 0.03f && avgLocalTreeDensity <= 0.62f,
                 $"avg tree density={avgLocalTreeDensity:0.000}, expected 0.030..0.620"),
+            Budget(
+                "Embark Stage Diagnostics Coverage",
+                localEmbarkStageDiagnosticsPresentCount == localEmbarkStageReportCount,
+                $"diagnostics present for {localEmbarkStageDiagnosticsPresentCount}/{localEmbarkStageReportCount} sampled local embarks"),
+            Budget(
+                "Embark Stage Diagnostics Pass",
+                localEmbarkStagePassCount == localEmbarkStageReportCount,
+                $"passing stage reports={localEmbarkStagePassCount}/{localEmbarkStageReportCount}"),
         };
 
         return new WorldPipelineReport(
@@ -620,6 +715,20 @@ public static class WorldGenAnalyzer
 
     private static DepthBudgetResult Budget(string name, bool pass, string detail)
         => new(name, pass, detail);
+
+    private static EmbarkGenerationStageId[] GetExpectedEmbarkStageOrder()
+        =>
+        [
+            EmbarkGenerationStageId.Inputs,
+            EmbarkGenerationStageId.SurfaceShape,
+            EmbarkGenerationStageId.UndergroundStructure,
+            EmbarkGenerationStageId.Hydrology,
+            EmbarkGenerationStageId.Ecology,
+            EmbarkGenerationStageId.HydrologyPolish,
+            EmbarkGenerationStageId.CivilizationOverlay,
+            EmbarkGenerationStageId.Playability,
+            EmbarkGenerationStageId.Population,
+        ];
 
     private static DepthBudgetResult BudgetWithSamples(string name, int sampleCount, bool pass, string detail)
     {

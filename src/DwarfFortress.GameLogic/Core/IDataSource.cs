@@ -13,7 +13,7 @@ public interface IDataSource
     /// Lists all files in a directory with the given extension.
     /// Returns relative paths suitable for passing back to ReadText.
     /// </summary>
-    string[] ListFiles(string directory, string extension = ".json");
+    string[] ListFiles(string directory, string extension = ".json", bool recursive = false);
 
     /// <summary>Returns true if the file at the given path exists.</summary>
     bool Exists(string path);

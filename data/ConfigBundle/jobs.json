@@ -9,6 +9,7 @@
   { "id": "drink",              "displayName": "Drink",             "labor": "misc",         "workTime": 1.0  },
   { "id": "sleep",              "displayName": "Sleep",             "labor": "misc",         "workTime": 8.0  },
   { "id": "idle",               "displayName": "Idle",              "labor": "misc",         "workTime": 2.0  },
+  { "id": "engage_hostile",     "displayName": "Engage Hostile",    "labor": "misc",         "workTime": 1.0  },
   { "id": "train",              "displayName": "Train",             "labor": "military",     "workTime": 5.0  },
   { "id": "patrol",             "displayName": "Patrol",            "labor": "military",     "workTime": 10.0 }
 ]

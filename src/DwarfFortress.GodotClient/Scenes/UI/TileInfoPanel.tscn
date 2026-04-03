@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://Scripts/UI/TileInfoPanel.cs" id="1"]
+[ext_resource type="Script" path="res://Scripts/UI/ItemSelectionList.cs" id="2"]
 
 [node name="TileInfoPanel" type="PanelContainer"]
 custom_minimum_size = Vector2(300, 0)
@@ -12,6 +13,49 @@ theme_override_constants/margin_right = 8
 theme_override_constants/margin_top = 8
 theme_override_constants/margin_bottom = 8
 
-[node name="ContentLabel" type="Label" parent="Margin"]
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+theme_override_constants/separation = 6
+
+[node name="ContentLabel" type="Label" parent="Margin/VBox"]
 unique_name_in_owner = true
 autowrap_mode = 3
+
+[node name="ResourceActionsSeparator" type="HSeparator" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+
+[node name="ResourceActionsHeading" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+text = "Resource Actions"
+theme_override_font_sizes/font_size = 16
+
+[node name="ResourceActionsList" type="ScrollContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(0, 180)
+size_flags_vertical = 3
+script = ExtResource("2")
+
+[node name="Content" type="VBoxContainer" parent="Margin/VBox/ResourceActionsList"]
+theme_override_constants/separation = 6
+
+[node name="ContainerContentsSeparator" type="HSeparator" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+
+[node name="ContainerContentsHeading" type="Label" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+text = "Container Contents"
+theme_override_font_sizes/font_size = 16
+
+[node name="ContainerContentsList" type="ScrollContainer" parent="Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(0, 220)
+size_flags_vertical = 3
+script = ExtResource("2")
+
+[node name="Content" type="VBoxContainer" parent="Margin/VBox/ContainerContentsList"]
+theme_override_constants/separation = 6

@@ -100,11 +100,11 @@ public sealed class DeathSystem : IGameSystem
         corpse.Components.Add(new CorpseComponent(entity.Id, entity.DefId, displayName, e.Cause));
         corpse.Components.Add(new RotComponent());
 
-        if (entity.Components.TryGet<InventoryComponent>() is { } inventory)
-        {
-            foreach (var itemId in inventory.CarriedItemIds.ToArray())
-                itemSystem.StoreItemInItem(itemId, corpse.Id, position.Position);
-        }
+        foreach (var carriedItem in itemSystem.GetItemsCarriedBy(entity.Id).ToArray())
+            itemSystem.StoreItemInItem(carriedItem.Id, corpse.Id, position.Position);
+
+        if (entity is Creature creature)
+            EmitCreatureDeathDrops(creature, itemSystem, corpse, position.Position);
 
         if (entity is Dwarf)
             _ctx.EventBus.Emit(new DwarfDiedEvent(entity.Id, e.Cause));
@@ -124,6 +124,22 @@ public sealed class DeathSystem : IGameSystem
         }
 
         return Humanize(entity.DefId);
+    }
+
+    private void EmitCreatureDeathDrops(Creature creature, ItemSystem itemSystem, Item corpse, Vec3i position)
+    {
+        var def = _ctx?.TryGet<DataManager>()?.Creatures.GetOrNull(creature.DefId);
+        if (def?.DeathDrops is not { Count: > 0 })
+            return;
+
+        foreach (var drop in def.DeathDrops)
+        {
+            for (var i = 0; i < drop.Quantity; i++)
+            {
+                var dropItem = itemSystem.CreateItem(drop.ItemDefId, drop.MaterialId ?? string.Empty, position);
+                itemSystem.StoreItemInItem(dropItem.Id, corpse.Id, position);
+            }
+        }
     }
 
     private static string Humanize(string value)

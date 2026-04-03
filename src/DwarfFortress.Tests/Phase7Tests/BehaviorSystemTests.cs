@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Items;
@@ -124,6 +125,99 @@ public sealed class BehaviorSystemTests
     }
 
     [Fact]
+    public void BehaviorSystem_HostilePursuit_Moves_Hostile_Creature_Toward_Dwarf()
+    {
+        var (sim, _, er, _, _) = TestFixtures.BuildFullSim();
+        var data = sim.Context.Get<DataManager>();
+
+        var dwarf = new Dwarf(er.NextId(), "Target", new Vec3i(10, 10, 0));
+        var goblin = new Creature(er.NextId(), DefIds.Goblin, new Vec3i(18, 10, 0), maxHealth: 60f, isHostile: true);
+        goblin.ApplyBaseStats(data.Creatures.GetOrNull(DefIds.Goblin));
+
+        er.Register(dwarf);
+        er.Register(goblin);
+
+        EntityMovedEvent? movedEvent = null;
+        sim.EventBus.On<EntityMovedEvent>(ev =>
+        {
+            if (ev.EntityId == goblin.Id)
+                movedEvent = ev;
+        });
+
+        sim.Tick(0.1f);
+
+        Assert.NotNull(movedEvent);
+        Assert.True(
+            movedEvent!.Value.NewPos.ManhattanDistanceTo(dwarf.Position.Position) <
+            movedEvent.Value.OldPos.ManhattanDistanceTo(dwarf.Position.Position),
+            $"Expected hostile pursuit to reduce distance to the dwarf. Old={movedEvent.Value.OldPos}, New={movedEvent.Value.NewPos}, Target={dwarf.Position.Position}.");
+    }
+
+    [Fact]
+    public void BehaviorSystem_HostilePursuit_Uses_AuthoredIsHostile_Without_HostileTag()
+    {
+        var ds = new InMemoryDataSource();
+        TestFixtures.AddFullData(ds);
+        ds.AddFile("data/Content/Game/creatures/custom/thorn_stalker/creature.json", """
+            {
+              "id": "thorn_stalker",
+              "displayName": "Thorn Stalker",
+              "tags": ["animal"],
+              "isHostile": true,
+              "maxHealth": 40,
+              "speed": 1.0
+            }
+            """);
+
+        var (sim, _, er, _, _) = TestFixtures.BuildFullSim(ds);
+        var data = sim.Context.Get<DataManager>();
+
+        var dwarf = new Dwarf(er.NextId(), "Target", new Vec3i(10, 10, 0));
+        var stalker = new Creature(er.NextId(), "thorn_stalker", new Vec3i(18, 10, 0), maxHealth: 40f, isHostile: false);
+        stalker.ApplyBaseStats(data.Creatures.GetOrNull("thorn_stalker"));
+
+        er.Register(dwarf);
+        er.Register(stalker);
+
+        EntityMovedEvent? movedEvent = null;
+        sim.EventBus.On<EntityMovedEvent>(ev =>
+        {
+            if (ev.EntityId == stalker.Id)
+                movedEvent = ev;
+        });
+
+        sim.Tick(0.1f);
+
+        Assert.True(stalker.IsHostile);
+        Assert.NotNull(movedEvent);
+        Assert.True(
+            movedEvent!.Value.NewPos.ManhattanDistanceTo(dwarf.Position.Position) <
+            movedEvent.Value.OldPos.ManhattanDistanceTo(dwarf.Position.Position),
+            $"Expected authored hostility to trigger pursuit without the hostile tag. Old={movedEvent.Value.OldPos}, New={movedEvent.Value.NewPos}, Target={dwarf.Position.Position}.");
+    }
+
+    [Fact]
+    public void BehaviorSystem_HostilePursuit_Keeps_Hauled_Item_In_Sync()
+    {
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
+        var data = sim.Context.Get<DataManager>();
+
+        var dwarf = new Dwarf(er.NextId(), "Target", new Vec3i(10, 10, 0));
+        var goblin = new Creature(er.NextId(), DefIds.Goblin, new Vec3i(18, 10, 0), maxHealth: 60f, isHostile: true);
+        goblin.ApplyBaseStats(data.Creatures.GetOrNull(DefIds.Goblin));
+
+        er.Register(dwarf);
+        er.Register(goblin);
+
+        var hauledLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, goblin.Position.Position);
+        Assert.True(items.PickUpItem(hauledLog.Id, goblin.Id, goblin.Position.Position, ItemCarryMode.Hauling));
+
+        sim.Tick(0.1f);
+
+        Assert.Equal(goblin.Position.Position, hauledLog.Position.Position);
+    }
+
+    [Fact]
     public void BehaviorSystem_Grooming_Does_Not_Crash_With_Coated_BodyPart()
     {
         var (sim, _, er, _, _) = TestFixtures.BuildFullSim();
@@ -148,6 +242,51 @@ public sealed class BehaviorSystemTests
             for (int tick = 0; tick < 800; tick++) sim.Tick(0.1f);
         });
         Assert.Null(ex);
+    }
+
+    [Fact]
+    public void BehaviorSystem_Grooming_Uses_AuthoredCanGroom_Without_Tag_Or_FootParts()
+    {
+        var ds = new InMemoryDataSource();
+        TestFixtures.AddFullData(ds);
+        ds.AddFile("data/Content/Game/creatures/custom/licker_beast/creature.json", """
+            {
+              "id": "licker_beast",
+              "displayName": "Licker Beast",
+              "tags": ["animal"],
+              "canGroom": true,
+              "maxHealth": 35,
+              "speed": 1.0
+            }
+            """);
+
+        var (sim, _, er, _, _) = TestFixtures.BuildFullSim(ds);
+        var data = sim.Context.Get<DataManager>();
+
+        var creature = new Creature(er.NextId(), "licker_beast", new Vec3i(10, 10, 0), maxHealth: 35f, isHostile: false);
+        creature.ApplyBaseStats(data.Creatures.GetOrNull("licker_beast"));
+
+        creature.Components.Remove<BodyPartComponent>();
+        var bodyParts = new BodyPartComponent();
+        bodyParts.Initialize(new[] { BodyPartIds.Head });
+        var head = bodyParts.GetOrCreate(BodyPartIds.Head);
+        head.CoatingMaterialId = "mud";
+        head.CoatingAmount = 0.8f;
+        creature.Components.Add(bodyParts);
+
+        SubstanceIngestedEvent? ingested = null;
+        sim.EventBus.On<SubstanceIngestedEvent>(ev =>
+        {
+            if (ev.EntityId == creature.Id)
+                ingested = ev;
+        });
+
+        er.Register(creature);
+        sim.Tick(0.1f);
+
+        Assert.NotNull(ingested);
+        Assert.Equal(SubstanceIds.Mud, ingested!.Value.SubstanceId);
+        Assert.False(creature.BodyParts.HasCoating(BodyPartIds.Head));
     }
 
     [Fact]
@@ -190,22 +329,51 @@ public sealed class BehaviorSystemTests
     }
 
     [Fact]
-    public void BehaviorSystem_Wander_UnknownFishId_UsesAquaticFallbackTraversal()
+    public void BehaviorSystem_Wander_UnknownCreatureWithoutDef_DoesNotAssumeAquaticTraversal()
     {
         var (sim, map, er, _, _) = TestFixtures.BuildFullSim();
         var center = new Vec3i(15, 15, 0);
         CarveDeepWaterPatch(map, center, radius: 2);
 
-        // Def intentionally missing from creatures.json to validate ID fallback heuristic.
+        // Def intentionally missing from shared content: traversal should no longer infer aquatic behavior from the id.
         var unknownFish = new Creature(er.NextId(), "river_fish", center, maxHealth: 40f, isHostile: false);
         er.Register(unknownFish);
+
+        for (var tick = 0; tick < 200; tick++)
+            sim.Tick(0.1f);
+
+        Assert.Equal(center, unknownFish.Position.Position);
+    }
+
+    [Fact]
+    public void BehaviorSystem_Wander_Uses_AuthoredAquaticMovementMode_Without_AquaticTags()
+    {
+        var ds = new InMemoryDataSource();
+        TestFixtures.AddFullData(ds);
+        ds.AddFile("data/Content/Game/creatures/custom/moss_orb/creature.json", """
+            {
+              "id": "moss_orb",
+              "displayName": "Moss Orb",
+              "tags": ["animal"],
+              "movementMode": "aquatic",
+              "maxHealth": 40,
+              "speed": 1.0
+            }
+            """);
+
+        var (sim, map, er, _, _) = TestFixtures.BuildFullSim(ds);
+        var center = new Vec3i(15, 15, 0);
+        CarveDeepWaterPatch(map, center, radius: 2);
+
+        var orb = new Creature(er.NextId(), "moss_orb", center, maxHealth: 40f, isHostile: false);
+        er.Register(orb);
 
         for (var tick = 0; tick < 200; tick++)
         {
             sim.Tick(0.1f);
             Assert.True(
-                map.IsSwimmable(unknownFish.Position.Position),
-                $"Expected unknown fish-like creature to stay in swimmable water, found at {unknownFish.Position.Position}.");
+                map.IsSwimmable(orb.Position.Position),
+                $"Expected authored aquatic movement mode to keep the creature in swimmable water, found at {orb.Position.Position}.");
         }
     }
 
@@ -260,6 +428,92 @@ public sealed class BehaviorSystemTests
 
         Assert.InRange(carp.Needs.Thirst.Level, 0.8f, 1f);
         Assert.True(map.IsSwimmable(carp.Position.Position));
+    }
+
+    [Fact]
+    public void BehaviorSystem_Sleeping_Creature_Does_Not_Move_Until_It_Wakes()
+    {
+        var (sim, map, er, _, _) = TestFixtures.BuildFullSim();
+        var center = new Vec3i(16, 16, 0);
+        CarveDeepWaterPatch(map, center, radius: 2);
+
+        var carp = new Creature(er.NextId(), DefIds.GiantCarp, center, maxHealth: 55f, isHostile: false);
+        carp.Needs.Sleep.SetLevel(0.01f);
+        er.Register(carp);
+
+        var sleepStarted = false;
+        sim.EventBus.On<EntitySleepEvent>(ev =>
+        {
+            if (ev.EntityId == carp.Id)
+                sleepStarted = true;
+        });
+
+        for (var tick = 0; tick < 150 && !sleepStarted; tick++)
+            sim.Tick(0.1f);
+
+        Assert.True(sleepStarted);
+
+        var sleepingPos = carp.Position.Position;
+        for (var tick = 0; tick < 50; tick++)
+        {
+            sim.Tick(0.1f);
+            Assert.Equal(sleepingPos, carp.Position.Position);
+        }
+    }
+
+    [Fact]
+    public void BehaviorSystem_Sleeping_Dog_Stays_Still_Until_Wake_And_Clears_Sleep_Emote_Before_Moving()
+    {
+        var (sim, _, er, _, _) = TestFixtures.BuildFullSim();
+
+        var dog = new Creature(er.NextId(), DefIds.Dog, new Vec3i(16, 16, 0), maxHealth: 30f, isHostile: false);
+        dog.Needs.Sleep.SetLevel(0.01f);
+        er.Register(dog);
+
+        var sleepStarted = false;
+        var wokeUp = false;
+        sim.EventBus.On<EntitySleepEvent>(ev =>
+        {
+            if (ev.EntityId == dog.Id)
+                sleepStarted = true;
+        });
+        sim.EventBus.On<EntityWakeEvent>(ev =>
+        {
+            if (ev.EntityId == dog.Id)
+                wokeUp = true;
+        });
+
+        for (var tick = 0; tick < 150 && !sleepStarted; tick++)
+            sim.Tick(0.1f);
+
+        Assert.True(sleepStarted);
+
+        var sleepingPos = dog.Position.Position;
+        for (var tick = 0; tick < 150 && !wokeUp; tick++)
+        {
+            sim.Tick(0.1f);
+            if (wokeUp)
+                break;
+
+            Assert.Equal(sleepingPos, dog.Position.Position);
+        }
+
+        Assert.True(wokeUp);
+        Assert.NotEqual(EmoteIds.Sleep, dog.Emotes.CurrentEmote?.Id);
+
+        var wakePos = dog.Position.Position;
+
+        for (var tick = 0; tick < 400; tick++)
+        {
+            sim.Tick(0.1f);
+            if (dog.Position.Position == wakePos)
+                continue;
+
+            Assert.NotEqual(EmoteIds.Sleep, dog.Emotes.CurrentEmote?.Id);
+            return;
+        }
+
+        Assert.True(false, "Expected the dog to resume autonomous movement after waking.");
     }
 
     [Fact]
@@ -328,6 +582,49 @@ public sealed class BehaviorSystemTests
 
         Assert.InRange(elk.Needs.Hunger.Level, 0.75f, 1f);
         Assert.Equal(0, map.GetTile(plantPos).PlantYieldLevel);
+    }
+
+    [Fact]
+    public void BehaviorSystem_EatFood_Uses_AuthoredDiet_Without_DietTags()
+    {
+        var ds = new InMemoryDataSource();
+        TestFixtures.AddFullData(ds);
+        ds.AddFile("data/Content/Game/creatures/custom/moss_beast/creature.json", """
+            {
+              "id": "moss_beast",
+              "displayName": "Moss Beast",
+              "tags": ["animal"],
+              "diet": "herbivore",
+              "maxHealth": 70,
+              "speed": 1.0
+            }
+            """);
+
+        var (sim, map, er, _, _) = TestFixtures.BuildFullSim(ds);
+        var plantPos = new Vec3i(16, 10, 0);
+        var tile = map.GetTile(plantPos);
+        tile.TileDefId = TileDefIds.Grass;
+        tile.IsPassable = true;
+        tile.PlantDefId = "berry_bush";
+        tile.PlantGrowthStage = PlantGrowthStages.Mature;
+        tile.PlantYieldLevel = 1;
+        map.SetTile(plantPos, tile);
+
+        var beast = new Creature(er.NextId(), "moss_beast", new Vec3i(8, 10, 0), maxHealth: 70f, isHostile: false);
+        beast.Needs.Hunger.SetLevel(0.01f);
+        er.Register(beast);
+
+        for (var tick = 0; tick < 1200; tick++)
+        {
+            sim.Tick(0.1f);
+            if (beast.Needs.Hunger.Level >= 0.75f)
+                break;
+        }
+
+        Assert.InRange(beast.Needs.Hunger.Level, 0.75f, 1f);
+        Assert.True(
+            beast.Position.Position == plantPos || beast.Position.Position.ManhattanDistanceTo(plantPos) <= 1,
+            $"Expected authored herbivore diet to pull the creature toward edible terrain. Beast={beast.Position.Position}, Target={plantPos}.");
     }
 
     private static void CarveDeepWaterPatch(WorldMap map, Vec3i center, int radius)

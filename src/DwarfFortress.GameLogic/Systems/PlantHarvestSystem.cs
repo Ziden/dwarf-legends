@@ -17,8 +17,15 @@ public sealed class PlantHarvestSystem : IGameSystem
 
     private GameContext? _ctx;
     private float _scanTimer;
+    private readonly Queue<Vec3i> _harvestCandidates = new();
+    private readonly HashSet<Vec3i> _queuedHarvestCandidates = new();
 
-    public void Initialize(GameContext ctx) => _ctx = ctx;
+    public void Initialize(GameContext ctx)
+    {
+        _ctx = ctx;
+        ctx.EventBus.On<TileChangedEvent>(OnTileChanged);
+        RebuildHarvestCandidates();
+    }
 
     public void Tick(float delta)
     {
@@ -43,13 +50,14 @@ public sealed class PlantHarvestSystem : IGameSystem
         if (queuedTargets.Count >= MaxQueuedHarvestJobs)
             return;
 
-        for (var x = 0; x < map.Width; x++)
-        for (var y = 0; y < map.Height; y++)
+        while (_harvestCandidates.Count > 0)
         {
             if (queuedTargets.Count >= MaxQueuedHarvestJobs)
                 return;
 
-            var pos = new Vec3i(x, y, 0);
+            var pos = _harvestCandidates.Dequeue();
+            _queuedHarvestCandidates.Remove(pos);
+
             if (queuedTargets.Contains(pos))
                 continue;
             if (!PlantHarvesting.TryGetHarvestablePlant(map, data, pos, out _))
@@ -63,5 +71,54 @@ public sealed class PlantHarvestSystem : IGameSystem
     }
 
     public void OnSave(SaveWriter w) { }
-    public void OnLoad(SaveReader r) => _scanTimer = 0f;
+    public void OnLoad(SaveReader r)
+    {
+        _scanTimer = 0f;
+        RebuildHarvestCandidates();
+    }
+
+    private void OnTileChanged(TileChangedEvent e)
+    {
+        var ctx = _ctx;
+        if (ctx is null)
+            return;
+
+        var data = ctx.TryGet<Data.DataManager>();
+        if (data is null)
+            return;
+
+        var wasHarvestable = PlantHarvesting.TryGetHarvestablePlant(e.OldTile, data, out _);
+        var isHarvestable = PlantHarvesting.TryGetHarvestablePlant(e.NewTile, data, out _);
+        if (!wasHarvestable && isHarvestable)
+            EnqueueHarvestCandidate(e.Pos);
+    }
+
+    private void RebuildHarvestCandidates()
+    {
+        _harvestCandidates.Clear();
+        _queuedHarvestCandidates.Clear();
+
+        var ctx = _ctx;
+        if (ctx is null)
+            return;
+
+        var map = ctx.TryGet<WorldMap>();
+        var data = ctx.TryGet<Data.DataManager>();
+        if (map is null || data is null || map.Depth <= 0)
+            return;
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            var pos = new Vec3i(x, y, 0);
+            if (PlantHarvesting.TryGetHarvestablePlant(map, data, pos, out _))
+                EnqueueHarvestCandidate(pos);
+        }
+    }
+
+    private void EnqueueHarvestCandidate(Vec3i pos)
+    {
+        if (_queuedHarvestCandidates.Add(pos))
+            _harvestCandidates.Enqueue(pos);
+    }
 }

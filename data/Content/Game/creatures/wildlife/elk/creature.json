@@ -1,0 +1,23 @@
+{
+  "id": "elk",
+  "displayName": "Elk",
+  "tags": ["animal", "grazer", "herbivore"],
+  "diet": "herbivore",
+  "maxHealth": 85,
+  "speed": 1.05,
+  "visuals": {
+    "proceduralProfile": "elk",
+    "waterEffectStyle": "large",
+    "viewerColor": "#A86B38"
+  },
+  "ecology": {
+    "surfaceWildlife": [
+      { "biomes": ["temperate_plains", "conifer_forest", "boreal_forest", "highland"], "weight": 0.34, "minGroup": 1, "maxGroup": 3, "avoidEmbarkCenter": false }
+    ]
+  },
+  "deathDrops": [
+    { "itemDefId": "raw_meat", "quantity": 2 },
+    { "itemDefId": "leather", "quantity": 1 },
+    { "itemDefId": "bone", "quantity": 2 }
+  ]
+}

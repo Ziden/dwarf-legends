@@ -1,21 +1,30 @@
+using System;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
+
+namespace DwarfFortress.GodotClient.UI;
+
 
 /// <summary>Top bar: game clock + current mode + hint text. Speed controls live in ActionBar.</summary>
 public partial class TopBar : PanelContainer
 {
     private Label? _timeLabel;
     private Label? _hintLabel;
+    private Button? _debugButton;
+
+    public Action? OnDebugPressed { get; set; }
 
     public override void _Ready()
     {
         _timeLabel = GetNode<Label>("%TimeLabel");
         _hintLabel = GetNode<Label>("%HintLabel");
+        _debugButton = GetNode<Button>("%DebugButton");
+        _debugButton.Pressed += () => OnDebugPressed?.Invoke();
     }
 
     public void Refresh(GameTimeView time, InputMode mode, string hint = "")
     {
-        _timeLabel!.Text = $"Year {time.Year}  ·  {time.Season}  ·  " +
+        _timeLabel!.Text = $"Year {time.Year}  Â·  {time.Season}  Â·  " +
                            $"Month {time.Month}, Day {time.Day}   {time.Hour:D2}:00";
 
         var modeText = UiText.ModeLabel(mode);

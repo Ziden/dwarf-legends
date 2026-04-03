@@ -8,18 +8,22 @@ namespace DwarfFortress.GameLogic.Systems;
 /// <summary>
 /// Incremental spatial index for live gameplay queries. This is distinct from SaveGameSystem:
 /// it is updated by world events and movement events instead of being rebuilt every frame.
+///
+/// Optimization: Uses HashSet instead of List for O(1) contains/add/remove operations.
 /// </summary>
 public sealed class SpatialIndexSystem : IGameSystem
 {
     private static readonly int[] NoIds = [];
 
-    private readonly Dictionary<Vec3i, List<int>> _dwarvesByTile = new();
-    private readonly Dictionary<Vec3i, List<int>> _creaturesByTile = new();
-    private readonly Dictionary<Vec3i, List<int>> _itemsByTile = new();
+    private readonly Dictionary<Vec3i, HashSet<int>> _dwarvesByTile = new();
+    private readonly Dictionary<Vec3i, HashSet<int>> _creaturesByTile = new();
+    private readonly Dictionary<Vec3i, HashSet<int>> _containersByTile = new();
+    private readonly Dictionary<Vec3i, HashSet<int>> _itemsByTile = new();
     private readonly Dictionary<Vec3i, int> _buildingByTile = new();
 
     private readonly Dictionary<int, Vec3i> _dwarfPositions = new();
     private readonly Dictionary<int, Vec3i> _creaturePositions = new();
+    private readonly Dictionary<int, Vec3i> _containerPositions = new();
     private readonly Dictionary<int, Vec3i> _itemPositions = new();
 
     private GameContext? _ctx;
@@ -50,26 +54,43 @@ public sealed class SpatialIndexSystem : IGameSystem
     public void OnSave(SaveWriter w) { }
     public void OnLoad(SaveReader r) => Rebuild();
 
-    public IReadOnlyList<int> GetDwarvesAt(Vec3i pos)
-        => _dwarvesByTile.TryGetValue(pos, out var ids) ? ids : NoIds;
+    public IReadOnlyCollection<int> GetDwarvesAt(Vec3i pos)
+        => _dwarvesByTile.TryGetValue(pos, out var ids) ? ids : System.Array.Empty<int>();
 
-    public IReadOnlyList<int> GetCreaturesAt(Vec3i pos)
-        => _creaturesByTile.TryGetValue(pos, out var ids) ? ids : NoIds;
+    public IReadOnlyCollection<int> GetCreaturesAt(Vec3i pos)
+        => _creaturesByTile.TryGetValue(pos, out var ids) ? ids : System.Array.Empty<int>();
 
-    public IReadOnlyList<int> GetItemsAt(Vec3i pos)
-        => _itemsByTile.TryGetValue(pos, out var ids) ? ids : NoIds;
+    public IReadOnlyCollection<int> GetContainersAt(Vec3i pos)
+        => _containersByTile.TryGetValue(pos, out var ids) ? ids : System.Array.Empty<int>();
+
+    public IReadOnlyCollection<int> GetItemsAt(Vec3i pos)
+        => _itemsByTile.TryGetValue(pos, out var ids) ? ids : System.Array.Empty<int>();
 
     public int? GetBuildingAt(Vec3i pos)
         => _buildingByTile.TryGetValue(pos, out var buildingId) ? buildingId : null;
+
+    public void CollectDwarvesInBounds(int z, int minX, int minY, int maxX, int maxY, List<int> results)
+        => CollectIdsInBounds(_dwarvesByTile, z, minX, minY, maxX, maxY, results);
+
+    public void CollectCreaturesInBounds(int z, int minX, int minY, int maxX, int maxY, List<int> results)
+        => CollectIdsInBounds(_creaturesByTile, z, minX, minY, maxX, maxY, results);
+
+    public void CollectContainersInBounds(int z, int minX, int minY, int maxX, int maxY, List<int> results)
+        => CollectIdsInBounds(_containersByTile, z, minX, minY, maxX, maxY, results);
+
+    public void CollectItemsInBounds(int z, int minX, int minY, int maxX, int maxY, List<int> results)
+        => CollectIdsInBounds(_itemsByTile, z, minX, minY, maxX, maxY, results);
 
     private void Rebuild()
     {
         _dwarvesByTile.Clear();
         _creaturesByTile.Clear();
+        _containersByTile.Clear();
         _itemsByTile.Clear();
         _buildingByTile.Clear();
         _dwarfPositions.Clear();
         _creaturePositions.Clear();
+        _containerPositions.Clear();
         _itemPositions.Clear();
 
         if (_ctx is null) return;
@@ -80,6 +101,19 @@ public sealed class SpatialIndexSystem : IGameSystem
 
         foreach (var creature in registry.GetAlive<Creature>())
             AddEntity(_creaturesByTile, _creaturePositions, creature.Id, creature.Position.Position);
+
+        foreach (var entity in registry.GetAlive<Entity>())
+        {
+            if (entity is Item)
+                continue;
+
+            var position = entity.Components.TryGet<Entities.Components.PositionComponent>();
+            var container = entity.Components.TryGet<Entities.Components.ContainerComponent>();
+            if (position is null || container is null)
+                continue;
+
+            AddEntity(_containersByTile, _containerPositions, entity.Id, position.Position);
+        }
 
         var itemSystem = _ctx.TryGet<ItemSystem>();
         if (itemSystem is not null)
@@ -104,6 +138,12 @@ public sealed class SpatialIndexSystem : IGameSystem
             case Creature creature:
                 AddEntity(_creaturesByTile, _creaturePositions, creature.Id, creature.Position.Position);
                 break;
+            case { } occupant when occupant is not Item:
+                var position = occupant.Components.TryGet<Entities.Components.PositionComponent>();
+                var container = occupant.Components.TryGet<Entities.Components.ContainerComponent>();
+                if (position is not null && container is not null)
+                    AddEntity(_containersByTile, _containerPositions, occupant.Id, position.Position);
+                break;
         }
     }
 
@@ -114,6 +154,9 @@ public sealed class SpatialIndexSystem : IGameSystem
 
         if (_creaturePositions.TryGetValue(e.EntityId, out var creaturePos))
             RemoveEntity(_creaturesByTile, _creaturePositions, e.EntityId, creaturePos);
+
+        if (_containerPositions.TryGetValue(e.EntityId, out var containerPos))
+            RemoveEntity(_containersByTile, _containerPositions, e.EntityId, containerPos);
     }
 
     private void OnEntityMoved(EntityMovedEvent e)
@@ -125,7 +168,13 @@ public sealed class SpatialIndexSystem : IGameSystem
         }
 
         if (_creaturePositions.ContainsKey(e.EntityId))
+        {
             MoveEntity(_creaturesByTile, _creaturePositions, e.EntityId, e.OldPos, e.NewPos);
+            return;
+        }
+
+        if (_containerPositions.ContainsKey(e.EntityId))
+            MoveEntity(_containersByTile, _containerPositions, e.EntityId, e.OldPos, e.NewPos);
     }
 
     private void OnItemCreated(ItemCreatedEvent e)
@@ -181,18 +230,17 @@ public sealed class SpatialIndexSystem : IGameSystem
         }
     }
 
-    private static void AddEntity(Dictionary<Vec3i, List<int>> byTile, Dictionary<int, Vec3i> positions, int id, Vec3i pos)
+    private static void AddEntity(Dictionary<Vec3i, HashSet<int>> byTile, Dictionary<int, Vec3i> positions, int id, Vec3i pos)
     {
         if (!byTile.TryGetValue(pos, out var ids))
-            byTile[pos] = ids = new List<int>();
+            byTile[pos] = ids = new HashSet<int>();
 
-        if (!ids.Contains(id))
-            ids.Add(id);
+        ids.Add(id); // HashSet.Add() is no-op if already present — O(1) instead of List's O(n)
 
         positions[id] = pos;
     }
 
-    private static void RemoveEntity(Dictionary<Vec3i, List<int>> byTile, Dictionary<int, Vec3i> positions, int id, Vec3i pos)
+    private static void RemoveEntity(Dictionary<Vec3i, HashSet<int>> byTile, Dictionary<int, Vec3i> positions, int id, Vec3i pos)
     {
         if (byTile.TryGetValue(pos, out var ids))
         {
@@ -204,10 +252,33 @@ public sealed class SpatialIndexSystem : IGameSystem
         positions.Remove(id);
     }
 
-    private static void MoveEntity(Dictionary<Vec3i, List<int>> byTile, Dictionary<int, Vec3i> positions, int id, Vec3i oldPos, Vec3i newPos)
+    private static void MoveEntity(Dictionary<Vec3i, HashSet<int>> byTile, Dictionary<int, Vec3i> positions, int id, Vec3i oldPos, Vec3i newPos)
     {
         if (oldPos == newPos) return;
         RemoveEntity(byTile, positions, id, oldPos);
         AddEntity(byTile, positions, id, newPos);
+    }
+
+    private static void CollectIdsInBounds(
+        Dictionary<Vec3i, HashSet<int>> byTile,
+        int z,
+        int minX,
+        int minY,
+        int maxX,
+        int maxY,
+        List<int> results)
+    {
+        results.Clear();
+        if (maxX < minX || maxY < minY)
+            return;
+
+        for (var y = minY; y <= maxY; y++)
+        for (var x = minX; x <= maxX; x++)
+        {
+            if (!byTile.TryGetValue(new Vec3i(x, y, z), out var ids))
+                continue;
+
+            results.AddRange(ids);
+        }
     }
 }

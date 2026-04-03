@@ -64,10 +64,12 @@ public sealed class RecipeSystem : IGameSystem
     private readonly Dictionary<int, ProductionQueue> _queues = new();
 
     private GameContext? _ctx;
+    private SimulationProfiler? _profiler;
 
     public void Initialize(GameContext ctx)
     {
         _ctx = ctx;
+        _profiler = ctx.Profiler;
         ctx.Commands.Register<SetProductionOrderCommand>(OnSetProductionOrder);
         ctx.Commands.Register<CancelProductionOrderCommand>(OnCancelProductionOrder);
         ctx.EventBus.On<Jobs.JobCompletedEvent>(OnJobCompleted);
@@ -80,11 +82,13 @@ public sealed class RecipeSystem : IGameSystem
         var itemSystem = _ctx!.TryGet<ItemSystem>();
         if (jobSystem is null || itemSystem is null) return;
 
+        using var queueScanScope = _profiler?.Measure("scan_workshop_queues") ?? default;
         foreach (var (workshopId, queue) in _queues)
         {
             var order = queue.Peek();
             if (order is null) continue;
 
+            using var workshopScope = _profiler?.Measure($"workshop:{workshopId}") ?? default;
             var craftJobs = jobSystem.GetAllJobs()
                 .Where(j => j.JobDefId == Jobs.JobDefIds.Craft && j.EntityId == workshopId)
                 .ToList();
@@ -97,6 +101,7 @@ public sealed class RecipeSystem : IGameSystem
 
             if (craftJobs.Count == 0)
             {
+                using var createJobScope = _profiler?.Measure("create_craft_job") ?? default;
                 var buildingSystem = _ctx!.TryGet<BuildingSystem>();
                 var origin = buildingSystem?.GetById(workshopId)?.Origin;
                 if (origin is null)
@@ -204,18 +209,25 @@ public sealed class RecipeSystem : IGameSystem
         if (!dm.Recipes.Contains(order.RecipeId)) return false;
 
         var recipe = dm.Recipes.Get(order.RecipeId);
-        if (!ConsumeInputs(recipe, workshopId, itemSystem, reservedItemIds)) return false;
+        if (itemSystem is null ||
+            !TryResolveRecipe(recipe, itemSystem, dm, reservedItemIds, out var matchedInputs, out var resolvedOutputs))
+        {
+            return false;
+        }
+
+        foreach (var input in matchedInputs)
+            itemSystem.DestroyItem(input.Id);
 
         // Spawn outputs at the workshop's world position
         var buildingSystem  = _ctx!.TryGet<BuildingSystem>();
         var workshopOrigin  = buildingSystem?.GetById(workshopId)?.Origin
                               ?? dwarf.Components.Get<PositionComponent>().Position;
         var outputIds = new List<int>();
-        foreach (var output in recipe.Outputs)
+        foreach (var output in resolvedOutputs)
             for (int i = 0; i < output.Quantity; i++)
             {
-                var item = itemSystem?.CreateItem(output.ItemDefId, "unknown", workshopOrigin);
-                if (item is not null) outputIds.Add(item.Id);
+                var item = itemSystem.CreateItem(output.ItemDefId, output.MaterialId, workshopOrigin);
+                outputIds.Add(item.Id);
             }
 
         queue.Decrement();
@@ -223,12 +235,23 @@ public sealed class RecipeSystem : IGameSystem
         return true;
     }
 
-    private bool ConsumeInputs(RecipeDef recipe, int workshopId, ItemSystem? itemSystem, IReadOnlyList<int> reservedItemIds)
+    private static bool TryResolveRecipe(
+        RecipeDef recipe,
+        ItemSystem itemSystem,
+        DataManager data,
+        IReadOnlyList<int> reservedItemIds,
+        out List<Item> matchedInputs,
+        out List<ResolvedRecipeOutput> resolvedOutputs)
     {
-        if (itemSystem is null) return false;
-        if (reservedItemIds.Count > 0)
-            return itemSystem.TryConsumeReservedInputs(recipe.Inputs, reservedItemIds);
-        return itemSystem.TryConsumeInputs(recipe.Inputs);
+        var candidateItems = reservedItemIds.Count > 0
+            ? reservedItemIds
+                .Select(id => itemSystem.TryGetItem(id, out var item) ? item : null)
+                .Where(item => item is not null)
+                .Select(item => item!)
+                .ToList()
+            : itemSystem.GetUsableItems().ToList();
+
+        return RecipeResolver.TryMatchRecipe(data, recipe, candidateItems, out matchedInputs, out resolvedOutputs);
     }
 
     private bool CanStartOrder(ProductionQueue.Order order, ItemSystem? itemSystem)
@@ -240,6 +263,6 @@ public sealed class RecipeSystem : IGameSystem
             return false;
 
         var recipe = dm.Recipes.Get(order.RecipeId);
-        return itemSystem.CanFulfillInputs(recipe.Inputs);
+        return itemSystem.CanFulfillRecipe(recipe);
     }
 }

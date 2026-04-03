@@ -8,6 +8,7 @@ using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
+using DwarfFortress.GameLogic.Tests.Fakes;
 using DwarfFortress.GameLogic.World;
 using Xunit;
 
@@ -17,7 +18,7 @@ namespace DwarfFortress.GameLogic.Tests.Phase7Tests;
 // WorldLore dynamic events
 // ─────────────────────────────────────────────────────────────────────────────
 
-public sealed class WorldLoreDynamicTests
+public sealed class WorldMacroStateDynamicTests
 {
     [Fact]
     public void RecipeCraftedEvent_Increases_Prosperity()
@@ -25,14 +26,15 @@ public sealed class WorldLoreDynamicTests
         var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
         sim.Context.Commands.Dispatch(new GenerateWorldCommand(Seed: 1, Width: 32, Height: 32, Depth: 4));
 
-        var lore = sim.Context.Get<WorldLoreSystem>();
-        float before = lore.Current!.Prosperity;
+        var macroState = sim.Context.Get<WorldMacroStateService>();
+        macroState.Current!.Prosperity = 0.25f;
+        float before = macroState.Current!.Prosperity;
 
         // Fire several craft events to accumulate measurable change
         for (int i = 0; i < 10; i++)
             sim.Context.EventBus.Emit(new RecipeCraftedEvent(WorkshopId: 0, DwarfId: 1, RecipeId: "test", OutputItemIds: []));
 
-        Assert.True(lore.Current!.Prosperity > before,
+        Assert.True(macroState.Current!.Prosperity > before,
             "Prosperity should increase after RecipeCraftedEvents.");
     }
 
@@ -42,13 +44,14 @@ public sealed class WorldLoreDynamicTests
         var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
         sim.Context.Commands.Dispatch(new GenerateWorldCommand(Seed: 2, Width: 32, Height: 32, Depth: 4));
 
-        var lore = sim.Context.Get<WorldLoreSystem>();
-        float before = lore.Current!.Prosperity;
+        var macroState = sim.Context.Get<WorldMacroStateService>();
+        macroState.Current!.Prosperity = 0.25f;
+        float before = macroState.Current!.Prosperity;
 
         for (int i = 0; i < 10; i++)
             sim.Context.EventBus.Emit(new ItemStoredEvent(ItemId: i, StockpileId: 0, SlotPos: default));
 
-        Assert.True(lore.Current!.Prosperity > before,
+        Assert.True(macroState.Current!.Prosperity > before,
             "Prosperity should increase after ItemStoredEvents.");
     }
 
@@ -58,34 +61,34 @@ public sealed class WorldLoreDynamicTests
         var (sim, _, er, _, _) = TestFixtures.BuildFullSim();
         sim.Context.Commands.Dispatch(new GenerateWorldCommand(Seed: 3, Width: 32, Height: 32, Depth: 4));
 
-        var lore = sim.Context.Get<WorldLoreSystem>();
+        var macroState = sim.Context.Get<WorldMacroStateService>();
         // Ensure non-zero starting Threat
-        lore.Current!.Threat = 0.5f;
+        macroState.Current!.Threat = 0.5f;
 
         var creature = new Creature(er.NextId(), "goblin", new Vec3i(5, 5, 0), maxHealth: 50f, isHostile: true);
         er.Register(creature);
-        float before = lore.Current!.Threat;
+        float before = macroState.Current!.Threat;
 
         sim.Context.EventBus.Emit(new EntityKilledEvent(EntityId: creature.Id, Cause: "combat"));
 
-        Assert.True(lore.Current!.Threat < before,
+        Assert.True(macroState.Current!.Threat < before,
             "Threat should decrease when a hostile creature is killed.");
     }
 
     [Fact]
-    public void WorldLoreSystem_Threat_Decays_In_Tick()
+    public void WorldMacroStateService_Threat_Decays_In_Tick()
     {
         var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
         sim.Context.Commands.Dispatch(new GenerateWorldCommand(Seed: 4, Width: 32, Height: 32, Depth: 4));
 
-        var lore = sim.Context.Get<WorldLoreSystem>();
-        lore.Current!.Threat = 0.8f;
+        var macroState = sim.Context.Get<WorldMacroStateService>();
+        macroState.Current!.Threat = 0.8f;
 
         // Tick for a significant amount (10000 seconds worth of delta)
         for (int i = 0; i < 100; i++)
             sim.Tick(100f);
 
-        Assert.True(lore.Current!.Threat < 0.8f,
+        Assert.True(macroState.Current!.Threat < 0.8f,
             "Threat should decay naturally over time via Tick.");
     }
 }
@@ -215,6 +218,59 @@ public sealed class NutritionSystemTests
         Assert.NotNull(fired);
         Assert.Equal(dwarf.Id, fired!.Value.DwarfId);
     }
+
+        [Fact]
+        public void NutritionSystem_CreditMeal_Uses_Configured_Appetite_Effects()
+        {
+                var ds = new InMemoryDataSource();
+                TestFixtures.AddFullData(ds);
+                ds.AddFile("data/ConfigBundle/dwarf_attributes.json",
+                        """
+                        {
+                            "appetite": {
+                                "id": "appetite",
+                                "displayName": "Appetite",
+                                "description": "Test appetite config.",
+                                "category": "physiological",
+                                "tags": ["food"],
+                                "effectCurves": {
+                                    "3": { "effects": {} },
+                                    "4": { "effects": { "nutrient_credit_multiplier": 2.0, "body_fat_gain_multiplier": 3.0 } }
+                                }
+                            }
+                        }
+                        """);
+
+                var sim = TestFixtures.CreateSimulation(
+                        new TestLogger(),
+                        ds,
+                        new DataManager(),
+                        new EntityRegistry(),
+                        new NutritionSystem());
+
+                var registry = sim.Context.Get<EntityRegistry>();
+                var dwarf = new Dwarf(registry.NextId(), "Vorob", new Vec3i(0, 0, 0));
+                dwarf.Attributes.SetLevel(AttributeIds.Appetite, 4);
+                dwarf.Nutrition.Decay(10_000f);
+                registry.Register(dwarf);
+
+                var meal = new ItemDef(
+                        Id: "custom_meal",
+                        DisplayName: "Custom Meal",
+                        Tags: TagSet.From("food"),
+                        Weight: 1.0f,
+                        Nutrition: new NutritionProfile(Carbs: 0.2f, Protein: 0.1f, Fat: 0.1f, Vitamins: 0.15f));
+
+                var bodyFatBefore = dwarf.BodyFat.BodyFat;
+
+                sim.Context.Get<NutritionSystem>().CreditMeal(dwarf.Id, meal);
+
+                Assert.Equal(0.4f, dwarf.Nutrition.Carbohydrates, precision: 4);
+                Assert.Equal(0.2f, dwarf.Nutrition.Protein, precision: 4);
+                Assert.Equal(0.2f, dwarf.Nutrition.Fat, precision: 4);
+                Assert.Equal(0.3f, dwarf.Nutrition.Vitamins, precision: 4);
+                Assert.Equal(bodyFatBefore + 0.9f, dwarf.BodyFat.BodyFat, precision: 4);
+        }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,6 +303,7 @@ public sealed class DesignateHarvestCommandTests
 
         Assert.Contains(js.GetAllJobs(),
             j => j.JobDefId == JobDefIds.HarvestPlant && j.TargetPos == plantPos);
+        Assert.True(map.GetTile(plantPos).IsDesignated);
     }
 
     [Fact]
@@ -297,5 +354,21 @@ public sealed class DesignateHarvestCommandTests
             .Count(j => j.JobDefId == JobDefIds.HarvestPlant);
 
         Assert.Equal(3, createdJobs);
+    }
+
+    [Fact]
+    public void CancelDesignationCommand_Clears_Harvest_Designation_And_Pending_Job()
+    {
+        var (sim, map, _, js, _) = TestFixtures.BuildFullSim();
+
+        var plantPos = new Vec3i(6, 6, 0);
+        PlacePlant(map, plantPos);
+
+        sim.Context.Commands.Dispatch(new DesignateHarvestCommand(plantPos, plantPos));
+        sim.Context.Commands.Dispatch(new CancelDesignationCommand(plantPos, plantPos));
+
+        Assert.DoesNotContain(js.GetAllJobs(),
+            j => j.JobDefId == JobDefIds.HarvestPlant && j.TargetPos == plantPos && j.Status == JobStatus.Pending);
+        Assert.False(map.GetTile(plantPos).IsDesignated);
     }
 }

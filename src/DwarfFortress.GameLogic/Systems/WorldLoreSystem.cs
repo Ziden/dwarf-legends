@@ -2,8 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
-using DwarfFortress.GameLogic.Entities;
-using DwarfFortress.GameLogic.Jobs;
+using DwarfFortress.GameLogic.World;
 using DwarfFortress.WorldGen.Story;
 
 namespace DwarfFortress.GameLogic.Systems;
@@ -29,66 +28,15 @@ public sealed class WorldLoreSystem : IGameSystem
     private WorldLoreConfig? _config;
     private GameContext? _ctx;
 
-    public WorldLoreState? Current => _state;
+    public WorldLoreState? Current => BuildCanonicalProjection() ?? _state;
 
-    public void Initialize(GameContext ctx)
-    {
-        _ctx = ctx;
+    public void Initialize(GameContext ctx) => _ctx = ctx;
 
-        ctx.EventBus.On<RecipeCraftedEvent>(_ => ChangeProsperity(+0.001f));
-        ctx.EventBus.On<ItemStoredEvent>(_ => ChangeProsperity(+0.0005f));
-        ctx.EventBus.On<JobCompletedEvent>(_ => ChangeProsperity(+0.0005f));
-        ctx.EventBus.On<EntityDiedEvent>(e =>
-        {
-            if (e.IsDwarf)
-            {
-                ChangeProsperity(-0.02f);
-                if (e.Cause is "blood_loss" or "wounds")
-                    ChangeThreat(+0.02f);
-            }
-        });
-        ctx.EventBus.On<WorldEventFiredEvent>(e =>
-        {
-            if (e.EventDefId == WorldEventIds.GoblinRaid)
-            {
-                ChangeProsperity(-0.03f);
-                ChangeThreat(+0.025f);
-            }
-            else if (e.EventDefId == WorldEventIds.MigrantWave)
-            {
-                ChangeProsperity(+0.01f);
-            }
-        });
-        ctx.EventBus.On<EntityKilledEvent>(e =>
-        {
-            var registry = ctx.TryGet<EntityRegistry>();
-            if (registry is null) return;
-            if (registry.TryGetById<Creature>(e.EntityId, out var creature) && creature?.IsHostile == true)
-                ChangeThreat(-0.015f);
-        });
-    }
-
-    public void Tick(float delta)
-    {
-        // Slow natural threat decay during peaceful periods (~0.005 drop per ~50 real seconds)
-        ChangeThreat(-0.0001f * delta);
-    }
-
-    private void ChangeProsperity(float delta)
-    {
-        if (_state is null) return;
-        _state.Prosperity = Math.Clamp(_state.Prosperity + delta, 0f, 1f);
-    }
-
-    private void ChangeThreat(float delta)
-    {
-        if (_state is null) return;
-        _state.Threat = Math.Clamp(_state.Threat + delta, 0f, 1f);
-    }
+    public void Tick(float delta) { }
 
     public void OnSave(SaveWriter writer)
     {
-        if (_state is not null)
+        if (_state is not null && BuildCanonicalProjection() is null)
             writer.Write(SaveKey, _state);
     }
 
@@ -97,6 +45,12 @@ public sealed class WorldLoreSystem : IGameSystem
 
     public void Generate(int seed, int width, int height, int depth)
     {
+        if (BuildCanonicalProjection() is not null)
+        {
+            _state = null;
+            return;
+        }
+
         _config ??= TryLoadLoreConfig();
         _state = WorldLoreGenerator.Generate(seed, width, height, depth, _config);
     }
@@ -123,9 +77,13 @@ public sealed class WorldLoreSystem : IGameSystem
 
     public string GetPrimaryHostileUnitDefId(string fallback = WorldEventDefaults.PrimaryHostileUnitDefId)
     {
-        if (_state is null) return fallback;
+        var macroState = _ctx?.TryGet<WorldMacroStateService>();
+        if (macroState is not null)
+            return macroState.GetPrimaryHostileUnitDefId(fallback);
 
-        var hostile = _state.Factions
+        if (Current is not { } state) return fallback;
+
+        var hostile = state.Factions
             .Where(f => f.IsHostile)
             .OrderByDescending(f => f.Militarism * (0.35f + f.Influence))
             .FirstOrDefault();
@@ -135,33 +93,141 @@ public sealed class WorldLoreSystem : IGameSystem
 
     public int ScaleMigrantCount(int baseCount)
     {
-        if (_state is null) return Math.Max(1, baseCount);
+        var macroState = _ctx?.TryGet<WorldMacroStateService>();
+        if (macroState is not null)
+            return macroState.ScaleMigrantCount(baseCount);
 
-        var multiplier = 0.8f + (_state.Prosperity * 0.9f) - (_state.Threat * 0.35f);
+        if (Current is not { } state) return Math.Max(1, baseCount);
+
+        var multiplier = 0.8f + (state.Prosperity * 0.9f) - (state.Threat * 0.35f);
         var scaled = (int)MathF.Round(baseCount * multiplier);
         return Math.Max(1, scaled);
     }
 
     public int ScaleRaidCount(int baseCount)
     {
-        if (_state is null) return Math.Max(1, baseCount);
+        var macroState = _ctx?.TryGet<WorldMacroStateService>();
+        if (macroState is not null)
+            return macroState.ScaleRaidCount(baseCount);
 
-        var multiplier = 0.65f + (_state.Threat * 1.1f) - (_state.Prosperity * 0.25f);
+        if (Current is not { } state) return Math.Max(1, baseCount);
+
+        var multiplier = 0.65f + (state.Threat * 1.1f) - (state.Prosperity * 0.25f);
         var scaled = (int)MathF.Round(baseCount * multiplier);
         return Math.Max(1, scaled);
     }
 
     public float TuneEventProbability(string eventId, float baseProbability)
     {
-        if (_state is null) return baseProbability;
+        var macroState = _ctx?.TryGet<WorldMacroStateService>();
+        if (macroState is not null)
+            return macroState.TuneEventProbability(eventId, baseProbability);
+
+        if (Current is not { } state) return baseProbability;
 
         var tuned = eventId switch
         {
-            WorldEventIds.GoblinRaid => baseProbability + (_state.Threat * 0.35f) - (_state.Prosperity * 0.20f),
-            WorldEventIds.MigrantWave => baseProbability + (_state.Prosperity * 0.35f) - (_state.Threat * 0.20f),
+            WorldEventIds.GoblinRaid => baseProbability + (state.Threat * 0.35f) - (state.Prosperity * 0.20f),
+            WorldEventIds.MigrantWave => baseProbability + (state.Prosperity * 0.35f) - (state.Threat * 0.20f),
             _ => baseProbability,
         };
 
         return Math.Clamp(tuned, 0.05f, 0.95f);
+    }
+
+    private WorldLoreState? BuildCanonicalProjection()
+    {
+        var historyRuntime = _ctx?.TryGet<WorldHistoryRuntimeService>();
+        var macroState = _ctx?.TryGet<WorldMacroStateService>();
+        if (historyRuntime?.CurrentSummary is not { } summary ||
+            historyRuntime.Snapshot is null ||
+            macroState?.Current is not { } macro)
+        {
+            return null;
+        }
+
+        var snapshot = historyRuntime.Snapshot;
+        var worldMap = _ctx?.TryGet<WorldMap>();
+        return new WorldLoreState
+        {
+            Seed = snapshot.EmbarkContext.Seed,
+            Width = worldMap?.Width ?? 0,
+            Height = worldMap?.Height ?? 0,
+            Depth = worldMap?.Depth ?? 0,
+            RegionName = summary.RegionName,
+            BiomeId = summary.BiomeId,
+            Threat = macro.Threat,
+            Prosperity = macro.Prosperity,
+            SimulatedYears = summary.SimulatedYears,
+            Factions = snapshot.Civilizations.Select(civilization => new FactionLoreState
+            {
+                Id = civilization.Id,
+                Name = civilization.Name,
+                IsHostile = civilization.IsHostile,
+                PrimaryUnitDefId = civilization.PrimaryUnitDefId,
+                Influence = civilization.Influence,
+                Militarism = civilization.Militarism,
+                TradeFocus = civilization.TradeFocus,
+            }).ToList(),
+            Sites = snapshot.Sites.Select(site => new SiteLoreState
+            {
+                Id = site.Id,
+                Name = site.Name,
+                Kind = site.Kind,
+                OwnerFactionId = site.OwnerCivilizationId,
+                X = site.WorldX,
+                Y = site.WorldY,
+                Z = 0,
+                Summary = BuildSiteSummary(site),
+                Status = ResolveSiteStatus(site),
+                Development = site.Development,
+                Security = site.Security,
+            }).ToList(),
+            History = BuildHistoricalProjection(summary.RecentEvents),
+        };
+    }
+
+    private static List<HistoricalEventLoreState> BuildHistoricalProjection(string[] recentEvents)
+    {
+        var projected = new List<HistoricalEventLoreState>(recentEvents.Length);
+        foreach (var entry in recentEvents)
+        {
+            var text = entry;
+            var year = 0;
+            if (entry.StartsWith("Y", StringComparison.Ordinal))
+            {
+                var separator = entry.IndexOf(':');
+                if (separator > 1 && int.TryParse(entry.Substring(1, separator - 1), out var parsedYear))
+                {
+                    year = parsedYear;
+                    text = entry[(separator + 1)..].TrimStart();
+                }
+            }
+
+            projected.Add(new HistoricalEventLoreState
+            {
+                Year = year,
+                Type = "historical_projection",
+                Summary = text,
+            });
+        }
+
+        return projected;
+    }
+
+    private static string BuildSiteSummary(RuntimeHistorySiteSnapshot site)
+        => $"Population {site.Population}, households {site.HouseholdCount}, military {site.MilitaryCount}.";
+
+    private static string ResolveSiteStatus(RuntimeHistorySiteSnapshot site)
+    {
+        if (site.Population <= 0)
+            return SiteStatusIds.Ruined;
+        if (site.Security >= 0.72f && site.MilitaryCount > 0)
+            return SiteStatusIds.Fortified;
+        if (site.Development >= 0.72f)
+            return SiteStatusIds.Growing;
+        if (site.Security < 0.28f || site.Development < 0.22f)
+            return SiteStatusIds.Declining;
+        return SiteStatusIds.Stable;
     }
 }

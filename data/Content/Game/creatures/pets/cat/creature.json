@@ -1,0 +1,17 @@
+{
+  "id": "cat",
+  "displayName": "Cat",
+  "tags": ["animal", "pet", "groomer", "carnivore"],
+  "canGroom": true,
+  "diet": "carnivore",
+  "maxHealth": 20,
+  "speed": 1.55,
+  "visuals": {
+    "proceduralProfile": "cat",
+    "waterEffectStyle": "pet",
+    "viewerColor": "#F5DB57",
+    "spriteSheet": "res://Graphics/graphics/domestic.png",
+    "spriteColumn": 0,
+    "spriteRow": 0
+  }
+}

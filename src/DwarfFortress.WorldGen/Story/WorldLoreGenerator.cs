@@ -1,16 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using DwarfFortress.WorldGen.Content;
+using DwarfFortress.WorldGen.Ids;
 
 namespace DwarfFortress.WorldGen.Story;
 
 public static class WorldLoreGenerator
 {
-    public static WorldLoreState Generate(int seed, int width, int height, int depth, WorldLoreConfig? config = null)
+    public static WorldLoreState Generate(int seed, int width, int height, int depth, WorldLoreConfig? config = null, SharedContentCatalog? sharedContent = null)
     {
         var cfg = WorldLoreConfig.WithDefaults(config);
         var relationsCfg = cfg.Relations!;
         var evolutionCfg = cfg.SiteEvolution!;
+        var contentQueries = new ContentQueryService(sharedContent ?? SharedContentCatalogLoader.LoadDefaultOrFallback());
 
         var rng = new Random(Hash(seed, width, height, depth));
 
@@ -24,7 +27,7 @@ public static class WorldLoreGenerator
         };
 
         state.RegionName = $"{Pick(rng, cfg.NameLeft)}{Pick(rng, cfg.NameRight)}";
-        state.Factions = GenerateFactions(rng, cfg);
+        state.Factions = GenerateFactions(rng, cfg, contentQueries);
         state.FactionRelations = GenerateFactionRelations(rng, relationsCfg, state.Factions);
         state.Sites = GenerateSites(rng, cfg, state.Factions, width, height);
         InitializeSiteState(rng, evolutionCfg, state);
@@ -50,7 +53,7 @@ public static class WorldLoreGenerator
     private static T Pick<T>(Random rng, IReadOnlyList<T> values)
         => values[rng.Next(values.Count)];
 
-    private static List<FactionLoreState> GenerateFactions(Random rng, WorldLoreConfig config)
+    private static List<FactionLoreState> GenerateFactions(Random rng, WorldLoreConfig config, ContentQueryService contentQueries)
     {
         var factions = new List<FactionLoreState>();
 
@@ -60,21 +63,18 @@ public static class WorldLoreGenerator
             if (spawnChance < 1f && rng.NextDouble() > spawnChance)
                 continue;
 
-            factions.Add(BuildFaction(rng, config, template));
+            factions.Add(BuildFaction(rng, config, template, contentQueries));
         }
 
         if (factions.Count == 0 && config.FactionTemplates.Count > 0)
-            factions.Add(BuildFaction(rng, config, config.FactionTemplates[0]));
+            factions.Add(BuildFaction(rng, config, config.FactionTemplates[0], contentQueries));
 
         return factions;
     }
 
-    private static FactionLoreState BuildFaction(Random rng, WorldLoreConfig config, FactionTemplateConfig template)
+    private static FactionLoreState BuildFaction(Random rng, WorldLoreConfig config, FactionTemplateConfig template, ContentQueryService contentQueries)
     {
-        var primaryUnit = template.PrimaryUnitDefId;
-        var altChance = Clamp01(template.AlternatePrimaryChance);
-        if (!string.IsNullOrWhiteSpace(template.AlternatePrimaryUnitDefId) && rng.NextDouble() < altChance)
-            primaryUnit = template.AlternatePrimaryUnitDefId!;
+        var primaryUnit = ResolvePrimaryUnit(rng, template, contentQueries);
 
         var motto = string.IsNullOrWhiteSpace(template.Motto)
             ? Pick(rng, config.MottoFragments)
@@ -91,6 +91,51 @@ public static class WorldLoreGenerator
             TradeFocus = RandomInRange(rng, template.TradeFocusMin, template.TradeFocusMax),
             Motto = motto,
         };
+    }
+
+    private static string ResolvePrimaryUnit(Random rng, FactionTemplateConfig template, ContentQueryService contentQueries)
+    {
+        var chooseAlternate = !string.IsNullOrWhiteSpace(template.AlternatePrimaryUnitDefId) ||
+                              !string.IsNullOrWhiteSpace(template.AlternatePrimaryUnitRole);
+        if (chooseAlternate && rng.NextDouble() < Clamp01(template.AlternatePrimaryChance))
+        {
+            var alternate = ResolveCreatureDefId(contentQueries, template.AlternatePrimaryUnitRole, template.AlternatePrimaryUnitDefId, rng);
+            if (!string.IsNullOrWhiteSpace(alternate))
+                return alternate;
+        }
+
+        var primary = ResolveCreatureDefId(contentQueries, template.PrimaryUnitRole, template.PrimaryUnitDefId, rng);
+        if (!string.IsNullOrWhiteSpace(primary))
+            return primary;
+
+        var defaultRole = template.IsHostile ? FactionUnitRoleIds.HostilePrimary : FactionUnitRoleIds.CivilizedPrimary;
+        var roleFallback = ResolveCreatureDefId(contentQueries, defaultRole, null, rng);
+        if (!string.IsNullOrWhiteSpace(roleFallback))
+            return roleFallback;
+
+        var defaultCreature = template.IsHostile
+            ? contentQueries.ResolveDefaultHostileCreatureDefId()
+            : contentQueries.ResolveDefaultPlayableCreatureDefId();
+        if (!string.IsNullOrWhiteSpace(defaultCreature))
+            return defaultCreature;
+
+        var anyCreature = contentQueries.Catalog.Creatures.Values
+            .OrderBy(creature => creature.Id, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault()
+            ?.Id;
+        if (!string.IsNullOrWhiteSpace(anyCreature))
+            return anyCreature;
+
+        throw new InvalidOperationException("World lore generation requires at least one creature definition.");
+    }
+
+    private static string? ResolveCreatureDefId(ContentQueryService contentQueries, string? role, string? explicitCreatureDefId, Random rng)
+    {
+        var resolvedFromRole = contentQueries.ResolveFactionCreatureDefId(role, rng);
+        if (!string.IsNullOrWhiteSpace(resolvedFromRole))
+            return resolvedFromRole;
+
+        return string.IsNullOrWhiteSpace(explicitCreatureDefId) ? null : explicitCreatureDefId;
     }
 
     private static string ResolveName(Random rng, string pattern, WorldLoreConfig config)

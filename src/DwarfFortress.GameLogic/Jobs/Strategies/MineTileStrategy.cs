@@ -43,7 +43,7 @@ public sealed class MineTileStrategy : IJobStrategy
         // Capture default wall drop and embedded ore before changing tile identity.
         var dm = ctx.TryGet<DataManager>();
         var def = dm?.Tiles.GetOrNull(tile.TileDefId);
-        var dropId = def?.DropItemDefId ?? ItemDefIds.ResolveStoneBoulder(originalMaterialId);
+        var dropId = def?.DropItemDefId ?? dm?.ContentQueries?.ResolveMineableBoulderForm(originalMaterialId);
         var oreDropId = tile.OreItemDefId;
         var isAquifer = tile.IsAquifer;
         var clearedTerrain = TerrainClearanceHelper.ResolveClearedTerrain(ctx, map, job.TargetPos, tile.MaterialId);

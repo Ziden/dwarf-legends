@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Entities;
+using DwarfFortress.GameLogic.Entities.Components;
 
 namespace DwarfFortress.GameLogic.Jobs.Strategies;
 
@@ -13,6 +14,14 @@ public sealed class HaulItemStrategy : IJobStrategy
 
     public bool CanExecute(Job job, int dwarfId, GameContext ctx)
     {
+        var registry = ctx.TryGet<EntityRegistry>();
+        if (registry is not null && registry.TryGetById<Dwarf>(dwarfId, out var dwarf) && dwarf is not null)
+        {
+            var hauling = dwarf.Components.TryGet<HaulingComponent>();
+            if (hauling?.IsHauling == true)
+                return false;
+        }
+
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
         if (itemSystem is null) return false;
         if (job.EntityId >= 0)
@@ -52,7 +61,7 @@ public sealed class HaulItemStrategy : IJobStrategy
         return new ActionStep[]
         {
             new MoveToStep(item.Position.Position),
-            new PickUpItemStep(item.Id),
+            new PickUpItemStep(item.Id, ItemCarryMode.Hauling),
             new MoveToStep(destPos),
             new PlaceItemStep(item.Id, destPos),
         };
@@ -93,8 +102,6 @@ public sealed class HaulItemStrategy : IJobStrategy
                 if (itemSystem.TryGetItem(id, out var item) && item is not null)
                 {
                     item.IsClaimed = false;
-                    item.ContainerBuildingId = -1;
-                    item.CarriedByEntityId = -1;
                     item.StockpileId = job.ReservedStockpileId;
                 }
 

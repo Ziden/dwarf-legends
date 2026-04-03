@@ -2,7 +2,9 @@ using System;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
+using DwarfFortress.GameLogic.Entities.Components;
 
 namespace DwarfFortress.GameLogic.Systems;
 
@@ -29,9 +31,9 @@ public sealed class ReactionPipeline : IGameSystem
 
     public void Tick(float delta)
     {
-        var dm        = _ctx!.TryGet<DataManager>();
+        var dm         = _ctx!.TryGet<DataManager>();
         var applicator = _ctx!.TryGet<EffectApplicator>();
-        var registry  = _ctx!.Get<EntityRegistry>();
+        var registry   = _ctx!.Get<EntityRegistry>();
 
         if (dm is null || applicator is null) return;
 
@@ -39,7 +41,10 @@ public sealed class ReactionPipeline : IGameSystem
         {
             foreach (var entity in registry.GetAll<Entity>())
             {
-                bool triggered = reactionDef.Triggers.Any(t => EvaluateTrigger(t, entity));
+                if (!entity.IsAlive)
+                    continue;
+
+                bool triggered = reactionDef.Triggers.Any(t => EvaluateTrigger(t, entity, dm));
                 if (!triggered) continue;
 
                 if (reactionDef.Probability < 1f &&
@@ -58,22 +63,83 @@ public sealed class ReactionPipeline : IGameSystem
 
     // ── Private ────────────────────────────────────────────────────────────
 
-    private bool EvaluateTrigger(Data.Defs.ReactionTrigger trigger, Entity entity)
+    private static bool EvaluateTrigger(Data.Defs.ReactionTrigger trigger, Entity entity, DataManager dm)
     {
         return trigger.Type switch
         {
-            "entity_has_tag"        => EntityHasTag(trigger, entity),
-            "need_critical"         => NeedIsCritical(trigger, entity),
-            "entity_has_substance"  => EntityHasSubstance(trigger, entity),
-            "body_part_has_coating" => BodyPartHasCoating(trigger, entity),
-            _                       => false,
+            ReactionTriggerTypes.EntityHasTag => EntityHasTag(trigger, entity, dm),
+            ReactionTriggerTypes.EntityDefIs => EntityDefIs(trigger, entity),
+            ReactionTriggerTypes.EntityHasLabor => EntityHasLabor(trigger, entity),
+            ReactionTriggerTypes.EntityProfessionIs => EntityProfessionIs(trigger, entity),
+            ReactionTriggerTypes.EntityHasFactionRole => EntityHasFactionRole(trigger, entity, dm),
+            ReactionTriggerTypes.EntityAttributeAtLeast => EntityAttributeAtLeast(trigger, entity),
+            ReactionTriggerTypes.EntityAttributeAtMost => EntityAttributeAtMost(trigger, entity),
+            ReactionTriggerTypes.NeedCritical => NeedIsCritical(trigger, entity),
+            ReactionTriggerTypes.EntityHasSubstance => EntityHasSubstance(trigger, entity),
+            ReactionTriggerTypes.BodyPartHasCoating => BodyPartHasCoating(trigger, entity),
+            _ => false,
         };
     }
 
-    private static bool EntityHasTag(Data.Defs.ReactionTrigger trigger, Entity entity)
+    private static bool EntityHasTag(Data.Defs.ReactionTrigger trigger, Entity entity, DataManager dm)
     {
         if (!trigger.Params.TryGetValue("tag", out var tag)) return false;
-        return entity.Components.Has<Entities.Components.StatComponent>(); // stub
+        return ResolveEntityTags(entity, dm).Contains(tag);
+    }
+
+    private static bool EntityDefIs(Data.Defs.ReactionTrigger trigger, Entity entity)
+    {
+        if (!trigger.Params.TryGetValue("def_id", out var defId) || string.IsNullOrWhiteSpace(defId))
+            return false;
+
+        return string.Equals(entity.DefId, defId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool EntityHasLabor(Data.Defs.ReactionTrigger trigger, Entity entity)
+    {
+        if (entity is not Dwarf dwarf)
+            return false;
+        if (!trigger.Params.TryGetValue("labor_id", out var laborId) || string.IsNullOrWhiteSpace(laborId))
+            return false;
+
+        return dwarf.Labors.IsEnabled(laborId);
+    }
+
+    private static bool EntityProfessionIs(Data.Defs.ReactionTrigger trigger, Entity entity)
+    {
+        if (entity is not Dwarf dwarf)
+            return false;
+        if (!trigger.Params.TryGetValue("profession_id", out var professionId) || string.IsNullOrWhiteSpace(professionId))
+            return false;
+
+        return string.Equals(dwarf.ProfessionId, professionId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool EntityHasFactionRole(Data.Defs.ReactionTrigger trigger, Entity entity, DataManager dm)
+    {
+        if (!trigger.Params.TryGetValue("role_id", out var roleId) || string.IsNullOrWhiteSpace(roleId))
+            return false;
+
+        var def = ResolveEntityCreatureDef(entity, dm);
+        return def?.HasFactionRole(roleId) == true;
+    }
+
+    private static bool EntityAttributeAtLeast(Data.Defs.ReactionTrigger trigger, Entity entity)
+        => EntityAttributeMatches(trigger, entity, (current, threshold) => current >= threshold);
+
+    private static bool EntityAttributeAtMost(Data.Defs.ReactionTrigger trigger, Entity entity)
+        => EntityAttributeMatches(trigger, entity, (current, threshold) => current <= threshold);
+
+    private static bool EntityAttributeMatches(Data.Defs.ReactionTrigger trigger, Entity entity, Func<int, int, bool> comparator)
+    {
+        if (entity is not Dwarf dwarf)
+            return false;
+        if (!trigger.Params.TryGetValue("attribute_id", out var attributeId) || string.IsNullOrWhiteSpace(attributeId))
+            return false;
+        if (!trigger.Params.TryGetValue("level", out var levelValue) || !int.TryParse(levelValue, out var level))
+            return false;
+
+        return comparator(dwarf.Attributes.GetLevel(attributeId), level);
     }
 
     private static bool NeedIsCritical(Data.Defs.ReactionTrigger trigger, Entity entity)
@@ -129,5 +195,58 @@ public sealed class ReactionPipeline : IGameSystem
             return string.Equals(part.CoatingMaterialId, materialId, StringComparison.OrdinalIgnoreCase);
 
         return true; // any coating
+    }
+
+    private static TagSet ResolveEntityTags(Entity entity, DataManager dm)
+    {
+        var tags = TagSet.Empty;
+
+        switch (entity)
+        {
+            case Dwarf:
+            {
+                var dwarfDef = dm.Creatures.GetOrNull(DefIds.Dwarf);
+                if (dwarfDef is not null)
+                    tags = tags.Union(dwarfDef.Tags);
+                break;
+            }
+            case Creature creature:
+            {
+                var creatureDef = dm.Creatures.GetOrNull(creature.DefId);
+                if (creatureDef is not null)
+                    tags = tags.Union(creatureDef.Tags);
+                if (creature.IsHostile && !tags.Contains(TagIds.Hostile))
+                    tags = tags.With(TagIds.Hostile);
+                break;
+            }
+            case Item item:
+            {
+                var itemDef = dm.Items.GetOrNull(item.DefId);
+                if (itemDef is not null)
+                    tags = tags.Union(itemDef.Tags);
+                if (!string.IsNullOrWhiteSpace(item.MaterialId))
+                {
+                    var materialDef = dm.Materials.GetOrNull(item.MaterialId);
+                    if (materialDef is not null)
+                        tags = tags.Union(materialDef.Tags);
+                }
+                break;
+            }
+            case Box:
+                tags = tags.With(TagIds.Container);
+                break;
+        }
+
+        return tags;
+    }
+
+    private static CreatureDef? ResolveEntityCreatureDef(Entity entity, DataManager dm)
+    {
+        return entity switch
+        {
+            Dwarf => dm.Creatures.GetOrNull(DefIds.Dwarf),
+            Creature creature => dm.Creatures.GetOrNull(creature.DefId),
+            _ => null,
+        };
     }
 }

@@ -5,6 +5,7 @@ namespace DwarfFortress.GameLogic.Data.Defs;
 public static class MaterialIds
 {
     public const string Granite = "granite";
+    public const string Coal = "coal";
     public const string Wood = "wood";
     public const string Food = "food";
     public const string Drink = "drink";

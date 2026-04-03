@@ -7,7 +7,7 @@ namespace DwarfFortress.GameLogic.Systems;
 
 // ── Events ──────────────────────────────────────────────────────────────────
 
-public record struct FloodedTileEvent(Vec3i Position, FluidType Fluid, byte Level);
+public record struct FloodedTileEvent(Vec3i Position, FluidType Fluid, byte Level, FluidType PreviousFluid, byte PreviousLevel);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -15,6 +15,10 @@ public record struct FloodedTileEvent(Vec3i Position, FluidType Fluid, byte Leve
 /// Cellular-automaton fluid simulation.
 /// Each tick, fluids flow from higher to lower levels following gravity.
 /// Order 20 — runs after all entity-level systems.
+///
+/// Optimizations applied:
+/// - _dryTicks tracks how many consecutive ticks a tile had no fluid change.
+///   Tiles are pruned from the active set after 8 dry ticks to prevent unbounded growth.
 /// </summary>
 public sealed class FluidSimulator : IGameSystem
 {
@@ -24,26 +28,55 @@ public sealed class FluidSimulator : IGameSystem
 
     // Maximum fluid tile updates per tick to keep performance bounded
     private const int MaxUpdatesPerTick = 512;
+    // Consecutive dry ticks before pruning a tile from the active set
+    private const int DryPruneThreshold = 8;
 
     private GameContext? _ctx;
+    private SimulationProfiler? _profiler;
     private readonly HashSet<Vec3i> _activeTiles = new();
+    private readonly Dictionary<Vec3i, int> _dryTicks = new();
 
     public void Initialize(GameContext ctx)
     {
         _ctx = ctx;
+        _profiler = ctx.Profiler;
         ctx.EventBus.On<TileChangedEvent>(OnTileChanged);
     }
 
     public void Tick(float delta)
     {
-        var map     = _ctx!.Get<WorldMap>();
-        var toProcess = new List<Vec3i>(_activeTiles);
-        int count     = 0;
+        var map = _ctx!.Get<WorldMap>();
+        List<Vec3i> toProcess;
+        using (_profiler?.Measure("collect_active_tiles") ?? default)
+            toProcess = new List<Vec3i>(_activeTiles);
+        int count = 0;
 
-        foreach (var pos in toProcess)
+        using (_profiler?.Measure("simulate_flows") ?? default)
         {
-            if (count++ >= MaxUpdatesPerTick) break;
-            SimulateFluid(map, pos);
+            foreach (var pos in toProcess)
+            {
+                if (count++ >= MaxUpdatesPerTick) break;
+
+                var hadChange = SimulateFluid(map, pos);
+                if (hadChange)
+                {
+                    _dryTicks[pos] = 0;
+                }
+                else
+                {
+                    var dryCount = _dryTicks.GetValueOrDefault(pos) + 1;
+                    if (dryCount >= DryPruneThreshold)
+                    {
+                        // Prune: tile has been dry for N ticks, no longer needs simulation
+                        _dryTicks.Remove(pos);
+                        _activeTiles.Remove(pos);
+                    }
+                    else
+                    {
+                        _dryTicks[pos] = dryCount;
+                    }
+                }
+            }
         }
     }
 
@@ -60,20 +93,20 @@ public sealed class FluidSimulator : IGameSystem
             _activeTiles.Remove(e.Pos);
     }
 
-    private void SimulateFluid(WorldMap map, Vec3i pos)
+    private bool SimulateFluid(WorldMap map, Vec3i pos)
     {
         var tile = map.GetTile(pos);
         if (tile.FluidType == FluidType.None || tile.FluidLevel == 0)
         {
             _activeTiles.Remove(pos);
-            return;
+            return false;
         }
 
         // Gravity has priority and can move more mass per step.
         if (TryFlowDown(map, pos, tile))
-            return;
+            return true;
 
-        TryFlowHorizontally(map, pos, tile);
+        return TryFlowHorizontally(map, pos, tile);
     }
 
     private bool TryFlowDown(WorldMap map, Vec3i from, TileData source)
@@ -155,7 +188,8 @@ public sealed class FluidSimulator : IGameSystem
         map.SetTile(from, newSrc);
 
         _activeTiles.Add(to);
-        _ctx!.EventBus.Emit(new FloodedTileEvent(to, newDest.FluidType, newDest.FluidLevel));
+        _dryTicks.Remove(to); // Reset dry counter on destination
+        _ctx!.EventBus.Emit(new FloodedTileEvent(to, newDest.FluidType, newDest.FluidLevel, dest.FluidType, dest.FluidLevel));
         return true;
     }
 }

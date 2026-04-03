@@ -1,0 +1,35 @@
+{
+  "id": "apple_canopy",
+  "displayName": "Apple Canopy",
+  "hostKind": "tree",
+  "allowedBiomes": ["temperate_plains", "boreal_forest"],
+  "supportedTreeSpecies": ["apple"],
+  "minMoisture": 0.24,
+  "maxMoisture": 0.82,
+  "minTerrain": 0.0,
+  "maxTerrain": 0.7,
+  "prefersNearWater": true,
+  "maxGrowthStage": 3,
+  "secondsPerStage": 900,
+  "fruitingCycleSeconds": 960,
+  "seedSpreadChance": 0.03,
+  "seedSpreadRadiusMin": 3,
+  "seedSpreadRadiusMax": 6,
+  "nutrition": { "energy": 0.34, "protein": 0.02, "vitamins": 0.44, "minerals": 0.1 },
+  "harvestItemDefId": "apple",
+  "harvestItem": {
+    "id": "apple",
+    "displayName": "Apple",
+    "tags": ["plant", "food", "fruit"],
+    "weight": 0.3,
+    "nutrition": { "carbs": 0.5, "protein": 0.1, "fat": 0.2, "vitamins": 0.7 }
+  },
+  "seedItemDefId": "apple_seed",
+  "seedItem": {
+    "id": "apple_seed",
+    "displayName": "Apple Seed",
+    "tags": ["plant", "seed"],
+    "weight": 0.05
+  },
+  "fruitItemDefId": "apple"
+}

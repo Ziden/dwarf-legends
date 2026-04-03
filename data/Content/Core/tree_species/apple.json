@@ -1,0 +1,6 @@
+{
+  "id": "apple",
+  "displayName": "Apple Tree",
+  "woodMaterialId": "apple_wood",
+  "tags": ["orchard"]
+}

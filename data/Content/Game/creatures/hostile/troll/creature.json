@@ -1,0 +1,32 @@
+{
+  "id": "troll",
+  "displayName": "Troll",
+  "tags": ["hostile", "large"],
+  "isHostile": true,
+  "diet": "carnivore",
+  "maxHealth": 200,
+  "speed": 0.65,
+  "visuals": {
+    "proceduralProfile": "troll",
+    "waterEffectStyle": "large",
+    "viewerColor": "#BD52DB"
+  },
+  "ecology": {
+    "caveWildlife": [
+      { "layers": [1, 2, 3], "weight": 0.14, "minGroup": 1, "maxGroup": 2, "avoidEmbarkCenter": false }
+    ]
+  },
+  "history": {
+    "figureNamePool": ["Thrag", "Mog", "Bruk", "Gor", "Drosh"],
+    "defaultProfessionIds": ["militia"]
+  },
+  "deathDrops": [
+    { "itemDefId": "raw_meat", "quantity": 3 },
+    { "itemDefId": "bone", "quantity": 3 }
+  ],
+  "society": {
+    "factionRoles": [
+      { "id": "hostile_alternate", "weight": 1.0 }
+    ]
+  }
+}

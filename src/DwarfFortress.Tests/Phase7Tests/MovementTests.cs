@@ -189,12 +189,78 @@ public sealed class MovementTests
     }
 
     [Fact]
+    public void JobSystem_Records_Exact_Move_Segment_Duration_From_Speed()
+    {
+        var (sim, er, js, _) = Build();
+        var movementPresentation = sim.Context.Get<MovementPresentationSystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "Stride", new Vec3i(0, 0, 0));
+        dwarf.Stats.Speed.BaseValue = 2f;
+        er.Register(dwarf);
+
+        js.CreateJob(JobDefIds.Craft, new Vec3i(2, 0, 0));
+
+        sim.Tick(0.25f);
+        Assert.False(movementPresentation.TryGetEntitySegment(dwarf.Id, out _));
+
+        sim.Tick(0.25f);
+
+        Assert.True(movementPresentation.TryGetEntitySegment(dwarf.Id, out var segment));
+        Assert.Equal(new Vec3i(0, 0, 0), segment.OldPos);
+        Assert.Equal(new Vec3i(1, 0, 0), segment.NewPos);
+        Assert.Equal(0.5f, segment.DurationSeconds, 3);
+    }
+
+    [Fact]
+    public void JobSystem_Preserves_Carry_Without_Changing_Segment_Duration()
+    {
+        var (sim, er, js, _) = Build();
+        var movementPresentation = sim.Context.Get<MovementPresentationSystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "Cadence", new Vec3i(0, 0, 0));
+        dwarf.Stats.Speed.BaseValue = 2f;
+        er.Register(dwarf);
+
+        js.CreateJob(JobDefIds.Craft, new Vec3i(3, 0, 0));
+
+        sim.Tick(0.6f);
+
+        Assert.True(movementPresentation.TryGetEntitySegment(dwarf.Id, out var firstSegment));
+        Assert.Equal(new Vec3i(0, 0, 0), firstSegment.OldPos);
+        Assert.Equal(new Vec3i(1, 0, 0), firstSegment.NewPos);
+        Assert.Equal(0.5f, firstSegment.DurationSeconds, 3);
+
+        sim.Tick(0.4f);
+
+        Assert.True(movementPresentation.TryGetEntitySegment(dwarf.Id, out var secondSegment));
+        Assert.True(secondSegment.Sequence > firstSegment.Sequence);
+        Assert.Equal(new Vec3i(1, 0, 0), secondSegment.OldPos);
+        Assert.Equal(new Vec3i(2, 0, 0), secondSegment.NewPos);
+        Assert.Equal(0.5f, secondSegment.DurationSeconds, 3);
+    }
+
+    [Fact]
+    public void MovementPresentationSystem_Does_Not_Animate_NonAdjacent_Fallback_Moves()
+    {
+        var (sim, er, _, _) = Build();
+        var movementPresentation = sim.Context.Get<MovementPresentationSystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "Blink", new Vec3i(0, 0, 0));
+        er.Register(dwarf);
+
+        sim.Context.EventBus.Emit(new EntityMovedEvent(dwarf.Id, new Vec3i(0, 0, 0), new Vec3i(0, 3, 0)));
+
+        Assert.True(movementPresentation.TryGetEntitySegment(dwarf.Id, out var segment));
+        Assert.Equal(0f, segment.DurationSeconds);
+    }
+
+    [Fact]
     public void Fearful_Dwarf_Flees_One_Tile_Instead_Of_Teleporting()
     {
         var (sim, er, _, _) = Build();
 
         var dwarf = new Dwarf(er.NextId(), "Nervous", new Vec3i(10, 10, 0));
-        dwarf.Traits.AddTrait(TraitIds.Fearful);
+        dwarf.Attributes.SetLevel(AttributeIds.Courage, 1);
         er.Register(dwarf);
 
         var cat = new Creature(er.NextId(), DefIds.Cat, new Vec3i(11, 10, 0), 20f);
@@ -203,9 +269,38 @@ public sealed class MovementTests
         DwarfFledFromAnimalEvent? fleeEvent = null;
         sim.Context.EventBus.On<DwarfFledFromAnimalEvent>(ev => fleeEvent = ev);
 
-        sim.Tick(5f);
+        for (var i = 0; i < 20 && fleeEvent is null; i++)
+            sim.Tick(5f);
 
         Assert.NotNull(fleeEvent);
         Assert.Equal(1, fleeEvent!.Value.From.ManhattanDistanceTo(fleeEvent.Value.To));
+    }
+
+    [Fact]
+    public void Fearful_Dwarf_Flee_Emits_Movement_Event_And_Updates_Spatial_Index()
+    {
+        var (sim, er, _, _) = Build();
+        var spatial = sim.Context.Get<SpatialIndexSystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "Skittish", new Vec3i(10, 10, 0));
+        dwarf.Attributes.SetLevel(AttributeIds.Courage, 1);
+        er.Register(dwarf);
+
+        var cat = new Creature(er.NextId(), DefIds.Cat, new Vec3i(11, 10, 0), 20f);
+        er.Register(cat);
+
+        EntityMovedEvent? movedEvent = null;
+        sim.Context.EventBus.On<EntityMovedEvent>(ev =>
+        {
+            if (ev.EntityId == dwarf.Id)
+                movedEvent = ev;
+        });
+
+        for (var i = 0; i < 20 && movedEvent is null; i++)
+            sim.Tick(5f);
+
+        Assert.NotNull(movedEvent);
+        Assert.DoesNotContain(dwarf.Id, spatial.GetDwarvesAt(movedEvent!.Value.OldPos));
+        Assert.Contains(dwarf.Id, spatial.GetDwarvesAt(movedEvent.Value.NewPos));
     }
 }

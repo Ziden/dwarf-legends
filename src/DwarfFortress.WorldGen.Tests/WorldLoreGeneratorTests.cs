@@ -1,4 +1,6 @@
 using System.Linq;
+using DwarfFortress.WorldGen.Content;
+using DwarfFortress.WorldGen.Ids;
 using DwarfFortress.WorldGen.Story;
 
 namespace DwarfFortress.WorldGen.Tests;
@@ -38,5 +40,108 @@ public sealed class WorldLoreGeneratorTests
         Assert.InRange(lore.Threat, 0f, 1f);
         Assert.InRange(lore.Prosperity, 0f, 1f);
         Assert.InRange(lore.SimulatedYears, 120, 260);
+    }
+
+    [Fact]
+    public void Generate_UsesCreatureFactionRolesForPrimaryUnits()
+    {
+        var content = new MemoryContentFileSource();
+        content.AddFile("data/Content/Game/creatures/sapients/molefolk/creature.json", """
+            {
+              "id": "molefolk",
+              "displayName": "Molefolk",
+              "tags": ["sapient"],
+              "society": {
+                "factionRoles": [
+                  { "id": "civilized_primary", "weight": 1.0 }
+                ]
+              }
+            }
+            """);
+        content.AddFile("data/Content/Game/creatures/hostile/orc/creature.json", """
+            {
+              "id": "orc",
+              "displayName": "Orc",
+              "tags": ["hostile", "sapient"],
+              "society": {
+                "factionRoles": [
+                  { "id": "hostile_primary", "weight": 1.0 }
+                ]
+              }
+            }
+            """);
+        content.AddFile("data/Content/Game/creatures/hostile/ogre/creature.json", """
+            {
+              "id": "ogre",
+              "displayName": "Ogre",
+              "tags": ["hostile"],
+              "society": {
+                "factionRoles": [
+                  { "id": "hostile_alternate", "weight": 1.0 }
+                ]
+              }
+            }
+            """);
+
+        var shared = SharedContentCatalogLoader.Load(content);
+        var config = new WorldLoreConfig
+        {
+            Biomes = ["temperate_plains"],
+            NameLeft = ["Stone"],
+            NameRight = ["reach"],
+            MottoFragments = ["endure"],
+            SiteKinds =
+            [
+                new SiteKindConfig { Id = "hamlet", OwnerRule = SiteOwnerRules.Random, Summary = "Hamlet" },
+            ],
+            FactionTemplates =
+            [
+                new FactionTemplateConfig
+                {
+                    Id = "civilized_test",
+                    NamePattern = "Civilized {left}",
+                    IsHostile = false,
+                    PrimaryUnitRole = FactionUnitRoleIds.CivilizedPrimary,
+                    PrimaryUnitDefId = "dwarf",
+                    InfluenceMin = 0.5f,
+                    InfluenceMax = 0.5f,
+                    MilitarismMin = 0.3f,
+                    MilitarismMax = 0.3f,
+                    TradeFocusMin = 0.7f,
+                    TradeFocusMax = 0.7f,
+                    SpawnChance = 1.0f,
+                },
+                new FactionTemplateConfig
+                {
+                    Id = "hostile_test",
+                    NamePattern = "Hostile {left}",
+                    IsHostile = true,
+                    PrimaryUnitRole = FactionUnitRoleIds.HostilePrimary,
+                    PrimaryUnitDefId = "goblin",
+                    AlternatePrimaryUnitRole = FactionUnitRoleIds.HostileAlternate,
+                    AlternatePrimaryUnitDefId = "troll",
+                    AlternatePrimaryChance = 1.0f,
+                    InfluenceMin = 0.6f,
+                    InfluenceMax = 0.6f,
+                    MilitarismMin = 0.8f,
+                    MilitarismMax = 0.8f,
+                    TradeFocusMin = 0.1f,
+                    TradeFocusMax = 0.1f,
+                    SpawnChance = 1.0f,
+                },
+            ],
+            History = new LoreHistoryConfig
+            {
+                SimulatedYearsMin = 1,
+                SimulatedYearsMax = 1,
+                EventsPerYearMin = 1,
+                EventsPerYearMax = 1,
+            },
+        };
+
+        var lore = WorldLoreGenerator.Generate(seed: 5, width: 48, height: 48, depth: 8, config, shared);
+
+        Assert.Contains(lore.Factions, faction => faction.Id == "civilized_test" && faction.PrimaryUnitDefId == "molefolk");
+        Assert.Contains(lore.Factions, faction => faction.Id == "hostile_test" && faction.PrimaryUnitDefId == "ogre");
     }
 }

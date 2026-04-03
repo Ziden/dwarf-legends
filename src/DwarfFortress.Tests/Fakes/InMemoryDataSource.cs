@@ -17,10 +17,7 @@ public sealed class InMemoryDataSource : IDataSource
     {
         _files[path] = content;
 
-        // Register under its directory
-        var dir = GetDir(path);
-        if (!_dirs.TryGetValue(dir, out var list)) _dirs[dir] = list = new List<string>();
-        if (!list.Contains(path)) list.Add(path);
+        RegisterFileInDirectories(path);
     }
 
     public string ReadText(string path)
@@ -29,16 +26,47 @@ public sealed class InMemoryDataSource : IDataSource
         throw new System.IO.FileNotFoundException($"[InMemoryDataSource] File not found: '{path}'");
     }
 
-    public string[] ListFiles(string directory, string extension = ".json")
+    public string[] ListFiles(string directory, string extension = ".json", bool recursive = false)
     {
-        if (!_dirs.TryGetValue(directory, out var list)) return System.Array.Empty<string>();
-        return list
+        if (!recursive)
+        {
+            if (!_dirs.TryGetValue(directory, out var list)) return System.Array.Empty<string>();
+            return list
+                .Where(p => p.EndsWith(extension, System.StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        var prefix = string.IsNullOrWhiteSpace(directory)
+            ? string.Empty
+            : directory.TrimEnd('/') + "/";
+
+        return _files.Keys
+            .Where(p => p.StartsWith(prefix, System.StringComparison.OrdinalIgnoreCase))
             .Where(p => p.EndsWith(extension, System.StringComparison.OrdinalIgnoreCase))
+            .OrderBy(p => p, System.StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
     public bool Exists(string path)
         => _files.ContainsKey(path) || _dirs.ContainsKey(path);
+
+    private void RegisterFileInDirectories(string path)
+    {
+        var current = GetDir(path);
+        while (true)
+        {
+            if (!_dirs.TryGetValue(current, out var list))
+                _dirs[current] = list = new List<string>();
+
+            if (!list.Contains(path))
+                list.Add(path);
+
+            if (string.IsNullOrEmpty(current))
+                break;
+
+            current = GetDir(current);
+        }
+    }
 
     private static string GetDir(string path)
     {

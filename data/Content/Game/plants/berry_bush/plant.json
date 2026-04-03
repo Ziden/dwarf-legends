@@ -1,0 +1,35 @@
+{
+  "id": "berry_bush",
+  "displayName": "Berry Bush",
+  "hostKind": "ground",
+  "allowedBiomes": ["temperate_plains", "misty_marsh", "boreal_forest"],
+  "allowedGroundTiles": ["grass", "soil", "mud"],
+  "minMoisture": 0.42,
+  "maxMoisture": 0.95,
+  "minTerrain": 0.0,
+  "maxTerrain": 0.72,
+  "prefersNearWater": true,
+  "maxGrowthStage": 3,
+  "secondsPerStage": 600,
+  "fruitingCycleSeconds": 600,
+  "seedSpreadChance": 0.12,
+  "seedSpreadRadiusMin": 3,
+  "seedSpreadRadiusMax": 6,
+  "nutrition": { "energy": 0.12, "protein": 0.0, "vitamins": 0.58, "minerals": 0.22 },
+  "harvestItemDefId": "berry_cluster",
+  "harvestItem": {
+    "id": "berry_cluster",
+    "displayName": "Berry Cluster",
+    "tags": ["plant", "food", "fruit"],
+    "weight": 0.3,
+    "nutrition": { "carbs": 0.5, "protein": 0.1, "fat": 0.2, "vitamins": 0.7 }
+  },
+  "seedItemDefId": "berry_seed",
+  "seedItem": {
+    "id": "berry_seed",
+    "displayName": "Berry Seed",
+    "tags": ["plant", "seed"],
+    "weight": 0.05
+  },
+  "fruitItemDefId": "berry_cluster"
+}

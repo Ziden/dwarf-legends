@@ -8,8 +8,11 @@ using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 /// <summary>
-/// Knowledge screen — displays discovered buildings, recipes, and materials.
+/// Knowledge screen â€” displays discovered buildings, recipes, and materials.
 /// Shows what triggered each discovery and what it unlocks.
 /// </summary>
 public partial class KnowledgePanel : PanelContainer
@@ -44,7 +47,7 @@ public partial class KnowledgePanel : PanelContainer
         vbox.AddChild(header);
         vbox.AddChild(new HSeparator());
 
-        // Main content area — split into list and detail
+        // Main content area â€” split into list and detail
         var hSplit = new HSplitContainer();
         hSplit.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         hSplit.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
@@ -131,7 +134,7 @@ public partial class KnowledgePanel : PanelContainer
             entries.Add(new ItemSelectionEntry(
                 Id: $"building:{buildingId}",
                 Title: building.DisplayName,
-                Subtitle: $"Building — discovered via {triggerName}",
+                Subtitle: $"Building â€” discovered via {triggerName}",
                 Details: building.IsWorkshop ? "Workshop" : "Structure",
                 Status: unlocksText,
                 StatusColor: new Color(0.44f, 0.85f, 0.48f),
@@ -149,12 +152,12 @@ public partial class KnowledgePanel : PanelContainer
 
             var triggerItem = _discovery.GetDiscoveredBy(recipeId);
             var triggerName = triggerItem is not null ? GetItemDisplayName(triggerItem) : "Unknown";
-            var outputs = string.Join(", ", recipe.Outputs.Select(o => _data.Items.GetOrNull(o.ItemDefId)?.DisplayName ?? o.ItemDefId));
+            var outputs = string.Join(", ", recipe.Outputs.Select(o => FormatRecipeOutput(o)));
 
             entries.Add(new ItemSelectionEntry(
                 Id: $"recipe:{recipeId}",
                 Title: recipe.DisplayName,
-                Subtitle: $"Recipe — discovered via {triggerName}",
+                Subtitle: $"Recipe â€” discovered via {triggerName}",
                 Details: $"Outputs: {outputs}",
                 Status: $"At: {_data.Buildings.GetOrNull(recipe.WorkshopDefId)?.DisplayName ?? recipe.WorkshopDefId}",
                 StatusColor: new Color(0.44f, 0.85f, 0.48f),
@@ -205,7 +208,7 @@ public partial class KnowledgePanel : PanelContainer
                     $"Construction needs: {string.Join(", ", building.ConstructionInputs.Select(i => $"{i.Quantity}x {string.Join(", ", i.RequiredTags.All)}"))}";
                 var recipes = _discovery.GetRecipesForBuilding(id).ToList();
                 _detailUnlocks.Text = recipes.Count > 0
-                    ? $"Unlocks:\n{string.Join("\n", recipes.Select(r => $"• {_data.Recipes.GetOrNull(r)?.DisplayName ?? r}"))}"
+                    ? $"Unlocks:\n{string.Join("\n", recipes.Select(r => $"â€¢ {_data.Recipes.GetOrNull(r)?.DisplayName ?? r}"))}"
                     : "No recipes unlocked yet.";
                 break;
             }
@@ -217,7 +220,7 @@ public partial class KnowledgePanel : PanelContainer
                 _detailTitle.Text = recipe.DisplayName;
                 _detailSubtitle.Text = $"Recipe at {_data.Buildings.GetOrNull(recipe.WorkshopDefId)?.DisplayName ?? recipe.WorkshopDefId}";
                 var inputs = string.Join(", ", recipe.Inputs.Select(i => $"{i.Quantity}x {string.Join(", ", i.RequiredTags.All)}"));
-                var outputs = string.Join(", ", recipe.Outputs.Select(o => $"{o.Quantity}x {_data.Items.GetOrNull(o.ItemDefId)?.DisplayName ?? o.ItemDefId}"));
+                var outputs = string.Join(", ", recipe.Outputs.Select(FormatRecipeOutput));
                 _detailDescription.Text = $"Discovered by picking up: {GetItemDisplayName(triggerItem ?? "unknown")}\n" +
                     $"Inputs: {inputs}\nOutputs: {outputs}";
                 _detailUnlocks.Text = "This recipe produces items that may unlock further discoveries.";
@@ -251,5 +254,18 @@ public partial class KnowledgePanel : PanelContainer
         if (_data is null) return itemDefId;
         var item = _data.Items.GetOrNull(itemDefId);
         return item?.DisplayName ?? itemDefId;
+    }
+
+    private string FormatRecipeOutput(RecipeOutput output)
+    {
+        if (_data is null)
+            return $"{output.Quantity}x {output.ItemDefId ?? output.FormRole ?? "item"}";
+
+        var itemDefId = RecipeOutputQuery.ResolveItemDefIds(_data, output).FirstOrDefault();
+        var itemDisplayName = !string.IsNullOrWhiteSpace(itemDefId)
+            ? GetItemDisplayName(itemDefId)
+            : output.ItemDefId ?? output.FormRole ?? "item";
+
+        return $"{output.Quantity}x {itemDisplayName}";
     }
 }

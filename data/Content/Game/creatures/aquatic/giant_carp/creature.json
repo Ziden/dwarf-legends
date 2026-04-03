@@ -1,0 +1,26 @@
+{
+  "id": "giant_carp",
+  "displayName": "Giant Carp",
+  "tags": ["animal", "aquatic", "fish", "aquatic_grazer"],
+  "diet": "aquatic_grazer",
+  "movementMode": "aquatic",
+  "maxHealth": 55,
+  "speed": 1.35,
+  "visuals": {
+    "proceduralProfile": "giant_carp",
+    "waterEffectStyle": "aquatic",
+    "viewerColor": "#38B2FA"
+  },
+  "deathDrops": [
+    { "itemDefId": "raw_meat", "quantity": 1 },
+    { "itemDefId": "bone", "quantity": 1 }
+  ],
+  "ecology": {
+    "surfaceWildlife": [
+      { "biomes": ["misty_marsh", "ocean_shallow", "ocean_deep"], "weight": 0.42, "minGroup": 2, "maxGroup": 5, "requiresWater": true, "avoidEmbarkCenter": false }
+    ],
+    "caveWildlife": [
+      { "layers": [1, 2, 3], "weight": 0.30, "minGroup": 2, "maxGroup": 5, "requiresWater": true, "avoidEmbarkCenter": false }
+    ]
+  }
+}

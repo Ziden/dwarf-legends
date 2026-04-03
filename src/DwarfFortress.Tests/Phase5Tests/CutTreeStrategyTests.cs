@@ -115,6 +115,129 @@ public sealed class CutTreeStrategyTests
     }
 
     [Fact]
+    public void OnComplete_Uses_TreeSpecies_Content_Wood_Material_When_Configured()
+    {
+        var logger = new TestLogger();
+        var ds = new InMemoryDataSource();
+        ds.AddFile("data/ConfigBundle/materials.json", """
+            [
+              { "id": "granite", "displayName": "Granite", "tags": ["stone"] },
+              { "id": "wood", "displayName": "Wood", "tags": ["organic"] },
+              { "id": "glowwood_wood", "displayName": "Glowwood", "tags": ["organic"] }
+            ]
+            """);
+        ds.AddFile("data/ConfigBundle/tiles.json", TestFixtures.CoreTilesJson);
+        ds.AddFile("data/ConfigBundle/items.json", TestFixtures.CoreItemsJson);
+        ds.AddFile("data/ConfigBundle/jobs.json", TestFixtures.CoreJobsJson);
+        TestFixtures.AddCoreCreatureBundles(ds);
+        ds.AddFile("data/Content/Core/tree_species/glowwood.json", """
+            {
+              "id": "glowwood",
+              "displayName": "Glowwood",
+              "woodMaterialId": "glowwood_wood"
+            }
+            """);
+
+        var map = new WorldMap();
+        var items = new ItemSystem();
+        var sim = TestFixtures.CreateSimulation(
+            logger,
+            ds,
+            new DataManager(),
+            new EntityRegistry(),
+            map,
+            items);
+
+        map.SetDimensions(8, 8, 2);
+
+        var pos = new Vec3i(3, 2, 0);
+        map.SetTile(pos, new TileData
+        {
+            TileDefId = TileDefIds.Tree,
+            MaterialId = "wood",
+            TreeSpeciesId = "glowwood",
+            IsPassable = false,
+        });
+
+        var strategy = new CutTreeStrategy();
+        strategy.OnComplete(new Job(1, JobDefIds.CutTree, pos), dwarfId: 0, sim.Context);
+
+        var log = items.GetAllItems().Single();
+        Assert.Equal("glowwood_wood", log.MaterialId);
+    }
+
+    [Fact]
+    public void OnComplete_Uses_ContentDefined_Log_Form_Item_When_Configured()
+    {
+        var logger = new TestLogger();
+        var ds = new InMemoryDataSource();
+        ds.AddFile("data/ConfigBundle/materials.json", """
+            [
+              { "id": "granite", "displayName": "Granite", "tags": ["stone"] },
+              { "id": "wood", "displayName": "Wood", "tags": ["organic"] },
+              { "id": "glowwood_wood", "displayName": "Glowwood", "tags": ["organic"] }
+            ]
+            """);
+        ds.AddFile("data/ConfigBundle/tiles.json", TestFixtures.CoreTilesJson);
+        ds.AddFile("data/ConfigBundle/items.json", TestFixtures.CoreItemsJson);
+        ds.AddFile("data/ConfigBundle/jobs.json", TestFixtures.CoreJobsJson);
+        TestFixtures.AddCoreCreatureBundles(ds);
+        ds.AddFile("data/Content/Core/tree_species/glowwood.json", """
+            {
+              "id": "glowwood",
+              "displayName": "Glowwood",
+              "woodMaterialId": "glowwood_wood"
+            }
+            """);
+        ds.AddFile("data/Content/Core/materials/glowwood_wood.json", """
+            {
+              "id": "glowwood_wood",
+              "displayName": "Glowwood",
+              "tags": ["wood", "organic"],
+              "forms": [
+                {
+                  "role": "log",
+                  "item": {
+                    "id": "glowwood_log",
+                    "displayName": "Glowwood Log",
+                    "tags": ["wood", "log"],
+                    "weight": 12.0
+                  }
+                }
+              ]
+            }
+            """);
+
+        var map = new WorldMap();
+        var items = new ItemSystem();
+        var sim = TestFixtures.CreateSimulation(
+            logger,
+            ds,
+            new DataManager(),
+            new EntityRegistry(),
+            map,
+            items);
+
+        map.SetDimensions(8, 8, 2);
+
+        var pos = new Vec3i(3, 2, 0);
+        map.SetTile(pos, new TileData
+        {
+            TileDefId = TileDefIds.Tree,
+            MaterialId = "wood",
+            TreeSpeciesId = "glowwood",
+            IsPassable = false,
+        });
+
+        var strategy = new CutTreeStrategy();
+        strategy.OnComplete(new Job(1, JobDefIds.CutTree, pos), dwarfId: 0, sim.Context);
+
+        var log = items.GetAllItems().Single();
+        Assert.Equal("glowwood_log", log.DefId);
+        Assert.Equal("glowwood_wood", log.MaterialId);
+    }
+
+    [Fact]
     public void OnComplete_Prefers_Nearby_Ground_Material_For_Cleared_Tile()
     {
         var (sim, map, items) = CreateSimulation("""
@@ -232,7 +355,7 @@ public sealed class CutTreeStrategyTests
         ds.AddFile("data/ConfigBundle/tiles.json", TestFixtures.CoreTilesJson);
         ds.AddFile("data/ConfigBundle/items.json", TestFixtures.CoreItemsJson);
         ds.AddFile("data/ConfigBundle/jobs.json", TestFixtures.CoreJobsJson);
-        ds.AddFile("data/ConfigBundle/creatures.json", TestFixtures.CoreCreaturesJson);
+        TestFixtures.AddCoreCreatureBundles(ds);
 
         var map = new WorldMap();
         var items = new ItemSystem();

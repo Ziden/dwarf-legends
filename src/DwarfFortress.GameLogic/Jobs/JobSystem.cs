@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
@@ -20,12 +19,18 @@ public record struct JobWorkStoppedEvent(int JobId, int DwarfId, string JobDefId
 public record struct JobCompletedEvent  (int JobId, int DwarfId, string JobDefId, int EntityId = -1, Vec3i TargetPos = default, int[]? ReservedItemIds = null);
 public record struct JobFailedEvent     (int JobId, string Reason);
 public record struct JobCancelledEvent  (int JobId);
+public record struct MiningDesignationSafetyCancelledEvent(Vec3i Position, string HazardKind);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// Manages all jobs: creation, assignment, step execution, and completion.
 /// Order 10 — after world and entity systems.
+/// 
+/// Optimizations applied:
+/// - Zero-LINQ TickActiveJobs: tracks active job IDs in _activeJobIds list
+/// - O(1) IsDwarfWorking: uses _dwarfActiveJobs dictionary
+/// - Reusable buffers to avoid per-tick allocations
 /// </summary>
 public sealed class JobSystem : IGameSystem
 {
@@ -46,12 +51,24 @@ public sealed class JobSystem : IGameSystem
     private readonly Dictionary<int, Queue<ActionStep>> _stepQueues   = new();
     private readonly Dictionary<int, Queue<Vec3i>>      _pathQueues   = new();
     private readonly Dictionary<int, float>             _moveProgress = new();
+    private readonly Dictionary<int, float>             _moveElapsedSeconds = new();
     private readonly Dictionary<int, string>            _activeWorkAnimations = new();
     private readonly Dictionary<int, float>             _repathCooldowns = new();
+
+    // Zero-LINQ hot path tracking — maintained on status change
+    private readonly List<int>              _activeJobIds    = new(); // Job IDs with InProgress status
+    private readonly Dictionary<int, int>   _dwarfActiveJobs = new(); // dwarfId → jobId (only InProgress jobs)
+
+    // Reusable buffers to avoid per-tick allocations
+    private readonly List<Job>   _pendingJobBuffer   = new();
+    private readonly List<Dwarf> _idleDwarfBuffer    = new();
+    private readonly List<int>   _activeJobIdBuffer  = new();
+    private readonly HashSet<Vec3i> _pendingMineTargets = new();
 
     private int       _nextJobId = 1;
     private EventBus? _eventBus;
     private GameContext? _ctx;
+    private SimulationProfiler? _profiler;
 
     // ── IGameSystem ────────────────────────────────────────────────────────
 
@@ -59,11 +76,13 @@ public sealed class JobSystem : IGameSystem
     {
         _eventBus = ctx.EventBus;
         _ctx      = ctx;
+        _profiler = ctx.Profiler;
 
         ctx.Commands.Register<DesignateMineCommand>(OnDesignateMine);
         ctx.Commands.Register<DesignateCutTreesCommand>(OnDesignateCutTrees);
         ctx.Commands.Register<DesignateHarvestCommand>(OnDesignateHarvest);
         ctx.Commands.Register<CancelDesignationCommand>(OnCancelDesignation);
+        ctx.EventBus.On<TileChangedEvent>(OnTileChanged);
     }
 
     public void Tick(float delta)
@@ -71,27 +90,37 @@ public sealed class JobSystem : IGameSystem
         var entityRegistry = _ctx!.Get<EntityRegistry>();
 
         // Assign pending jobs to idle dwarves
-        AssignJobs(entityRegistry);
+        using (_profiler?.Measure("assign_jobs") ?? default)
+            AssignJobs(entityRegistry);
 
         // Progress in-progress jobs
-        TickActiveJobs(delta, entityRegistry);
+        using (_profiler?.Measure("tick_active_jobs") ?? default)
+            TickActiveJobs(delta, entityRegistry);
     }
 
     public void OnSave(SaveWriter w)
     {
         w.Write("nextJobId", _nextJobId);
-        w.Write("jobs", _jobs.Values
-            .Where(j => j.Status is JobStatus.Pending or JobStatus.InProgress)
-            .Select(j => new JobDto
+        
+        // Write jobs without LINQ — iterate and filter manually
+        var jobList = new List<JobDto>();
+        foreach (var job in _jobs.Values)
+        {
+            if (job.Status is JobStatus.Pending or JobStatus.InProgress)
             {
-                Id       = j.Id,
-                JobDefId = j.JobDefId,
-                X        = j.TargetPos.X,
-                Y        = j.TargetPos.Y,
-                Z        = j.TargetPos.Z,
-                Priority = j.Priority,
-                EntityId = j.EntityId,
-            }).ToList());
+                jobList.Add(new JobDto
+                {
+                    Id       = job.Id,
+                    JobDefId = job.JobDefId,
+                    X        = job.TargetPos.X,
+                    Y        = job.TargetPos.Y,
+                    Z        = job.TargetPos.Z,
+                    Priority = job.Priority,
+                    EntityId = job.EntityId,
+                });
+            }
+        }
+        w.Write("jobs", jobList);
     }
 
     public void OnLoad(SaveReader r)
@@ -103,7 +132,11 @@ public sealed class JobSystem : IGameSystem
         _stepQueues.Clear();
         _pathQueues.Clear();
         _moveProgress.Clear();
+        _moveElapsedSeconds.Clear();
         _activeWorkAnimations.Clear();
+        _activeJobIds.Clear();
+        _dwarfActiveJobs.Clear();
+        _repathCooldowns.Clear();
 
         var jobs = r.TryRead<List<JobDto>>("jobs");
         if (jobs is null) return;
@@ -141,14 +174,41 @@ public sealed class JobSystem : IGameSystem
         return job;
     }
 
+    /// <summary>Sets job status and updates tracking collections to keep hot paths allocation-free.</summary>
+    private void SetJobStatus(Job job, JobStatus status)
+    {
+        var oldStatus = job.Status;
+        job.Status = status;
+
+        var wasActive = oldStatus == JobStatus.InProgress;
+        var isActive  = status == JobStatus.InProgress;
+
+        if (wasActive && !isActive)
+        {
+            _activeJobIds.Remove(job.Id);
+            if (job.AssignedDwarfId >= 0)
+                _dwarfActiveJobs.Remove(job.AssignedDwarfId);
+        }
+        else if (!wasActive && isActive)
+        {
+            _activeJobIds.Add(job.Id);
+            if (job.AssignedDwarfId >= 0)
+                _dwarfActiveJobs[job.AssignedDwarfId] = job.Id;
+        }
+    }
+
     public Job? GetJob(int jobId) =>
         _jobs.TryGetValue(jobId, out var j) ? j : null;
 
     public Job? GetAssignedJob(int dwarfId)
-        => _jobs.Values
-            .Where(j => j.AssignedDwarfId == dwarfId && j.Status == JobStatus.InProgress)
-            .OrderByDescending(j => j.Priority)
-            .FirstOrDefault();
+    {
+        // Zero-LINQ: check tracked active job for this dwarf
+        if (!_dwarfActiveJobs.TryGetValue(dwarfId, out var jobId) || 
+            !_jobs.TryGetValue(jobId, out var job))
+            return null;
+
+        return job.Status == JobStatus.InProgress ? job : null;
+    }
 
     public string DescribeCurrentStep(int jobId)
     {
@@ -156,6 +216,14 @@ public sealed class JobSystem : IGameSystem
             return "finishing";
 
         return DescribeStep(steps.Peek());
+    }
+
+    public ActionStep? GetCurrentStep(int jobId)
+    {
+        if (!_stepQueues.TryGetValue(jobId, out var steps) || steps.Count == 0)
+            return null;
+
+        return steps.Peek();
     }
 
     public void CancelJob(int jobId)
@@ -169,16 +237,17 @@ public sealed class JobSystem : IGameSystem
         }
 
         StopWorkAnimation(job);
-        job.Status = JobStatus.Cancelled;
-        _stepQueues.Remove(jobId);
-        _pathQueues.Remove(jobId);
-        _moveProgress.Remove(jobId);
-        _jobs.Remove(jobId);
+        SetJobStatus(job, JobStatus.Cancelled);
+        CleanupJob(jobId);
         _eventBus?.Emit(new JobCancelledEvent(jobId));
     }
 
-    public IEnumerable<Job> GetPendingJobs() =>
-        _jobs.Values.Where(j => j.Status == JobStatus.Pending);
+    public IEnumerable<Job> GetPendingJobs()
+    {
+        foreach (var job in _jobs.Values)
+            if (job.Status == JobStatus.Pending)
+                yield return job;
+    }
 
     public IEnumerable<Job> GetAllJobs() => _jobs.Values;
 
@@ -195,11 +264,6 @@ public sealed class JobSystem : IGameSystem
     };
 
     // ── Private: assignment ────────────────────────────────────────────────
-
-    // Reusable list for collecting pending jobs — avoids per-tick allocations
-    private readonly List<Job> _pendingJobBuffer = new();
-    // Reusable list for collecting idle dwarves — avoids per-tick allocations
-    private readonly List<Dwarf> _idleDwarfBuffer = new();
 
     private void AssignJobs(EntityRegistry registry)
     {
@@ -225,23 +289,26 @@ public sealed class JobSystem : IGameSystem
         {
             if (!_strategies.TryGetValue(job.JobDefId, out var strat)) continue;
 
-            var candidate = FindCandidateDwarf(job, strat, _idleDwarfBuffer);
+            var candidate = job.AssignedDwarfId >= 0
+                ? FindPreassignedCandidate(job, strat, _idleDwarfBuffer)
+                : FindCandidateDwarf(job, strat, _idleDwarfBuffer);
 
             if (candidate is null) continue;
 
-            // Check Fears Water trait - refuse job if target is near water
-            if (candidate.Traits.HasTrait(TraitIds.FearsWater) && IsJobNearWater(job))
+            // Check low courage attribute (courage <= 2) near water - refuse job if target is near water
+            if (AttributeEffectSystem.FearsWater(candidate, _ctx?.TryGet<DataManager>()) && IsJobNearWater(job))
             {
-                _eventBus?.Emit(new Systems.JobRefusedEvent(candidate.Id, job.Id, TraitIds.FearsWater,
-                    $"{candidate.FirstName} refuses to work near water."));
+                _eventBus?.Emit(new Systems.JobRefusedEvent(candidate.Id, job.Id, AttributeIds.Courage,
+                    $"{candidate.FirstName} is too afraid to work near water."));
                 continue;
             }
 
             var steps = strat.GetSteps(job, candidate.Id, _ctx!);
             _stepQueues[job.Id] = new Queue<ActionStep>(steps);
 
-            job.Status          = JobStatus.InProgress;
+            SetJobStatus(job, JobStatus.InProgress);
             job.AssignedDwarfId = candidate.Id;
+            _dwarfActiveJobs[candidate.Id] = job.Id;
             _idleDwarfBuffer.Remove(candidate);
 
             _eventBus?.Emit(new JobAssignedEvent(job.Id, candidate.Id));
@@ -258,31 +325,31 @@ public sealed class JobSystem : IGameSystem
             {
                 var steps = idleStrat.GetSteps(idleJob, dwarf.Id, _ctx!);
                 _stepQueues[idleJob.Id] = new Queue<ActionStep>(steps);
-                idleJob.Status          = JobStatus.InProgress;
+                SetJobStatus(idleJob, JobStatus.InProgress);
                 idleJob.AssignedDwarfId = dwarf.Id;
+                _dwarfActiveJobs[dwarf.Id] = idleJob.Id;
                 _eventBus?.Emit(new JobAssignedEvent(idleJob.Id, dwarf.Id));
             }
         }
     }
 
-    /// <summary>Check if a dwarf currently has an in-progress job.</summary>
-    private bool IsDwarfWorking(int dwarfId)
-    {
-        foreach (var job in _jobs.Values)
-        {
-            if (job.AssignedDwarfId == dwarfId && job.Status == JobStatus.InProgress)
-                return true;
-        }
-        return false;
-    }
+    /// <summary>Check if a dwarf currently has an in-progress job. O(1) via tracked dictionary.</summary>
+    private bool IsDwarfWorking(int dwarfId) => _dwarfActiveJobs.ContainsKey(dwarfId);
 
     /// <summary>Check if a dwarf has a job with the given definition in pending or in-progress state.</summary>
     private bool HasActiveJob(int dwarfId, string jobDefId)
     {
+        // Fast path: check in-progress jobs via O(1) lookup
+        if (_dwarfActiveJobs.TryGetValue(dwarfId, out var jobId) && 
+            _jobs.TryGetValue(jobId, out var activeJob) && 
+            activeJob.JobDefId == jobDefId)
+            return true;
+
+        // Slow path: scan pending jobs only
         foreach (var job in _jobs.Values)
         {
-            if (job.AssignedDwarfId == dwarfId && job.JobDefId == jobDefId
-                && (job.Status is JobStatus.Pending or JobStatus.InProgress))
+            if (job.Status != JobStatus.Pending) continue;
+            if (job.AssignedDwarfId == dwarfId && job.JobDefId == jobDefId)
                 return true;
         }
         return false;
@@ -294,7 +361,7 @@ public sealed class JobSystem : IGameSystem
         if (IsSurvivalJob(job.JobDefId))
             return idleDwarves.FirstOrDefault(d => strat.CanExecute(job, d.Id, _ctx!));
 
-        var requiredLabor = GetRequiredLabor(job.JobDefId);
+        var requiredLabor = GetRequiredLabor(job);
         var skilledCandidate = idleDwarves.FirstOrDefault(d =>
             d.Labors.IsEnabled(requiredLabor) &&
             strat.CanExecute(job, d.Id, _ctx!));
@@ -306,6 +373,20 @@ public sealed class JobSystem : IGameSystem
             return null;
 
         return idleDwarves.FirstOrDefault(d => strat.CanExecute(job, d.Id, _ctx!));
+    }
+
+    private Dwarf? FindPreassignedCandidate(Job job, IJobStrategy strat, IReadOnlyList<Dwarf> idleDwarves)
+    {
+        for (var i = 0; i < idleDwarves.Count; i++)
+        {
+            var dwarf = idleDwarves[i];
+            if (dwarf.Id != job.AssignedDwarfId)
+                continue;
+
+            return strat.CanExecute(job, dwarf.Id, _ctx!) ? dwarf : null;
+        }
+
+        return null;
     }
 
     private static bool IsSurvivalJob(string jobDefId) =>
@@ -336,15 +417,49 @@ public sealed class JobSystem : IGameSystem
         return tile.FluidType == FluidType.Water || tile.TileDefId == World.TileDefIds.Water;
     }
 
+    /// <summary>
+    /// Zero-LINQ check: does a pending/in-progress job with the given defId target this position?
+    /// </summary>
+    private bool HasPendingJobAt(string jobDefId, Vec3i pos)
+    {
+        foreach (var job in _jobs.Values)
+        {
+            if (job.JobDefId == jobDefId
+                && job.TargetPos == pos
+                && (job.Status is JobStatus.Pending or JobStatus.InProgress))
+                return true;
+        }
+        return false;
+    }
+
+    // ── Tick active jobs (zero-LINQ) ───────────────────────────────────────
+
     private void TickActiveJobs(float delta, EntityRegistry registry)
     {
-        var active = _jobs.Values
-            .Where(j => j.Status == JobStatus.InProgress)
-            .ToList();
+        // Zero-allocation iteration of active job IDs (pre-tracked on status change)
+        _activeJobIdBuffer.Clear();
+        _activeJobIdBuffer.AddRange(_activeJobIds);
 
-        foreach (var job in active)
+        // Tick repath cooldowns so dwarves can retry pathfinding after being blocked
+        for (int i = _activeJobIdBuffer.Count - 1; i >= 0; i--)
         {
-            if (!_stepQueues.TryGetValue(job.Id, out var steps) || steps.Count == 0)
+            var jobId = _activeJobIdBuffer[i];
+            if (_repathCooldowns.TryGetValue(jobId, out var cooldown))
+            {
+                cooldown -= delta;
+                if (cooldown <= 0f)
+                    _repathCooldowns.Remove(jobId);
+                else
+                    _repathCooldowns[jobId] = cooldown;
+            }
+        }
+
+        foreach (var jobId in _activeJobIdBuffer)
+        {
+            if (!_jobs.TryGetValue(jobId, out var job) || job.Status != JobStatus.InProgress)
+                continue;
+
+            if (!_stepQueues.TryGetValue(jobId, out var steps) || steps.Count == 0)
             {
                 CompleteJob(job);
                 continue;
@@ -393,7 +508,11 @@ public sealed class JobSystem : IGameSystem
                     if (pickupItemSystem is not null && pickupEntity is not null)
                     {
                         var carrierPos = pickupEntity.Components.Get<PositionComponent>().Position;
-                        pickupItemSystem.PickUpItem(pickup.ItemEntityId, job.AssignedDwarfId, carrierPos);
+                        if (!pickupItemSystem.PickUpItem(pickup.ItemEntityId, job.AssignedDwarfId, carrierPos, pickup.CarryMode))
+                        {
+                            FailJob(job, "pickup_failed");
+                            break;
+                        }
                     }
                     steps.Dequeue();
                     break;
@@ -454,6 +573,7 @@ public sealed class JobSystem : IGameSystem
             steps.Dequeue();
             _pathQueues.Remove(job.Id);
             _moveProgress.Remove(job.Id);
+            _moveElapsedSeconds.Remove(job.Id);
             return;
         }
 
@@ -463,8 +583,10 @@ public sealed class JobSystem : IGameSystem
             var path = Pathfinder.FindPath(map, posComp.Position, move.Target);
             if (path.Count == 0) { FailJob(job, "no_path"); return; }
 
-            // Skip index 0 (current position)
-            pathQ = new Queue<Vec3i>(path.Skip(1));
+            // Skip index 0 (current position) — manual iteration to avoid LINQ Skip()
+            pathQ = new Queue<Vec3i>();
+            for (int i = 1; i < path.Count; i++)
+                pathQ.Enqueue(path[i]);
             _pathQueues[job.Id] = pathQ;
         }
 
@@ -473,6 +595,7 @@ public sealed class JobSystem : IGameSystem
             steps.Dequeue();
             _pathQueues.Remove(job.Id);
             _moveProgress.Remove(job.Id);
+            _moveElapsedSeconds.Remove(job.Id);
             return;
         }
 
@@ -482,7 +605,9 @@ public sealed class JobSystem : IGameSystem
             : 1f;
 
         _moveProgress.TryGetValue(job.Id, out var prog);
+        _moveElapsedSeconds.TryGetValue(job.Id, out var elapsedSeconds);
         prog += delta * speed;
+        elapsedSeconds += delta;
 
         if (prog >= 1.0f)
         {
@@ -498,6 +623,7 @@ public sealed class JobSystem : IGameSystem
             if (stepState == MoveStepState.Wait)
             {
                 _moveProgress[job.Id] = MathF.Min(prog, 1.0f);
+                _moveElapsedSeconds[job.Id] = ResolveElapsedSecondsForProgress(_moveProgress[job.Id], speed);
                 return;
             }
 
@@ -506,17 +632,21 @@ public sealed class JobSystem : IGameSystem
                 steps.Dequeue();
                 _pathQueues.Remove(job.Id);
                 _moveProgress.Remove(job.Id);
+                _moveElapsedSeconds.Remove(job.Id);
                 return;
             }
 
             var newPos = pathQ.Dequeue();
-            posComp.Position = newPos;
-            _ctx!.TryGet<ItemSystem>()?.UpdateCarriedItemsPosition(entity.Id, newPos);
-            _eventBus?.Emit(new EntityMovedEvent(entity.Id, oldPos, newPos));
-            prog -= 1.0f;
+            var carryProgress = MathF.Max(0f, prog - 1.0f);
+            var carryElapsedSeconds = ResolveElapsedSecondsForProgress(carryProgress, speed);
+            var segmentDurationSeconds = MathF.Max(0f, elapsedSeconds - carryElapsedSeconds);
+            EntityMovement.TryMove(_ctx!, entity, newPos, segmentDurationSeconds);
+            prog = carryProgress;
+            elapsedSeconds = carryElapsedSeconds;
         }
 
         _moveProgress[job.Id] = prog;
+        _moveElapsedSeconds[job.Id] = elapsedSeconds;
     }
 
     private bool EnsureWorkPosition(Job job, WorkAtStep work, Queue<ActionStep> steps, EntityRegistry registry)
@@ -551,6 +681,15 @@ public sealed class JobSystem : IGameSystem
     {
         _pathQueues.Remove(jobId);
         _moveProgress.Remove(jobId);
+        _moveElapsedSeconds.Remove(jobId);
+    }
+
+    private static float ResolveElapsedSecondsForProgress(float progress, float speed)
+    {
+        if (progress <= 0f)
+            return 0f;
+
+        return progress / MathF.Max(speed, 0.0001f);
     }
 
     private MoveStepState PrepareNextMoveStep(
@@ -577,7 +716,9 @@ public sealed class JobSystem : IGameSystem
         var reroute = FindPathAvoidingOccupiedTiles(map, origin, move.Target, entityId, spatial);
         if (reroute.Count > 1)
         {
-            pathQ = new Queue<Vec3i>(reroute.Skip(1));
+            pathQ = new Queue<Vec3i>();
+            for (int i = 1; i < reroute.Count; i++)
+                pathQ.Enqueue(reroute[i]);
             _pathQueues[job.Id] = pathQ;
             _repathCooldowns[job.Id] = 0.5f;  // Half-second cooldown before next repath
             return pathQ.Count == 0 || IsStepAvailable(map, origin, pathQ.Peek(), entityId, spatial)
@@ -642,7 +783,7 @@ public sealed class JobSystem : IGameSystem
         }
 
         StopWorkAnimation(job);
-        job.Status = JobStatus.Failed;
+        SetJobStatus(job, JobStatus.Failed);
         CleanupJob(job.Id);
         _eventBus?.Emit(new JobFailedEvent(job.Id, reason));
     }
@@ -653,7 +794,7 @@ public sealed class JobSystem : IGameSystem
         if (_strategies.TryGetValue(job.JobDefId, out var strat))
             strat.OnComplete(job, job.AssignedDwarfId, _ctx!);
 
-        job.Status = JobStatus.Complete;
+        SetJobStatus(job, JobStatus.Complete);
         CleanupJob(job.Id);
         _eventBus?.Emit(new JobCompletedEvent(job.Id, job.AssignedDwarfId, job.JobDefId, job.EntityId, job.TargetPos, job.ReservedItemIds.ToArray()));
     }
@@ -664,10 +805,13 @@ public sealed class JobSystem : IGameSystem
     /// </summary>
     private void CleanupJob(int jobId)
     {
+        _activeJobIds.Remove(jobId);
         _stepQueues.Remove(jobId);
         _pathQueues.Remove(jobId);
         _moveProgress.Remove(jobId);
+        _moveElapsedSeconds.Remove(jobId);
         _activeWorkAnimations.Remove(jobId);
+        _repathCooldowns.Remove(jobId);
         _jobs.Remove(jobId);
     }
 
@@ -675,10 +819,19 @@ public sealed class JobSystem : IGameSystem
     /// Resolve the required labor type for a job from its JobDef.
     /// Falls back to Misc if the job definition is not found.
     /// </summary>
-    private string GetRequiredLabor(string jobDefId)
+    private string GetRequiredLabor(Job job)
     {
         var data = _ctx?.TryGet<DataManager>();
-        var jobDef = data?.Jobs.GetOrNull(jobDefId);
+        if (string.Equals(job.JobDefId, JobDefIds.Craft, StringComparison.OrdinalIgnoreCase) && job.EntityId >= 0)
+        {
+            var recipeSystem = _ctx?.TryGet<RecipeSystem>();
+            var order = recipeSystem?.GetOrCreateQueue(job.EntityId).Peek();
+            var recipeLabor = order is null ? null : data?.Recipes.GetOrNull(order.RecipeId)?.RequiredLaborId;
+            if (!string.IsNullOrWhiteSpace(recipeLabor))
+                return recipeLabor!;
+        }
+
+        var jobDef = data?.Jobs.GetOrNull(job.JobDefId);
         return jobDef?.RequiredLaborId ?? LaborIds.Misc;
     }
 
@@ -690,10 +843,16 @@ public sealed class JobSystem : IGameSystem
         var to   = cmd.To;
         var data = _ctx!.TryGet<DataManager>();
         var map  = _ctx.Get<World.WorldMap>();
-        var existingMineTargets = _jobs.Values
-            .Where(j => j.JobDefId == JobDefIds.MineTile && j.Status is JobStatus.Pending or JobStatus.InProgress)
-            .Select(j => j.TargetPos)
-            .ToHashSet();
+        
+        // Zero-LINQ: collect existing mine targets manually
+        _pendingMineTargets.Clear();
+        foreach (var job in _jobs.Values)
+        {
+            if (job.JobDefId == JobDefIds.MineTile 
+                && (job.Status is JobStatus.Pending or JobStatus.InProgress))
+                _pendingMineTargets.Add(job.TargetPos);
+        }
+        
         var candidates = new List<Vec3i>();
 
         for (int x = Math.Min(from.X, to.X); x <= Math.Max(from.X, to.X); x++)
@@ -707,7 +866,8 @@ public sealed class JobSystem : IGameSystem
             // Only designate solid (non-passable) tiles that aren't already queued
             if (tile.IsPassable || tile.TileDefId == World.TileDefIds.Empty || tile.TileDefId == World.TileDefIds.Tree) continue;
             if (tileDef is not null && !tileDef.IsMineable) continue;
-            if (existingMineTargets.Contains(pos)) continue;
+            if (MiningHazardAnalysis.GetVisibleWallHazardKind(map, pos) is not null) continue;
+            if (_pendingMineTargets.Contains(pos)) continue;
             candidates.Add(pos);
         }
 
@@ -728,6 +888,7 @@ public sealed class JobSystem : IGameSystem
                 tile.IsDesignated = true;
                 map.SetTile(pos, tile);
                 CreateJob(JobDefIds.MineTile, pos, priority: 5);
+                _pendingMineTargets.Add(pos);
                 candidates.RemoveAt(i);
                 progress = true;
             }
@@ -749,8 +910,7 @@ public sealed class JobSystem : IGameSystem
             if (tile.TileDefId != World.TileDefIds.Tree) continue;
 
             // Don't duplicate-queue if a job already exists for this tile
-            if (_jobs.Values.Any(j => j.TargetPos == pos && j.JobDefId == JobDefIds.CutTree
-                                   && j.Status is JobStatus.Pending or JobStatus.InProgress)) continue;
+            if (HasPendingJobAt(JobDefIds.CutTree, pos)) continue;
 
             tile.IsDesignated = true;
             map.SetTile(pos, tile);
@@ -762,18 +922,18 @@ public sealed class JobSystem : IGameSystem
     {
         var data = _ctx!.TryGet<DataManager>();
         var map  = _ctx.Get<World.WorldMap>();
-        var existingHarvestTargets = _jobs.Values
-            .Where(j => j.JobDefId == JobDefIds.HarvestPlant && j.Status is JobStatus.Pending or JobStatus.InProgress)
-            .Select(j => j.TargetPos)
-            .ToHashSet();
 
         for (int x = Math.Min(cmd.From.X, cmd.To.X); x <= Math.Max(cmd.From.X, cmd.To.X); x++)
         for (int y = Math.Min(cmd.From.Y, cmd.To.Y); y <= Math.Max(cmd.From.Y, cmd.To.Y); y++)
         for (int z = Math.Min(cmd.From.Z, cmd.To.Z); z <= Math.Max(cmd.From.Z, cmd.To.Z); z++)
         {
             var pos = new Vec3i(x, y, z);
-            if (existingHarvestTargets.Contains(pos)) continue;
+            if (HasPendingJobAt(JobDefIds.HarvestPlant, pos)) continue;
             if (data is null || !PlantHarvesting.TryGetHarvestablePlant(map, data, pos, out _)) continue;
+
+            var tile = map.GetTile(pos);
+            tile.IsDesignated = true;
+            map.SetTile(pos, tile);
             CreateJob(JobDefIds.HarvestPlant, pos, priority: 4);
         }
     }
@@ -788,10 +948,77 @@ public sealed class JobSystem : IGameSystem
         for (int z = Math.Min(from.Z, to.Z); z <= Math.Max(from.Z, to.Z); z++)
         {
             var pos = new Vec3i(x, y, z);
-            foreach (var job in _jobs.Values
-                         .Where(j => j.TargetPos == pos && j.Status is JobStatus.Pending)
-                         .ToList())
-                CancelJob(job.Id);
+            // Collect pending jobs at this position without LINQ
+            var jobsToCancel = new List<int>();
+            foreach (var job in _jobs.Values)
+            {
+                if (job.TargetPos == pos && job.Status is JobStatus.Pending)
+                    jobsToCancel.Add(job.Id);
+            }
+            foreach (var jobId in jobsToCancel)
+                CancelJob(jobId);
+
+            if (jobsToCancel.Count == 0)
+                continue;
+
+            var map = _ctx!.Get<World.WorldMap>();
+            var tile = map.GetTile(pos);
+            if (!tile.IsDesignated)
+                continue;
+
+            tile.IsDesignated = false;
+            map.SetTile(pos, tile);
         }
+    }
+
+    private void OnTileChanged(TileChangedEvent e)
+    {
+        if (_ctx is null)
+            return;
+
+        if (!e.NewTile.IsPassable || e.OldTile.IsPassable == e.NewTile.IsPassable)
+            return;
+
+        var map = _ctx.Get<WorldMap>();
+        CancelExposedUnsafeMining(map, e.Pos + Vec3i.North);
+        CancelExposedUnsafeMining(map, e.Pos + Vec3i.South);
+        CancelExposedUnsafeMining(map, e.Pos + Vec3i.East);
+        CancelExposedUnsafeMining(map, e.Pos + Vec3i.West);
+        CancelExposedUnsafeMining(map, e.Pos + Vec3i.Up);
+        CancelExposedUnsafeMining(map, e.Pos + Vec3i.Down);
+    }
+
+    private void CancelExposedUnsafeMining(WorldMap map, Vec3i pos)
+    {
+        if (!map.IsInBounds(pos))
+            return;
+
+        var hazardKind = MiningHazardAnalysis.GetVisibleWallHazardKind(map, pos);
+        if (hazardKind is null)
+            return;
+
+        var tile = map.GetTile(pos);
+        if (!tile.IsDesignated)
+            return;
+
+        var jobsToCancel = new List<int>();
+        foreach (var job in _jobs.Values)
+        {
+            if (job.TargetPos != pos || !string.Equals(job.JobDefId, JobDefIds.MineTile, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (job.Status is not (JobStatus.Pending or JobStatus.InProgress))
+                continue;
+            jobsToCancel.Add(job.Id);
+        }
+
+        if (jobsToCancel.Count == 0)
+            return;
+
+        foreach (var jobId in jobsToCancel)
+            CancelJob(jobId);
+
+        tile.IsDesignated = false;
+        map.SetTile(pos, tile);
+        _eventBus?.Emit(new MiningDesignationSafetyCancelledEvent(pos, hazardKind));
     }
 }

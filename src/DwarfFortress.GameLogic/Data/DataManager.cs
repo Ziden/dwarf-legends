@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data.Defs;
+using DwarfFortress.WorldGen.Content;
 
 namespace DwarfFortress.GameLogic.Data;
 
@@ -19,18 +21,20 @@ public sealed class DataManager : IGameSystem
     public bool   IsEnabled   { get; set; } = true;
 
     // ── Registries ─────────────────────────────────────────────────────────
-    public Registry<MaterialDef>   Materials   { get; } = new();
-    public Registry<TileDef>       Tiles       { get; } = new();
-    public Registry<ItemDef>       Items       { get; } = new();
-    public Registry<PlantDef>      Plants      { get; } = new();
-    public Registry<RecipeDef>     Recipes     { get; } = new();
-    public Registry<JobDef>        Jobs        { get; } = new();
-    public Registry<CreatureDef>   Creatures   { get; } = new();
-    public Registry<ReactionDef>   Reactions   { get; } = new();
-    public Registry<WorldEventDef> WorldEvents { get; } = new();
-    public Registry<BuildingDef>   Buildings   { get; } = new();
-    public Registry<DiscoveryDef>  Discoveries { get; } = new();
-    public Registry<TraitDef>      Traits      { get; } = new();
+    public Registry<MaterialDef>      Materials      { get; } = new();
+    public Registry<TileDef>          Tiles          { get; } = new();
+    public Registry<ItemDef>          Items          { get; } = new();
+    public Registry<PlantDef>         Plants         { get; } = new();
+    public Registry<RecipeDef>        Recipes        { get; } = new();
+    public Registry<JobDef>           Jobs           { get; } = new();
+    public Registry<CreatureDef>      Creatures      { get; } = new();
+    public Registry<ReactionDef>      Reactions      { get; } = new();
+    public Registry<WorldEventDef>    WorldEvents    { get; } = new();
+    public Registry<BuildingDef>      Buildings      { get; } = new();
+    public Registry<DiscoveryDef>     Discoveries    { get; } = new();
+    public Registry<DwarfAttributeDef> Attributes    { get; } = new();
+    public SharedContentCatalog?      SharedContent  { get; private set; }
+    public ContentQueryService?       ContentQueries { get; private set; }
 
     // ── IGameSystem.Initialize ─────────────────────────────────────────────
 
@@ -39,27 +43,30 @@ public sealed class DataManager : IGameSystem
         var ds = ctx.DataSource;
         var log = ctx.Logger;
 
-        LoadRegistryFromFile(ds, log, "data/ConfigBundle/materials.json",    ParseMaterial,   Materials);
+        SharedContent = SharedContentCatalogLoader.Load(new DataSourceContentFileSource(ds));
+        ContentQueries = new ContentQueryService(SharedContent);
+
+        LoadMaterialsFromCatalog(SharedContent, Materials);
         LoadRegistryFromFile(ds, log, "data/ConfigBundle/tiles.json",        ParseTile,       Tiles);
-        LoadRegistryFromFile(ds, log, "data/ConfigBundle/items.json",        ParseItem,       Items);
-        LoadRegistryFromFile(ds, log, "data/ConfigBundle/plants.json",       ParsePlant,      Plants);
+        LoadItemsFromCatalog(SharedContent, Items);
+        LoadPlantsFromCatalog(SharedContent, Plants);
         LoadRegistryFromFile(ds, log, "data/ConfigBundle/recipes.json",      ParseRecipe,     Recipes);
         LoadRegistryFromFile(ds, log, "data/ConfigBundle/jobs.json",         ParseJob,        Jobs);
-        LoadRegistryFromFile(ds, log, "data/ConfigBundle/creatures.json",    ParseCreature,   Creatures);
+        LoadCreaturesFromCatalog(SharedContent, Creatures);
         LoadRegistryFromFile(ds, log, "data/ConfigBundle/reactions.json",    ParseReaction,   Reactions);
         LoadRegistryFromFile(ds, log, "data/ConfigBundle/world_events.json", ParseWorldEvent, WorldEvents);
-        LoadRegistryFromFile(ds, log, "data/ConfigBundle/buildings.json",    ParseBuilding,   Buildings);
-        LoadRegistryFromFile(ds, log, "data/ConfigBundle/discoveries.json",  ParseDiscovery,  Discoveries);
-        LoadRegistryFromFile(ds, log, "data/ConfigBundle/traits.json",       ParseTrait,      Traits);
+        LoadRegistryFromFile(ds, log, "data/ConfigBundle/buildings.json",       ParseBuilding,      Buildings);
+        LoadRegistryFromFile(ds, log, "data/ConfigBundle/discoveries.json",     ParseDiscovery,     Discoveries);
+        LoadRegistryFromFile(ds, log, "data/ConfigBundle/dwarf_attributes.json", ParseDwarfAttribute, Attributes);
 
-        Materials.Seal(); Tiles.Seal();  Items.Seal();  Plants.Seal(); Recipes.Seal();
+        Materials.Seal(); Tiles.Seal();   Items.Seal();   Plants.Seal();   Recipes.Seal();
         Jobs.Seal();      Creatures.Seal(); Reactions.Seal(); WorldEvents.Seal();
-        Buildings.Seal(); Discoveries.Seal(); Traits.Seal();
+        Buildings.Seal(); Discoveries.Seal(); Attributes.Seal();
 
         log.Info($"[DataManager] Loaded: {Materials.Count} materials, {Tiles.Count} tiles, " +
              $"{Items.Count} items, {Plants.Count} plants, {Recipes.Count} recipes, {Jobs.Count} jobs, " +
                  $"{Creatures.Count} creatures, {Reactions.Count} reactions, " +
-                 $"{WorldEvents.Count} world_events, {Buildings.Count} buildings, {Discoveries.Count} discoveries, {Traits.Count} traits.");
+                 $"{WorldEvents.Count} world_events, {Buildings.Count} buildings, {Discoveries.Count} discoveries, {Attributes.Count} attributes.");
     }
 
     private static void LoadRegistryFromFile<T>(
@@ -93,6 +100,18 @@ public sealed class DataManager : IGameSystem
                         registry.Add(GetId(node), def);
                     }
             }
+            else if (root is JsonObject obj && LooksLikeDefinitionMap(obj))
+            {
+                foreach (var (key, value) in obj)
+                {
+                    if (value is not JsonObject entry)
+                        continue;
+
+                    entry["id"] ??= key;
+                    var def = parser(entry);
+                    registry.Add(GetId(entry), def);
+                }
+            }
             else
             {
                 var def = parser(root);
@@ -105,9 +124,137 @@ public sealed class DataManager : IGameSystem
         }
     }
 
+    private static void LoadMaterialsFromCatalog(SharedContentCatalog catalog, Registry<MaterialDef> registry)
+    {
+        foreach (var material in catalog.Materials.Values.OrderBy(material => material.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            registry.Add(material.Id, new MaterialDef(
+                Id: material.Id,
+                DisplayName: material.DisplayName,
+                Tags: TagSet.From(material.Tags),
+                Hardness: material.Hardness,
+                MeltingPoint: material.MeltingPoint,
+                Density: material.Density,
+                Value: material.Value,
+                Color: material.Color));
+        }
+    }
+
+    private static void LoadItemsFromCatalog(SharedContentCatalog catalog, Registry<ItemDef> registry)
+    {
+        foreach (var item in catalog.Items.Values.OrderBy(item => item.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            registry.Add(item.Id, new ItemDef(
+                Id: item.Id,
+                DisplayName: item.DisplayName,
+                Tags: TagSet.From(item.Tags),
+                Stackable: item.Stackable,
+                MaxStack: item.MaxStack,
+                Weight: item.Weight,
+                BaseValue: item.BaseValue,
+                Nutrition: item.Nutrition is null
+                    ? null
+                    : new NutritionProfile(
+                        item.Nutrition.Carbs,
+                        item.Nutrition.Protein,
+                        item.Nutrition.Fat,
+                        item.Nutrition.Vitamins)));
+        }
+    }
+
+    private static void LoadPlantsFromCatalog(SharedContentCatalog catalog, Registry<PlantDef> registry)
+    {
+        foreach (var plant in catalog.Plants.Values.OrderBy(plant => plant.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            registry.Add(plant.Id, new PlantDef(
+                Id: plant.Id,
+                DisplayName: plant.DisplayName,
+                HostKind: plant.HostKind == PlantContentHostKind.Tree ? PlantHostKind.Tree : PlantHostKind.Ground,
+                AllowedBiomeIds: plant.AllowedBiomeIds,
+                AllowedGroundTileDefIds: plant.AllowedGroundTileDefIds,
+                SupportedTreeSpeciesIds: plant.SupportedTreeSpeciesIds,
+                MinMoisture: plant.MinMoisture,
+                MaxMoisture: plant.MaxMoisture,
+                MinTerrain: plant.MinTerrain,
+                MaxTerrain: plant.MaxTerrain,
+                PrefersNearWater: plant.PrefersNearWater,
+                PrefersFarFromWater: plant.PrefersFarFromWater,
+                MaxGrowthStage: plant.MaxGrowthStage,
+                SecondsPerStage: plant.SecondsPerStage,
+                FruitingCycleSeconds: plant.FruitingCycleSeconds,
+                SeedSpreadChance: plant.SeedSpreadChance,
+                SeedSpreadRadiusMin: plant.SeedSpreadRadiusMin,
+                SeedSpreadRadiusMax: plant.SeedSpreadRadiusMax,
+                Energy: plant.Energy,
+                Protein: plant.Protein,
+                Vitamins: plant.Vitamins,
+                Minerals: plant.Minerals,
+                HarvestItemDefId: plant.HarvestItemDefId,
+                SeedItemDefId: plant.SeedItemDefId,
+                FruitItemDefId: plant.FruitItemDefId));
+        }
+    }
+
+    private static void LoadCreaturesFromCatalog(SharedContentCatalog catalog, Registry<CreatureDef> registry)
+    {
+        foreach (var creature in catalog.Creatures.Values.OrderBy(creature => creature.Id, StringComparer.OrdinalIgnoreCase))
+        {
+            registry.Add(creature.Id, new CreatureDef(
+                Id: creature.Id,
+                DisplayName: creature.DisplayName,
+                Tags: TagSet.From(creature.Tags),
+                BaseSpeed: creature.BaseSpeed,
+                BaseStrength: creature.BaseStrength,
+                BaseToughness: creature.BaseToughness,
+                MaxHealth: creature.MaxHealth,
+                IsPlayable: creature.IsPlayable,
+                IsSapient: creature.IsSapient,
+                AuthoredIsHostile: creature.IsHostile,
+                AuthoredCanGroom: creature.CanGroom,
+                AuthoredDiet: ParseCreatureDiet(creature.DietId),
+                AuthoredMovementMode: ParseCreatureMovementMode(creature.MovementModeId),
+                BodyParts: creature.BodyParts?
+                    .Select(part => new BodyPartDef(part.Id, part.DisplayName, part.HitWeight, part.IsVital))
+                    .ToArray(),
+                NaturalLabors: creature.NaturalLabors,
+                DeathDrops: creature.DeathDrops?
+                    .Select(drop => new CreatureDeathDropDef(drop.ItemDefId, drop.Quantity, drop.MaterialId))
+                    .ToArray(),
+                FactionRoles: creature.Society?.FactionRoles?
+                    .Select(role => new CreatureFactionRoleDef(role.Id, role.Weight))
+                    .ToArray()));
+        }
+    }
+
     private static string GetId(JsonNode node)
         => node["id"]?.GetValue<string>()
            ?? throw new InvalidOperationException("Definition missing required 'id' field.");
+
+    private static bool LooksLikeDefinitionMap(JsonObject obj)
+        => !obj.ContainsKey("id") && obj.Count > 0 && obj.All(entry => entry.Value is JsonObject);
+
+    private static CreatureDiet? ParseCreatureDiet(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            ContentCreatureDietIds.Herbivore => CreatureDiet.Herbivore,
+            ContentCreatureDietIds.Carnivore => CreatureDiet.Carnivore,
+            ContentCreatureDietIds.Omnivore => CreatureDiet.Omnivore,
+            ContentCreatureDietIds.AquaticGrazer => CreatureDiet.AquaticGrazer,
+            _ => null,
+        };
+    }
+
+    private static CreatureMovementMode? ParseCreatureMovementMode(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            ContentCreatureMovementModeIds.Land => CreatureMovementMode.Land,
+            ContentCreatureMovementModeIds.Swimmer => CreatureMovementMode.Swimmer,
+            ContentCreatureMovementModeIds.Aquatic => CreatureMovementMode.Aquatic,
+            _ => null,
+        };
+    }
 
     // ── Parsers ────────────────────────────────────────────────────────────
 
@@ -202,15 +349,20 @@ public sealed class DataManager : IGameSystem
         if (n["inputs"] is JsonArray inp)
             foreach (var i in inp)
                 if (i is not null)
-                    inputs.Add(new RecipeInput(ParseTagSet(i["tags"]), i["qty"]?.GetValue<int>() ?? 1));
+                    inputs.Add(new RecipeInput(
+                        ParseTagSet(i["tags"]),
+                        i["qty"]?.GetValue<int>() ?? 1,
+                        i["itemId"]?.GetValue<string>(),
+                        i["materialId"]?.GetValue<string>()));
 
         if (n["outputs"] is JsonArray out_)
             foreach (var o in out_)
                 if (o is not null)
                     outputs.Add(new RecipeOutput(
-                        o["itemId"]!.GetValue<string>(),
+                        o["itemId"]?.GetValue<string>(),
                         o["qty"]?.GetValue<int>() ?? 1,
-                        o["materialFrom"]?.GetValue<string>()));
+                        o["materialFrom"]?.GetValue<string>(),
+                        o["formRole"]?.GetValue<string>()));
 
         return new RecipeDef(
             Id:               n["id"]!.GetValue<string>(),
@@ -230,17 +382,6 @@ public sealed class DataManager : IGameSystem
         WorkTime:       n["workTime"]?.GetValue<float>()     ?? 50f,
         Priority:       n["priority"]?.GetValue<int>()       ?? 0,
         Tags:           ParseTagSet(n["tags"]));
-
-    private static CreatureDef ParseCreature(JsonNode n) => new(
-        Id:            n["id"]!.GetValue<string>(),
-        DisplayName:   n["displayName"]?.GetValue<string>() ?? n["id"]!.GetValue<string>(),
-        Tags:          ParseTagSet(n["tags"]),
-        BaseSpeed:     n["speed"]?.GetValue<float>()      ?? 1.0f,
-        BaseStrength:  n["strength"]?.GetValue<float>()   ?? 1.0f,
-        BaseToughness: n["toughness"]?.GetValue<float>()  ?? 1.0f,
-        MaxHealth:     n["maxHealth"]?.GetValue<float>()  ?? 100f,
-        IsPlayable:    n["isPlayable"]?.GetValue<bool>()  ?? false,
-        IsSapient:     n["isSapient"]?.GetValue<bool>()   ?? false);
 
     private static ReactionDef ParseReaction(JsonNode n)
     {
@@ -303,12 +444,65 @@ public sealed class DataManager : IGameSystem
         Description:  n["description"]?.GetValue<string>(),
         Category:     n["category"]?.GetValue<string>());
 
-    private static TraitDef ParseTrait(JsonNode n) => new(
+    private static DwarfAttributeDef ParseDwarfAttribute(JsonNode n) => new(
         Id:           n["id"]!.GetValue<string>(),
         DisplayName:  n["displayName"]?.GetValue<string>() ?? n["id"]!.GetValue<string>(),
         Description:  n["description"]?.GetValue<string>() ?? "",
-        Category:     n["category"]?.GetValue<string>() ?? "physical",
-        Tags:         ParseTagSet(n["tags"]));
+        Category:     n["category"]?.GetValue<string>() ?? "physiological",
+        Tags:         ParseTagSet(n["tags"]),
+        EffectCurves: ParseEffectCurves(n["effectCurves"]));
+
+    private static IReadOnlyDictionary<string, AttributeEffectCurve> ParseEffectCurves(JsonNode? node)
+    {
+        if (node is not JsonObject obj) return new Dictionary<string, AttributeEffectCurve>();
+        var curves = new Dictionary<string, AttributeEffectCurve>();
+        foreach (var kv in obj)
+        {
+            if (kv.Value is not JsonObject entry) continue;
+            var effects = new Dictionary<string, float>();
+            if (entry["effects"] is JsonObject eff)
+            {
+                foreach (var e in eff)
+                    if (TryReadFloat(e.Value, out var effectValue))
+                        effects[e.Key] = effectValue;
+            }
+            curves[kv.Key] = new AttributeEffectCurve(effects);
+        }
+        return curves;
+    }
+
+    private static bool TryReadFloat(JsonNode? node, out float value)
+    {
+        value = 0f;
+        if (node is not JsonValue jsonValue)
+            return false;
+
+        if (jsonValue.TryGetValue<float>(out value))
+            return true;
+
+        if (jsonValue.TryGetValue<double>(out var doubleValue))
+        {
+            value = (float)doubleValue;
+            return true;
+        }
+
+        if (jsonValue.TryGetValue<int>(out var intValue))
+        {
+            value = intValue;
+            return true;
+        }
+
+        if (jsonValue.TryGetValue<long>(out var longValue))
+        {
+            value = longValue;
+            return true;
+        }
+
+        if (jsonValue.TryGetValue<string>(out var stringValue) && float.TryParse(stringValue, out value))
+            return true;
+
+        return false;
+    }
 
     private static BuildingDef ParseBuilding(JsonNode n)
     {

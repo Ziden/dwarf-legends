@@ -71,11 +71,16 @@ public class DataService
     public void SaveBuildings(List<BuildingModel> buildings) =>
         Save("ConfigBundle/buildings.json", buildings);
 
+    public string ResolveFullPath(string relPath)
+        => Path.Combine(_dataRoot, relPath.Replace('/', Path.DirectorySeparatorChar));
+
+    public string DataRootPath => _dataRoot;
+
     // ── helpers ───────────────────────────────────────────────────────────
 
     private T? Load<T>(string relPath)
     {
-        var full = Path.Combine(_dataRoot, relPath.Replace('/', Path.DirectorySeparatorChar));
+        var full = ResolveFullPath(relPath);
         if (!File.Exists(full))
             throw new FileNotFoundException($"Data file not found: {full}");
         var json = File.ReadAllText(full);
@@ -84,7 +89,7 @@ public class DataService
 
     private void Save<T>(string relPath, T value)
     {
-        var full = Path.Combine(_dataRoot, relPath.Replace('/', Path.DirectorySeparatorChar));
+        var full = ResolveFullPath(relPath);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
         var json = JsonSerializer.Serialize(value, _writeOpts);
         File.WriteAllText(full, json);

@@ -1,0 +1,639 @@
+{
+  "geologyProfiles": [
+    {
+      "id": "mixed_bedrock",
+      "seedSalt": 101,
+      "aquiferDepthFraction": 0.18,
+      "layers": [
+        { "rockTypeId": "sandstone", "thicknessMin": 2, "thicknessMax": 3 },
+        { "rockTypeId": "limestone", "thicknessMin": 2, "thicknessMax": 3 },
+        { "rockTypeId": "slate", "thicknessMin": 2, "thicknessMax": 3 },
+        { "rockTypeId": "granite", "thicknessMin": 3, "thicknessMax": 5 }
+      ],
+      "mineralVeins": [
+        { "materialId": "iron", "resourceFormRole": "ore", "shape": "Vein", "frequency": 0.32, "requiredRockTypeId": "granite", "sizeMin": 10, "sizeMax": 24 },
+        { "materialId": "copper", "resourceFormRole": "ore", "shape": "Cluster", "frequency": 0.24, "requiredRockTypeId": "limestone", "sizeMin": 8, "sizeMax": 20 },
+        { "materialId": "coal", "resourceFormRole": "ore", "shape": "Layer", "frequency": 0.28, "requiredRockTypeId": "sandstone", "sizeMin": 18, "sizeMax": 36 },
+        { "materialId": "tin", "resourceFormRole": "ore", "shape": "Scattered", "frequency": 0.18, "requiredRockTypeId": "slate", "sizeMin": 8, "sizeMax": 18 },
+        { "materialId": "silver", "resourceFormRole": "ore", "shape": "Vein", "frequency": 0.12, "requiredRockTypeId": "granite", "sizeMin": 8, "sizeMax": 18 }
+      ]
+    },
+    {
+      "id": "igneous_uplift",
+      "seedSalt": 211,
+      "aquiferDepthFraction": 0.0,
+      "layers": [
+        { "rockTypeId": "basalt", "thicknessMin": 3, "thicknessMax": 5 },
+        { "rockTypeId": "granite", "thicknessMin": 2, "thicknessMax": 4 },
+        { "rockTypeId": "basalt", "thicknessMin": 1, "thicknessMax": 2 }
+      ],
+      "mineralVeins": [
+        { "materialId": "iron", "resourceFormRole": "ore", "shape": "Vein", "frequency": 0.44, "requiredRockTypeId": "granite", "sizeMin": 14, "sizeMax": 28 },
+        { "materialId": "iron", "resourceFormRole": "ore", "shape": "Cluster", "frequency": 0.20, "requiredRockTypeId": "basalt", "sizeMin": 10, "sizeMax": 24 },
+        { "materialId": "copper", "resourceFormRole": "ore", "shape": "Scattered", "frequency": 0.16, "requiredRockTypeId": "basalt", "sizeMin": 8, "sizeMax": 16 },
+        { "materialId": "gold", "resourceFormRole": "ore", "shape": "Vein", "frequency": 0.10, "requiredRockTypeId": "basalt", "sizeMin": 8, "sizeMax": 16 }
+      ]
+    },
+    {
+      "id": "sedimentary_wetlands",
+      "seedSalt": 307,
+      "aquiferDepthFraction": 0.22,
+      "layers": [
+        { "rockTypeId": "sandstone", "thicknessMin": 3, "thicknessMax": 5 },
+        { "rockTypeId": "shale", "thicknessMin": 2, "thicknessMax": 3 },
+        { "rockTypeId": "limestone", "thicknessMin": 2, "thicknessMax": 4 }
+      ],
+      "mineralVeins": [
+        { "materialId": "coal", "resourceFormRole": "ore", "shape": "Layer", "frequency": 0.42, "requiredRockTypeId": "sandstone", "sizeMin": 20, "sizeMax": 40 },
+        { "materialId": "coal", "resourceFormRole": "ore", "shape": "Layer", "frequency": 0.24, "requiredRockTypeId": "shale", "sizeMin": 18, "sizeMax": 30 },
+        { "materialId": "copper", "resourceFormRole": "ore", "shape": "Cluster", "frequency": 0.20, "requiredRockTypeId": "limestone", "sizeMin": 8, "sizeMax": 18 },
+        { "materialId": "tin", "resourceFormRole": "ore", "shape": "Scattered", "frequency": 0.16, "requiredRockTypeId": "shale", "sizeMin": 8, "sizeMax": 18 }
+      ]
+    },
+    {
+      "id": "alluvial_basin",
+      "seedSalt": 401,
+      "aquiferDepthFraction": 0.26,
+      "layers": [
+        { "rockTypeId": "sandstone", "thicknessMin": 2, "thicknessMax": 4 },
+        { "rockTypeId": "limestone", "thicknessMin": 2, "thicknessMax": 3 },
+        { "rockTypeId": "shale", "thicknessMin": 2, "thicknessMax": 3 },
+        { "rockTypeId": "granite", "thicknessMin": 2, "thicknessMax": 4 }
+      ],
+      "mineralVeins": [
+        { "materialId": "coal", "resourceFormRole": "ore", "shape": "Layer", "frequency": 0.36, "requiredRockTypeId": "sandstone", "sizeMin": 18, "sizeMax": 36 },
+        { "materialId": "copper", "resourceFormRole": "ore", "shape": "Cluster", "frequency": 0.26, "requiredRockTypeId": "limestone", "sizeMin": 10, "sizeMax": 24 },
+        { "materialId": "tin", "resourceFormRole": "ore", "shape": "Scattered", "frequency": 0.24, "requiredRockTypeId": "shale", "sizeMin": 10, "sizeMax": 20 },
+        { "materialId": "iron", "resourceFormRole": "ore", "shape": "Scattered", "frequency": 0.18, "requiredRockTypeId": "granite", "sizeMin": 10, "sizeMax": 22 },
+        { "materialId": "silver", "resourceFormRole": "ore", "shape": "Cluster", "frequency": 0.10, "requiredRockTypeId": "limestone", "sizeMin": 8, "sizeMax": 14 }
+      ]
+    },
+    {
+      "id": "metamorphic_spine",
+      "seedSalt": 503,
+      "aquiferDepthFraction": 0.10,
+      "layers": [
+        { "rockTypeId": "marble", "thicknessMin": 2, "thicknessMax": 3 },
+        { "rockTypeId": "slate", "thicknessMin": 3, "thicknessMax": 5 },
+        { "rockTypeId": "granite", "thicknessMin": 1, "thicknessMax": 2 }
+      ],
+      "mineralVeins": [
+        { "materialId": "iron", "resourceFormRole": "ore", "shape": "Vein", "frequency": 0.40, "requiredRockTypeId": "granite", "sizeMin": 14, "sizeMax": 30 },
+        { "materialId": "copper", "resourceFormRole": "ore", "shape": "Scattered", "frequency": 0.16, "requiredRockTypeId": "slate", "sizeMin": 10, "sizeMax": 20 },
+        { "materialId": "coal", "resourceFormRole": "ore", "shape": "Layer", "frequency": 0.12, "requiredRockTypeId": "slate", "sizeMin": 12, "sizeMax": 24 },
+        { "materialId": "silver", "resourceFormRole": "ore", "shape": "Vein", "frequency": 0.24, "requiredRockTypeId": "marble", "sizeMin": 10, "sizeMax": 20 },
+        { "materialId": "gold", "resourceFormRole": "ore", "shape": "Cluster", "frequency": 0.10, "requiredRockTypeId": "marble", "sizeMin": 8, "sizeMax": 16 }
+      ]
+    }
+  ],
+  "treeProfiles": [
+    {
+      "biomeId": "temperate_plains",
+      "subsurfaceMaterialId": "soil",
+      "rules": [
+        {
+          "minRiparianBoost": 0.85,
+          "species": [
+            { "speciesId": "willow", "weight": 0.58 },
+            { "speciesId": "birch", "weight": 0.42 }
+          ]
+        },
+        {
+          "minMoisture": 0.26,
+          "maxMoisture": 0.72,
+          "maxTerrain": 0.62,
+          "chance": 0.18,
+          "species": [
+            { "speciesId": "apple", "weight": 1.0 }
+          ]
+        }
+      ],
+      "defaultSpecies": [
+        { "speciesId": "oak", "weight": 0.64 },
+        { "speciesId": "birch", "weight": 0.36 }
+      ]
+    },
+    {
+      "biomeId": "conifer_forest",
+      "subsurfaceMaterialId": "soil",
+      "defaultSpecies": [
+        { "speciesId": "spruce", "weight": 0.54 },
+        { "speciesId": "pine", "weight": 0.46 }
+      ]
+    },
+    {
+      "biomeId": "highland",
+      "subsurfaceMaterialId": "soil",
+      "defaultSpecies": [
+        { "speciesId": "deadwood", "weight": 1.0 }
+      ]
+    },
+    {
+      "biomeId": "misty_marsh",
+      "subsurfaceMaterialId": "mud",
+      "defaultSpecies": [
+        { "speciesId": "willow", "weight": 1.0 }
+      ]
+    },
+    {
+      "biomeId": "windswept_steppe",
+      "subsurfaceMaterialId": "sand",
+      "rules": [
+        {
+          "minRiparianBoost": 0.80,
+          "species": [
+            { "speciesId": "birch", "weight": 1.0 }
+          ]
+        },
+        {
+          "minMoisture": 0.45,
+          "maxTerrain": 0.55,
+          "species": [
+            { "speciesId": "birch", "weight": 1.0 }
+          ]
+        }
+      ],
+      "defaultSpecies": [
+        { "speciesId": "deadwood", "weight": 1.0 }
+      ]
+    },
+    {
+      "biomeId": "tropical_rainforest",
+      "subsurfaceMaterialId": "soil",
+      "defaultSpecies": [
+        { "speciesId": "palm", "weight": 0.62 },
+        { "speciesId": "baobab", "weight": 0.38 }
+      ]
+    },
+    {
+      "biomeId": "savanna",
+      "subsurfaceMaterialId": "sand",
+      "defaultSpecies": [
+        { "speciesId": "baobab", "weight": 0.70 },
+        { "speciesId": "palm", "weight": 0.30 }
+      ]
+    },
+    {
+      "biomeId": "desert",
+      "subsurfaceMaterialId": "sand",
+      "defaultSpecies": [
+        { "speciesId": "deadwood", "weight": 1.0 }
+      ]
+    },
+    {
+      "biomeId": "tundra",
+      "subsurfaceMaterialId": "soil",
+      "defaultSpecies": [
+        { "speciesId": "deadwood", "weight": 1.0 }
+      ]
+    },
+    {
+      "biomeId": "boreal_forest",
+      "subsurfaceMaterialId": "soil",
+      "defaultSpecies": [
+        { "speciesId": "spruce", "weight": 0.54 },
+        { "speciesId": "pine", "weight": 0.46 }
+      ]
+    },
+    {
+      "biomeId": "ice_plains",
+      "subsurfaceMaterialId": "soil",
+      "defaultSpecies": [
+        { "speciesId": "deadwood", "weight": 1.0 }
+      ]
+    }
+  ],
+  "biomeProfiles": [
+    {
+      "id": "temperate_plains",
+      "groundPlantDensity": 0.20,
+      "terrainRuggedness": 0.48,
+      "baseMoisture": 0.56,
+      "treeCoverageBoost": 0.04,
+      "treeSuitabilityFloor": 0.21,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": 0,
+      "treeCoverMin": 0.09,
+      "treeCoverMax": 0.19,
+      "outcropMin": 0,
+      "outcropMax": 2,
+      "streamBands": 1,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.62, "minGroup": 2, "maxGroup": 4 },
+        { "creatureDefId": "dog", "weight": 0.20, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.18, "minGroup": 1, "maxGroup": 2 }
+      ]
+    },
+    {
+      "id": "conifer_forest",
+      "groundPlantDensity": 0.12,
+      "terrainRuggedness": 0.54,
+      "baseMoisture": 0.70,
+      "treeCoverageBoost": 0.12,
+      "treeSuitabilityFloor": 0.13,
+      "denseForest": true,
+      "surfaceCreatureGroupBias": 2,
+      "treeCoverMin": 0.22,
+      "treeCoverMax": 0.38,
+      "outcropMin": 0,
+      "outcropMax": 2,
+      "streamBands": 1,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.72, "minGroup": 2, "maxGroup": 5 },
+        { "creatureDefId": "dog", "weight": 0.16, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.12, "minGroup": 1, "maxGroup": 2 }
+      ]
+    },
+    {
+      "id": "highland",
+      "groundPlantDensity": 0.16,
+      "terrainRuggedness": 1.00,
+      "baseMoisture": 0.44,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 0.32,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": -1,
+      "treeCoverMin": 0.02,
+      "treeCoverMax": 0.08,
+      "outcropMin": 10,
+      "outcropMax": 20,
+      "streamBands": 1,
+      "marshPoolCount": 0,
+      "stoneSurface": true,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.60, "minGroup": 1, "maxGroup": 3 },
+        { "creatureDefId": "dog", "weight": 0.30, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.10, "minGroup": 1, "maxGroup": 1 }
+      ]
+    },
+    {
+      "id": "misty_marsh",
+      "groundPlantDensity": 0.24,
+      "terrainRuggedness": 0.42,
+      "baseMoisture": 0.90,
+      "treeCoverageBoost": 0.08,
+      "treeSuitabilityFloor": 0.16,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": 1,
+      "treeCoverMin": 0.06,
+      "treeCoverMax": 0.14,
+      "outcropMin": 0,
+      "outcropMax": 1,
+      "streamBands": 2,
+      "marshPoolCount": 10,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "giant_carp", "weight": 0.42, "minGroup": 2, "maxGroup": 5, "requiresWater": true },
+        { "creatureDefId": "elk", "weight": 0.34, "minGroup": 1, "maxGroup": 3 },
+        { "creatureDefId": "dog", "weight": 0.14, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.10, "minGroup": 1, "maxGroup": 2 }
+      ]
+    },
+    {
+      "id": "windswept_steppe",
+      "groundPlantDensity": 0.16,
+      "terrainRuggedness": 0.66,
+      "baseMoisture": 0.20,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 0.28,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": 0,
+      "treeCoverMin": 0.01,
+      "treeCoverMax": 0.05,
+      "outcropMin": 1,
+      "outcropMax": 4,
+      "streamBands": 0,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.48, "minGroup": 1, "maxGroup": 3 },
+        { "creatureDefId": "dog", "weight": 0.34, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.18, "minGroup": 1, "maxGroup": 2 }
+      ]
+    },
+    {
+      "id": "tropical_rainforest",
+      "groundPlantDensity": 0.28,
+      "terrainRuggedness": 0.48,
+      "baseMoisture": 0.82,
+      "treeCoverageBoost": 0.16,
+      "treeSuitabilityFloor": 0.08,
+      "denseForest": true,
+      "surfaceCreatureGroupBias": 3,
+      "treeCoverMin": 0.32,
+      "treeCoverMax": 0.52,
+      "outcropMin": 0,
+      "outcropMax": 2,
+      "streamBands": 2,
+      "marshPoolCount": 4,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.58, "minGroup": 2, "maxGroup": 5 },
+        { "creatureDefId": "giant_carp", "weight": 0.20, "minGroup": 2, "maxGroup": 4, "requiresWater": true },
+        { "creatureDefId": "dog", "weight": 0.12, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.10, "minGroup": 1, "maxGroup": 2 }
+      ]
+    },
+    {
+      "id": "savanna",
+      "groundPlantDensity": 0.16,
+      "terrainRuggedness": 0.56,
+      "baseMoisture": 0.34,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 0.24,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": 1,
+      "treeCoverMin": 0.03,
+      "treeCoverMax": 0.09,
+      "outcropMin": 1,
+      "outcropMax": 5,
+      "streamBands": 1,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.50, "minGroup": 1, "maxGroup": 3 },
+        { "creatureDefId": "dog", "weight": 0.32, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.18, "minGroup": 1, "maxGroup": 2 }
+      ]
+    },
+    {
+      "id": "desert",
+      "groundPlantDensity": 0.08,
+      "terrainRuggedness": 0.74,
+      "baseMoisture": 0.08,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 0.40,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": -2,
+      "treeCoverMin": 0.00,
+      "treeCoverMax": 0.01,
+      "outcropMin": 3,
+      "outcropMax": 9,
+      "streamBands": 0,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "dog", "weight": 0.60, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.40, "minGroup": 1, "maxGroup": 1 }
+      ]
+    },
+    {
+      "id": "tundra",
+      "groundPlantDensity": 0.12,
+      "terrainRuggedness": 0.78,
+      "baseMoisture": 0.24,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 0.32,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": -2,
+      "treeCoverMin": 0.00,
+      "treeCoverMax": 0.02,
+      "outcropMin": 2,
+      "outcropMax": 8,
+      "streamBands": 0,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.62, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "dog", "weight": 0.28, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.10, "minGroup": 1, "maxGroup": 1 }
+      ]
+    },
+    {
+      "id": "boreal_forest",
+      "groundPlantDensity": 0.20,
+      "terrainRuggedness": 0.58,
+      "baseMoisture": 0.66,
+      "treeCoverageBoost": 0.14,
+      "treeSuitabilityFloor": 0.11,
+      "denseForest": true,
+      "surfaceCreatureGroupBias": 2,
+      "treeCoverMin": 0.25,
+      "treeCoverMax": 0.42,
+      "outcropMin": 1,
+      "outcropMax": 4,
+      "streamBands": 1,
+      "marshPoolCount": 1,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "elk", "weight": 0.74, "minGroup": 2, "maxGroup": 4 },
+        { "creatureDefId": "dog", "weight": 0.18, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.08, "minGroup": 1, "maxGroup": 1 }
+      ]
+    },
+    {
+      "id": "ice_plains",
+      "groundPlantDensity": 0.08,
+      "terrainRuggedness": 0.72,
+      "baseMoisture": 0.16,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 0.40,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": -3,
+      "treeCoverMin": 0.00,
+      "treeCoverMax": 0.00,
+      "outcropMin": 2,
+      "outcropMax": 7,
+      "streamBands": 0,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "dog", "weight": 0.70, "minGroup": 1, "maxGroup": 2 },
+        { "creatureDefId": "cat", "weight": 0.30, "minGroup": 1, "maxGroup": 1 }
+      ]
+    },
+    {
+      "id": "ocean_shallow",
+      "groundPlantDensity": 0.00,
+      "terrainRuggedness": 0.22,
+      "baseMoisture": 0.98,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 1.00,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": 3,
+      "treeCoverMin": 0.00,
+      "treeCoverMax": 0.00,
+      "outcropMin": 0,
+      "outcropMax": 1,
+      "streamBands": 0,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "giant_carp", "weight": 1.0, "minGroup": 3, "maxGroup": 6, "requiresWater": true, "avoidEmbarkCenter": false }
+      ]
+    },
+    {
+      "id": "ocean_deep",
+      "groundPlantDensity": 0.00,
+      "terrainRuggedness": 0.18,
+      "baseMoisture": 1.00,
+      "treeCoverageBoost": 0.00,
+      "treeSuitabilityFloor": 1.00,
+      "denseForest": false,
+      "surfaceCreatureGroupBias": 4,
+      "treeCoverMin": 0.00,
+      "treeCoverMax": 0.00,
+      "outcropMin": 0,
+      "outcropMax": 0,
+      "streamBands": 0,
+      "marshPoolCount": 0,
+      "stoneSurface": false,
+      "surfaceWildlife": [
+        { "creatureDefId": "giant_carp", "weight": 1.0, "minGroup": 3, "maxGroup": 6, "requiresWater": true, "avoidEmbarkCenter": false }
+      ]
+    }
+  ],
+  "caveWildlifeLayers": [
+    {
+      "layer": 1,
+      "spawns": [
+        { "creatureDefId": "goblin", "weight": 0.56, "minGroup": 1, "maxGroup": 3, "avoidEmbarkCenter": false },
+        { "creatureDefId": "giant_carp", "weight": 0.30, "minGroup": 2, "maxGroup": 4, "requiresWater": true, "avoidEmbarkCenter": false },
+        { "creatureDefId": "troll", "weight": 0.14, "minGroup": 1, "maxGroup": 1, "avoidEmbarkCenter": false }
+      ]
+    },
+    {
+      "layer": 2,
+      "spawns": [
+        { "creatureDefId": "goblin", "weight": 0.42, "minGroup": 1, "maxGroup": 3, "avoidEmbarkCenter": false },
+        { "creatureDefId": "troll", "weight": 0.38, "minGroup": 1, "maxGroup": 2, "avoidEmbarkCenter": false },
+        { "creatureDefId": "giant_carp", "weight": 0.20, "minGroup": 2, "maxGroup": 5, "requiresWater": true, "avoidEmbarkCenter": false }
+      ]
+    },
+    {
+      "layer": 3,
+      "spawns": [
+        { "creatureDefId": "troll", "weight": 0.55, "minGroup": 1, "maxGroup": 2, "avoidEmbarkCenter": false },
+        { "creatureDefId": "goblin", "weight": 0.30, "minGroup": 1, "maxGroup": 2, "avoidEmbarkCenter": false },
+        { "creatureDefId": "giant_carp", "weight": 0.15, "minGroup": 2, "maxGroup": 4, "requiresWater": true, "avoidEmbarkCenter": false }
+      ]
+    }
+  ],
+  "historyFigures": {
+    "professionProfiles": [
+      {
+        "id": "miner",
+        "laborIds": ["mining", "hauling"],
+        "skillLevels": { "mining": 3 },
+        "attributeLevels": { "strength": 5, "focus": 4 },
+        "likedFoodId": "meal",
+        "dislikedFoodId": "drink"
+      },
+      {
+        "id": "woodworker",
+        "laborIds": ["wood_cutting", "carpentry", "hauling"],
+        "skillLevels": { "wood_cutting": 2, "carpentry": 2 },
+        "attributeLevels": { "stamina": 4 },
+        "likedFoodId": "apple",
+        "dislikedFoodId": "stone_tuber"
+      },
+      {
+        "id": "crafter",
+        "laborIds": ["crafting", "hauling"],
+        "skillLevels": { "crafting": 3 },
+        "attributeLevels": { "focus": 4 },
+        "likedFoodId": "fig",
+        "dislikedFoodId": "drink"
+      },
+      {
+        "id": "mason",
+        "laborIds": ["construction", "masonry", "hauling"],
+        "skillLevels": { "construction": 2, "masonry": 2 },
+        "attributeLevels": { "strength": 4 },
+        "likedFoodId": "meal",
+        "dislikedFoodId": "apple"
+      },
+      {
+        "id": "farmer",
+        "laborIds": ["farming", "hauling"],
+        "skillLevels": { "farming": 3 },
+        "attributeLevels": { "stamina": 4, "appetite": 2 },
+        "likedFoodId": "sunroot_bulb",
+        "dislikedFoodId": "drink"
+      },
+      {
+        "id": "brewer",
+        "laborIds": ["brewing", "hauling"],
+        "skillLevels": { "brewing": 3 },
+        "attributeLevels": { "stamina": 4 },
+        "likedFoodId": "drink",
+        "dislikedFoodId": "marsh_reed_shoot"
+      },
+      {
+        "id": "cook",
+        "laborIds": ["cooking", "hauling"],
+        "skillLevels": { "cooking": 3 },
+        "attributeLevels": { "appetite": 5 },
+        "likedFoodId": "meal",
+        "dislikedFoodId": "stone_tuber"
+      },
+      {
+        "id": "hauler",
+        "laborIds": ["hauling"],
+        "skillLevels": { "hauling": 2 },
+        "attributeLevels": { "strength": 4, "stamina": 4 },
+        "likedFoodId": "meal",
+        "dislikedFoodId": "marsh_reed_shoot"
+      },
+      {
+        "id": "militia",
+        "laborIds": ["military", "hauling"],
+        "skillLevels": { "military": 3 },
+        "attributeLevels": { "strength": 4, "courage": 2 },
+        "likedFoodId": "drink",
+        "dislikedFoodId": "apple"
+      },
+      {
+        "id": "peasant",
+        "laborIds": ["hauling", "misc"],
+        "skillLevels": {},
+        "attributeLevels": {},
+        "likedFoodId": "meal",
+        "dislikedFoodId": "drink"
+      }
+    ],
+    "professionSelectionRules": [
+      {
+        "speciesDefId": "dwarf",
+        "memberIndex": 0,
+        "founderBias": true,
+        "professionIds": ["miner", "woodworker", "crafter", "mason"]
+      },
+      {
+        "speciesDefId": "dwarf",
+        "siteKindContains": "watch",
+        "memberIndex": 0,
+        "professionIds": ["militia"]
+      },
+      {
+        "speciesDefId": "dwarf",
+        "siteKindContains": "shrine",
+        "memberIndex": 0,
+        "professionIds": ["brewer"]
+      },
+      {
+        "speciesDefId": "dwarf",
+        "siteKindContains": "hamlet",
+        "memberIndex": 0,
+        "professionIds": ["farmer"]
+      }
+    ],
+    "defaultProfessionIds": ["miner", "woodworker", "crafter", "mason", "farmer", "brewer", "cook", "hauler", "militia", "peasant"],
+    "defaultNonDwarfProfessionIds": ["militia"],
+    "speciesNamePools": [
+      {
+        "speciesDefId": "goblin",
+        "names": ["Snaga", "Ghash", "Urgat", "Muzg", "Ronk", "Bagul", "Krosh", "Zuglar"]
+      },
+      {
+        "speciesDefId": "troll",
+        "names": ["Thrag", "Mog", "Bruk", "Gor", "Drosh"]
+      }
+    ],
+    "defaultNamePool": ["Urist", "Bomrek", "Domas", "Mistem", "Atir", "Stukos", "Kadol", "Mosus", "Meng", "Rigoth", "Sodel", "Vucar"]
+  }
+}

@@ -6,6 +6,9 @@ using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using Godot;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 /// <summary>Right-side panel listing all building defs; clicking one enters BuildingPreview mode.</summary>
 public partial class BuildMenu : PanelContainer
 {

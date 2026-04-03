@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Entities;
 
 namespace DwarfFortress.GameLogic.Jobs;
 
@@ -15,10 +16,13 @@ public sealed record MoveToStep(Vec3i Target) : ActionStep;
 public sealed record WorkAtStep(float Duration, string AnimationHint = "", Vec3i? RequiredPosition = null) : ActionStep;
 
 /// <summary>Pick up an item by entity ID.</summary>
-public sealed record PickUpItemStep(int ItemEntityId) : ActionStep;
+public sealed record PickUpItemStep(int ItemEntityId, ItemCarryMode CarryMode = ItemCarryMode.Inventory) : ActionStep;
 
 /// <summary>Place a carried item at a target position.</summary>
 public sealed record PlaceItemStep(int ItemEntityId, Vec3i Target, int ContainerBuildingId = -1) : ActionStep;
+
+/// <summary>Reserved stockpile slot for a specific item during a job.</summary>
+public readonly record struct ReservedStockpilePlacement(int ItemEntityId, int StockpileId, Vec3i Slot);
 
 /// <summary>Wait for a fixed time (e.g. eating, drinking, sleeping).</summary>
 public sealed record WaitStep(float Duration) : ActionStep;
@@ -44,6 +48,7 @@ public sealed class Job
     public List<int>  ReservedItemIds { get; } = new();
     public int        ReservedStockpileId { get; set; } = -1;
     public Vec3i?     ReservedSlot        { get; set; }
+    public List<ReservedStockpilePlacement> ReservedStockpilePlacements { get; } = new();
 
     public Job(int id, string jobDefId, Vec3i targetPos, int priority = 0, int entityId = -1)
     {

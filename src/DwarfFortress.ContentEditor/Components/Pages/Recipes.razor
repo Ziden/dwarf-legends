@@ -8,7 +8,7 @@
 
 @if (_recipes == null)
 {
-    <p>Loading…</p>
+    <p>Loading...</p>
 }
 else if (_editing != null)
 {
@@ -55,17 +55,23 @@ else if (_editing != null)
         {
             var idx = i;
             <div class="row g-2 mb-2 align-items-center">
-                <div class="col-md-5">
+                <div class="col-md-4">
                     <InputText class="form-control form-control-sm" Value="@TagsDisplay(_editing.Inputs[idx].Tags)"
                                ValueChanged="v => _editing.Inputs[idx].Tags = ParseTags(v)"
                                ValueExpression="@(() => TagsDisplay(_editing.Inputs[idx].Tags))"
                                placeholder="tags (comma-separated)" />
                 </div>
                 <div class="col-md-2">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.Inputs[idx].ItemId" placeholder="itemId (optional)" />
+                </div>
+                <div class="col-md-2">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.Inputs[idx].MaterialId" placeholder="materialId (optional)" />
+                </div>
+                <div class="col-md-1">
                     <InputNumber class="form-control form-control-sm" @bind-Value="_editing.Inputs[idx].Qty" />
                 </div>
                 <div class="col-auto">
-                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.Inputs.RemoveAt(idx)">✕</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.Inputs.RemoveAt(idx)">x</button>
                 </div>
             </div>
         }
@@ -75,7 +81,7 @@ else if (_editing != null)
         {
             var idx = i;
             <div class="row g-2 mb-2 align-items-center">
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <InputSelect class="form-select form-select-sm" @bind-Value="_editing.Outputs[idx].ItemId">
                         <option value="">(select item)</option>
                         @foreach (var item in _items)
@@ -85,10 +91,16 @@ else if (_editing != null)
                     </InputSelect>
                 </div>
                 <div class="col-md-2">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.Outputs[idx].FormRole" placeholder="formRole (optional)" />
+                </div>
+                <div class="col-md-3">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.Outputs[idx].MaterialFrom" placeholder="materialFrom (optional)" />
+                </div>
+                <div class="col-md-1">
                     <InputNumber class="form-control form-control-sm" @bind-Value="_editing.Outputs[idx].Qty" />
                 </div>
                 <div class="col-auto">
-                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.Outputs.RemoveAt(idx)">✕</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.Outputs.RemoveAt(idx)">x</button>
                 </div>
             </div>
         }
@@ -124,7 +136,7 @@ else
                     <td>@r.DisplayName</td>
                     <td><code>@r.Workshop</code></td>
                     <td>@r.Labor</td>
-                    <td>@string.Join(", ", r.Outputs.Select(o => $"{o.Qty}×{o.ItemId}"))</td>
+                    <td>@string.Join(", ", r.Outputs.Select(FormatOutputSummary))</td>
                     <td>
                         <button class="btn btn-outline-primary btn-sm me-1" @onclick="() => Edit(r)">Edit</button>
                         <button class="btn btn-outline-danger btn-sm" @onclick="() => Delete(r)">Delete</button>
@@ -158,34 +170,66 @@ else
 
     private void Edit(RecipeModel r) => _editing = new RecipeModel
     {
-        Id = r.Id, DisplayName = r.DisplayName, Workshop = r.Workshop, Labor = r.Labor,
-        WorkTime = r.WorkTime, SkillXp = r.SkillXp,
-        Inputs  = r.Inputs.Select(x => new RecipeInput  { Tags = [..x.Tags], Qty = x.Qty }).ToList(),
-        Outputs = r.Outputs.Select(x => new RecipeOutput { ItemId = x.ItemId, Qty = x.Qty }).ToList(),
+        Id = r.Id,
+        DisplayName = r.DisplayName,
+        Workshop = r.Workshop,
+        Labor = r.Labor,
+        WorkTime = r.WorkTime,
+        SkillXp = r.SkillXp,
+        Inputs = r.Inputs.Select(x => new RecipeInput
+        {
+            Tags = [.. x.Tags],
+            Qty = x.Qty,
+            ItemId = x.ItemId,
+            MaterialId = x.MaterialId,
+        }).ToList(),
+        Outputs = r.Outputs.Select(x => new RecipeOutput
+        {
+            ItemId = x.ItemId,
+            Qty = x.Qty,
+            MaterialFrom = x.MaterialFrom,
+            FormRole = x.FormRole,
+        }).ToList(),
     };
 
-    private void AddInput()  => _editing!.Inputs.Add(new RecipeInput());
+    private void AddInput() => _editing!.Inputs.Add(new RecipeInput());
     private void AddOutput() => _editing!.Outputs.Add(new RecipeOutput());
 
     private static string TagsDisplay(List<string> tags) => string.Join(", ", tags);
 
-    private static List<string> ParseTags(string v) =>
-        v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    private static List<string> ParseTags(string value) =>
+        value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private static string FormatOutputSummary(RecipeOutput output)
+    {
+        var outputId = string.IsNullOrWhiteSpace(output.ItemId)
+            ? $"[{output.FormRole}]"
+            : output.ItemId;
+
+        if (!string.IsNullOrWhiteSpace(output.MaterialFrom))
+            outputId += $" <- {output.MaterialFrom}";
+
+        return $"{output.Qty}x{outputId}";
+    }
 
     private void SaveRecipe()
     {
+        var savedId = _editing!.Id;
         var idx = _recipes!.FindIndex(x => x.Id == _editing!.Id);
-        if (idx >= 0) _recipes![idx] = _editing!;
-        else _recipes!.Add(_editing!);
-        DataSvc.SaveRecipes(_recipes!);
-        _feedback = $"Saved '{_editing!.Id}'.";
+        if (idx >= 0)
+            _recipes[idx] = _editing!;
+        else
+            _recipes.Add(_editing!);
+
+        DataSvc.SaveRecipes(_recipes);
+        _feedback = $"Saved '{savedId}'.";
         _editing = null;
     }
 
-    private void Delete(RecipeModel r)
+    private void Delete(RecipeModel recipe)
     {
-        _recipes!.Remove(r);
-        DataSvc.SaveRecipes(_recipes!);
-        _feedback = $"Deleted '{r.Id}'.";
+        _recipes!.Remove(recipe);
+        DataSvc.SaveRecipes(_recipes);
+        _feedback = $"Deleted '{recipe.Id}'.";
     }
 }

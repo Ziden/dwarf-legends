@@ -25,6 +25,8 @@
   { "id": "seed",              "displayName": "Seed",              "tags": ["plant", "seed"],     "weight": 0.1  },
   { "id": "plant_matter",      "displayName": "Plant Matter",      "tags": ["plant", "food"],     "weight": 0.5,
     "nutrition": { "carbs": 0.5, "protein": 0.2, "fat": 0.1, "vitamins": 0.6 } },
+  { "id": "raw_meat",          "displayName": "Raw Meat",          "tags": ["meat", "food"],      "weight": 0.8,
+    "nutrition": { "carbs": 0.0, "protein": 0.8, "fat": 0.4, "vitamins": 0.1 } },
   { "id": "berry_cluster",     "displayName": "Berry Cluster",     "tags": ["plant", "food", "fruit"], "weight": 0.3,
     "nutrition": { "carbs": 0.5, "protein": 0.1, "fat": 0.2, "vitamins": 0.7 } },
   { "id": "sunroot_bulb",      "displayName": "Sunroot Bulb",      "tags": ["plant", "food", "grain"], "weight": 0.5,

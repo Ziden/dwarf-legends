@@ -150,6 +150,42 @@ This document describes all technical debt fixes applied to improve game scalabi
 
 ---
 
+## 9. JobSystem: Zero-LINQ Hot Path
+
+**File:** `src/DwarfFortress.GameLogic/Jobs/JobSystem.cs`
+
+**Problem:** `TickActiveJobs()` used `.Where(j => j.Status == ...).ToList()` every tick, creating List allocations and iterator objects. `IsDwarfWorking()` and `HasActiveJob()` iterated all jobs per dwarf per assignment cycle (O(n) per call). Command handlers used `.Where().Select().ToHashSet()` chains. All combined to ~60-100 bytes GC per tick scaling with job/dwarf count.
+
+**Fix:**
+- Added `_activeJobIds: List<int>` — tracks only InProgress job IDs, maintained on status change via `SetJobStatus()` helper
+- Added `_dwarfActiveJobs: Dictionary<int,int>` — O(1) lookup: `dwarfId → jobId` for active jobs
+- Replaced `.Where().ToList()` in `TickActiveJobs` with list copy of tracked IDs
+- Replaced `IsDwarfWorking` with O(1) dictionary lookup
+- Replaced `.Skip(1)` on path arrays with manual loop
+- Replaced `.ToHashSet()` in command handlers with manual collection
+- `GetPendingJobs` uses iterator block (`yield return`) instead of `.Where()`
+
+**Impact:** Zero GC allocations per tick from LINQ in the job system. O(1) job tracking regardless of active job count.
+
+---
+
+## 10. FluidSimulator: Active Tile Pruning
+
+**File:** `src/DwarfFortress.GameLogic/Systems/FluidSimulator.cs`
+
+**Problem:** `_activeTiles` HashSet grew unbounded — fluid tiles were added when fluid arrived but never removed when fluid dried out. Over long play sessions, the active set retained every tile that had ever touched fluid, even if it was now completely dry.
+
+**Fix:**
+- Added `_dryTicks: Dictionary<Vec3i, int>` — tracks consecutive ticks with no fluid change per tile
+- `SimulateFluid()` returns bool indicating if flow occurred
+- `Tick()` increments dry counter for tiles with no flow; prunes tile after `DryPruneThreshold` (8) consecutive dry ticks
+- Resets dry counter on transfer (fluid arrived at new tile)
+- Removed unused `stillActive` list from Tick()
+
+**Impact:** Active tile set now shrinks as water dries, preventing unbounded memory growth. Large stagnant water bodies stop being simulated after a few ticks, saving CPU.
+
+---
+
 ## Remaining Items (Not Yet Addressed)
 
 These items require more extensive refactoring and should be tackled in future sprints:
@@ -164,6 +200,12 @@ These items require more extensive refactoring and should be tackled in future s
 
 5. **Data-Driven Water Effects** — Five nearly identical `WaterEffectStyle` records in GameRoot should be loaded from JSON config.
 
+6. **Event Bus Priority System** — EventBus emits to subscribers in registration order. No guarantee of ordering between systems subscribing to the same event. Should add priority parameter to `On<T>()` for deterministic execution.
+
+7. **Chunk-Based WorldMap** — Flat array tile storage (48×48×8 = 18,432 tiles minimum). No chunking for spatial queries. Should implement 16×16×4 chunks with per-chunk dirty/active region tracking.
+
+8. **Full State Save/Load** — Most systems have no-op `OnSave`/`OnLoad`. Only `JobSystem` has partial save support. Fluid state, combat state, world events, and inventory not persisted.
+
 After applying these changes, verify:
 
 1. **Combat** — Hostile creatures still attack adjacent dwarves correctly
@@ -172,3 +214,5 @@ After applying these changes, verify:
 4. **Save/Load** — Game saves and loads correctly, with faster subsequent saves
 5. **Jobs** — Jobs complete, fail, and cancel without memory leaks
 6. **System Order** — Needs decay before nutrition checks run
+7. **Jobs (Zero-LINQ)** — Dwarves still pick up and complete jobs correctly; no orphaned job IDs
+8. **Fluid (Pruning)** — Fluid still flows correctly; drying tiles stop being simulated after N ticks; active set shrinks over time

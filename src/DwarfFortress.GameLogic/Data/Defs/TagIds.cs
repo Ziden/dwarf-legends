@@ -29,8 +29,10 @@ public static class TagIds
     public const string Plant = "plant";
     public const string Plank = "plank";
     public const string Refuse = "refuse";
+    public const string Seed = "seed";
     public const string Stone = "stone";
     public const string Swimmer = "swimmer";
+    public const string Wood = "wood";
     public const string Wooden = "wooden";
     public const string Container = "container";
     public const string Furniture = "furniture";

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic;
@@ -6,13 +6,18 @@ using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
 
+namespace DwarfFortress.GodotClient.UI;
+
+
 public partial class DwarfPanel : PanelContainer
 {
 	private Label? _nameLabel;
 	private Label? _summaryLabel;
 	private Label? _metaLabel;
 	private TabContainer? _tabs;
+	private WorldQuerySystem? _query;
 	private VBoxContainer? _overviewBox;
+	private VBoxContainer? _loreBox;
 	private VBoxContainer? _vitalsBox;
 	private VBoxContainer? _thoughtsBox;
 	private VBoxContainer? _skillsBox;
@@ -20,8 +25,9 @@ public partial class DwarfPanel : PanelContainer
 	private VBoxContainer? _statsBox;
 	private VBoxContainer? _eventLogBox;
 	private VBoxContainer? _inventoryBox;
-	private VBoxContainer? _traitsBox;
+	private VBoxContainer? _attributesBox;
 	private Action<Vec3i>? _jumpToTile;
+	private Func<EventLogLinkTarget, bool>? _jumpToLinkedTarget;
 	private string? _currentSelectionKey;
 
 	public override void _Ready()
@@ -31,6 +37,7 @@ public partial class DwarfPanel : PanelContainer
 		_metaLabel = GetNode<Label>("%MetaLabel");
 		_tabs = GetNode<TabContainer>("%Tabs");
 		_overviewBox = GetNode<VBoxContainer>("%OverviewBox");
+		_loreBox = GetNode<VBoxContainer>("%LoreBox");
 		_vitalsBox = GetNode<VBoxContainer>("%VitalsBox");
 		_thoughtsBox = GetNode<VBoxContainer>("%ThoughtsBox");
 		_skillsBox = GetNode<VBoxContainer>("%SkillsBox");
@@ -38,17 +45,18 @@ public partial class DwarfPanel : PanelContainer
 		_statsBox = GetNode<VBoxContainer>("%StatsBox");
 		_eventLogBox = GetNode<VBoxContainer>("%EventLogBox");
 		_inventoryBox = GetNode<VBoxContainer>("%InventoryBox");
-		_traitsBox = GetNode<VBoxContainer>("%TraitsBox");
+		_attributesBox = GetNode<VBoxContainer>("%AttributesBox");
 
 		Hide();
 	}
 
 	public void Setup(GameSimulation simulation)
 	{
-		_ = simulation;
+		_query = simulation.Context.Get<WorldQuerySystem>();
 	}
 
 	public void SetTileNavigator(Action<Vec3i> jumpToTile) => _jumpToTile = jumpToTile;
+	public void SetLinkedTargetNavigator(Func<EventLogLinkTarget, bool> jumpToLinkedTarget) => _jumpToLinkedTarget = jumpToLinkedTarget;
 
 	public void ShowDwarf(DwarfView dwarf)
 	{
@@ -65,14 +73,15 @@ public partial class DwarfPanel : PanelContainer
 			dwarf.CurrentJob is null ? null : $"Current job: {FormatToken(dwarf.CurrentJob.JobDefId)} ({dwarf.CurrentJob.Status})",
 			dwarf.Substances,
 			dwarf.Wounds);
+		PopulateLore(dwarf);
 		PopulateVitals(dwarf.Needs, dwarf.Wounds, dwarf.Substances);
 		PopulateThoughts(dwarf.Thoughts);
 		PopulateSkills(dwarf.Skills);
 		PopulateLabors(dwarf.EnabledLabors);
 		PopulateStats(dwarf.Stats, dwarf.Appearance);
 		PopulateEventLog(dwarf.EventLog);
-		PopulateInventory(dwarf.CarriedItems);
-		PopulateTraits(dwarf.Traits);
+		PopulateInventory(dwarf.CarriedItems, dwarf.HauledItem);
+		PopulateAttributes(dwarf.Attributes);
 
 		if (selectionChanged)
 			_tabs!.CurrentTab = 0;
@@ -94,14 +103,15 @@ public partial class DwarfPanel : PanelContainer
 			null,
 			creature.Substances,
 			creature.Wounds);
+		PopulateLore();
 		PopulateVitals(creature.Needs, creature.Wounds, creature.Substances);
 		PopulateThoughts(Array.Empty<ThoughtView>());
 		PopulateSkills(Array.Empty<SkillView>());
 		PopulateLabors(Array.Empty<string>());
 		PopulateStats(creature.Stats, appearance: null);
 		PopulateEventLog(creature.EventLog);
-		PopulateInventory(creature.CarriedItems);
-		PopulateTraits(Array.Empty<TraitView>());
+		PopulateInventory(creature.CarriedItems, creature.HauledItem);
+		PopulateAttributes(Array.Empty<DwarfAttributeView>());
 
 		if (selectionChanged)
 			_tabs!.CurrentTab = 0;
@@ -120,6 +130,62 @@ public partial class DwarfPanel : PanelContainer
 
 		box.AddChild(CreateBodyLabel($"Active substances: {(substances.Length == 0 ? "none" : string.Join(", ", substances.Select(FormatSubstance)))}"));
 		box.AddChild(CreateBodyLabel($"Wounds: {(wounds.Length == 0 ? "none" : string.Join(", ", wounds.Select(FormatWound)))}"));
+	}
+
+	private void PopulateLore(DwarfView? dwarf = null)
+	{
+		ResetBox(_loreBox);
+
+		if (dwarf?.Provenance is null)
+		{
+			_loreBox!.AddChild(CreateMutedLabel(dwarf is null
+				? "No detailed lore available for this creature."
+				: "No historical origin recorded for this dwarf."));
+			return;
+		}
+
+		var provenance = dwarf.Provenance;
+		AddSection(_loreBox!, "Origin",
+		[
+			$"Historical figure: {FormatNamedValue(provenance.FigureName, provenance.FigureId)}",
+			$"Household: {FormatNamedValue(provenance.HouseholdName, provenance.HouseholdId)}",
+			$"Civilization: {FormatNamedValue(provenance.CivilizationName, provenance.CivilizationId)}",
+			$"Origin site: {FormatNamedValue(provenance.OriginSiteName, provenance.OriginSiteId)}",
+			$"Birth site: {FormatNamedValue(provenance.BirthSiteName, provenance.BirthSiteId)}",
+			$"Migration wave: {FormatOptionalToken(provenance.MigrationWaveId)}",
+			$"World tile: {FormatOptionalCoord(provenance.WorldX, provenance.WorldY)}",
+			$"Region tile: {FormatOptionalCoord(provenance.RegionX, provenance.RegionY)}",
+			$"World seed: {provenance.WorldSeed}",
+		]);
+
+		var lore = _query?.GetLoreSummary();
+		if (lore is null)
+			return;
+
+		var embarkContextLines = new List<string>
+		{
+			$"Region: {FormatOptionalText(lore.RegionName)}",
+			$"Biome: {FormatOptionalToken(lore.BiomeId)}",
+			$"Territory owner: {FormatNamedValue(lore.OwnerCivilizationName, lore.OwnerCivilizationId)}",
+			$"Primary site: {FormatNamedValue(lore.PrimarySiteName, lore.PrimarySiteId)}",
+			$"Threat: {lore.Threat:0%}",
+			$"Prosperity: {lore.Prosperity:0%}",
+			$"Simulated years: {lore.SimulatedYears}",
+			$"Source: {(lore.UsesCanonicalHistory ? "Canonical history" : "Legacy lore")}",
+		};
+		if (lore.PrimarySitePopulation is > 0)
+			embarkContextLines.Add($"Primary site population: {lore.PrimarySitePopulation.Value}");
+		if (lore.PrimarySiteHouseholdCount is > 0)
+			embarkContextLines.Add($"Primary site households: {lore.PrimarySiteHouseholdCount.Value}");
+		if (lore.PrimarySiteMilitaryCount is > 0)
+			embarkContextLines.Add($"Primary site militia: {lore.PrimarySiteMilitaryCount.Value}");
+
+		AddSection(_loreBox!, "Embark Context", embarkContextLines);
+
+		AddSection(_loreBox!, "Recent History",
+			lore.RecentEvents.Length == 0
+				? ["No recent history entries."]
+				: lore.RecentEvents);
 	}
 
 	private void PopulateVitals(NeedView[] needs, WoundView[] wounds, SubstanceView[] substances)
@@ -179,16 +245,39 @@ public partial class DwarfPanel : PanelContainer
 			_eventLogBox!.AddChild(CreateEventEntry(entry));
 	}
 
-	private void PopulateInventory(ItemView[] items)
+	private void PopulateInventory(ItemView[] items, ItemView? hauledItem = null)
 	{
 		ResetBox(_inventoryBox);
-		AddSection(_inventoryBox!, "Carried items", items.Length == 0 ? ["Nothing carried."] : items.Select(FormatItem));
+		if (items.Length == 0 && hauledItem is null)
+		{
+			AddSection(_inventoryBox!, "Carried items", ["Nothing carried."]);
+			return;
+		}
+
+		if (items.Length > 0)
+		{
+			var totalWeight = items.Sum(i => i.Weight);
+			var lines = items.Select(FormatItem).Concat(new[] { $"Inventory weight: {totalWeight:F1} kg" });
+			AddSection(_inventoryBox!, "Carried items", lines);
+		}
+		else
+		{
+			AddSection(_inventoryBox!, "Carried items", ["Inventory empty."]);
+		}
+
+		if (hauledItem is not null)
+			AddSection(_inventoryBox!, "Hauled item", [FormatItem(hauledItem)]);
 	}
 
-	private void PopulateTraits(TraitView[] traits)
+	private void PopulateAttributes(DwarfAttributeView[] attributes)
 	{
-		ResetBox(_traitsBox);
-		AddSection(_traitsBox!, "Traits", traits.Length == 0 ? ["No traits available."] : traits.Select(FormatTrait));
+		ResetBox(_attributesBox);
+		if (attributes.Length == 0)
+		{
+			_attributesBox!.AddChild(CreateMutedLabel("No attributes available."));
+			return;
+		}
+		AddSection(_attributesBox!, "Attributes", attributes.Select(FormatAttribute));
 	}
 
 	private static void ResetBox(VBoxContainer? box)
@@ -225,11 +314,9 @@ public partial class DwarfPanel : PanelContainer
 
 	private Control CreateEventEntry(EventLogEntryView entry)
 	{
-		var text = string.IsNullOrWhiteSpace(entry.TimeLabel)
-			? entry.Message
-			: $"{entry.TimeLabel}  {entry.Message}";
+		var text = BuildEventEntryText(entry);
 
-		if (_jumpToTile is not null)
+		if (_jumpToTile is not null || _jumpToLinkedTarget is not null)
 		{
 			var button = new Button
 			{
@@ -240,14 +327,56 @@ public partial class DwarfPanel : PanelContainer
 				TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
 				FocusMode = FocusModeEnum.None,
 				SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-				TooltipText = $"Jump to {entry.Position.X}, {entry.Position.Y}, z{entry.Position.Z}",
+				TooltipText = BuildEventEntryTooltip(entry),
 			};
-			button.Pressed += () => _jumpToTile?.Invoke(entry.Position);
+			if (entry.LinkedTarget is { } linkedTarget)
+			{
+				button.Icon = ResolveEventLinkIcon(linkedTarget);
+				button.ExpandIcon = false;
+			}
+
+			button.Pressed += () =>
+			{
+				if (entry.LinkedTarget is { } target && _jumpToLinkedTarget?.Invoke(target) == true)
+					return;
+
+				_jumpToTile?.Invoke(entry.Position);
+			};
 			return button;
 		}
 
 		return CreateBodyLabel(text);
 	}
+
+	private static string BuildEventEntryText(EventLogEntryView entry)
+	{
+		var text = string.IsNullOrWhiteSpace(entry.TimeLabel)
+			? entry.Message
+			: $"{entry.TimeLabel}  {entry.Message}";
+
+		if (entry.LinkedTarget is not { } linkedTarget || string.IsNullOrWhiteSpace(linkedTarget.DisplayName))
+			return text;
+
+		return text.Contains(linkedTarget.DisplayName, StringComparison.OrdinalIgnoreCase)
+			? text
+			: $"{text}  [{linkedTarget.DisplayName}]";
+	}
+
+	private static string BuildEventEntryTooltip(EventLogEntryView entry)
+	{
+		if (entry.LinkedTarget is { } linkedTarget)
+			return $"Track {linkedTarget.DisplayName}";
+
+		return $"Jump to {entry.Position.X}, {entry.Position.Y}, z{entry.Position.Z}";
+	}
+
+	private static Texture2D? ResolveEventLinkIcon(EventLogLinkTarget linkedTarget)
+		=> linkedTarget.Type switch
+		{
+			EventLogLinkType.Item => PixelArtFactory.GetItem(linkedTarget.DefId, linkedTarget.MaterialId),
+			EventLogLinkType.Entity => PixelArtFactory.GetEntity(linkedTarget.DefId),
+			_ => null,
+		};
 
 	private static Label CreateSectionHeader(string text)
 	{
@@ -298,13 +427,17 @@ public partial class DwarfPanel : PanelContainer
 	{
 		var stackText = item.StackSize > 1 ? $" x{item.StackSize}" : string.Empty;
 		var materialText = string.IsNullOrWhiteSpace(item.MaterialId) ? string.Empty : $" ({FormatToken(item.MaterialId!)})";
-		return $"{FormatToken(item.DefId)}{stackText}{materialText}";
+		var weightText = item.Weight > 0f ? $" [{item.Weight:F1} kg]" : string.Empty;
+		return $"{item.DisplayName}{stackText}{materialText}{weightText}";
 	}
 
-	private static string FormatTrait(TraitView trait)
-		=> string.IsNullOrWhiteSpace(trait.Category)
-			? $"{trait.DisplayName}: {trait.Description}"
-			: $"[{trait.Category}] {trait.DisplayName}: {trait.Description}";
+	private static string FormatAttribute(DwarfAttributeView attr)
+	{
+		var filled = new string('\u25CF', attr.Level); // â— filled circle
+		var empty = new string('\u25CB', 5 - attr.Level); // â—‹ empty circle
+		var labelText = string.IsNullOrWhiteSpace(attr.Label) ? "(normal)" : attr.Label;
+		return $"{attr.DisplayName}: {filled}{empty} [{labelText}]";
+	}
 
 	private static string FormatToken(string token)
 	{
@@ -317,6 +450,27 @@ public partial class DwarfPanel : PanelContainer
 			.Select(word => char.ToUpperInvariant(word[0]) + word[1..].ToLowerInvariant());
 		return string.Join(" ", words);
 	}
+
+	private static string FormatOptionalToken(string? token)
+		=> string.IsNullOrWhiteSpace(token) ? "Unknown" : FormatToken(token);
+
+	private static string FormatOptionalText(string? text)
+		=> string.IsNullOrWhiteSpace(text) ? "Unknown" : text;
+
+	private static string FormatNamedValue(string? name, string? id)
+	{
+		var resolvedName = FormatOptionalText(name);
+		if (string.IsNullOrWhiteSpace(id))
+			return resolvedName;
+
+		var resolvedId = FormatToken(id);
+		return string.Equals(resolvedName, resolvedId, StringComparison.OrdinalIgnoreCase)
+			? resolvedName
+			: $"{resolvedName} [{resolvedId}]";
+	}
+
+	private static string FormatOptionalCoord(int? x, int? y)
+		=> x.HasValue && y.HasValue ? $"{x.Value}, {y.Value}" : "Unknown";
 
 	private static string FormatVec(Vec3i value) => $"{value.X}, {value.Y}, z{value.Z}";
 }

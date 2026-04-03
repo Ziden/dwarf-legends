@@ -35,7 +35,7 @@ public sealed class CraftItemStrategy : IJobStrategy
         if (itemSystem is null || recipe is null)
             return System.Array.Empty<ActionStep>();
 
-        if (!itemSystem.TryReserveInputs(recipe.Inputs, job.ReservedItemIds))
+        if (!itemSystem.TryReserveRecipeInputs(recipe, job.ReservedItemIds))
             return System.Array.Empty<ActionStep>();
 
         var steps = new List<ActionStep>();

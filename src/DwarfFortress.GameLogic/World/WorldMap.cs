@@ -217,6 +217,8 @@ public sealed class WorldMap : IGameSystem
 
         var (chunk, lx, ly, lz) = Locate(pos);
         var old = chunk.Get(lx, ly, lz);
+        if (old.Equals(tile))
+            return;
 
         chunk.Set(lx, ly, lz, tile);
 
@@ -295,6 +297,37 @@ public sealed class WorldMap : IGameSystem
         return canSwim && IsSwimmable(pos);
     }
 
+    public void CollectTraversableNeighbors(Vec3i origin, bool canSwim, bool requiresSwimming, List<Vec3i> buffer)
+    {
+        buffer.Clear();
+        if (!IsTraversable(origin, canSwim, requiresSwimming))
+            return;
+
+        TryAddHorizontalNeighbor(origin + Vec3i.North, canSwim, requiresSwimming, buffer);
+        TryAddHorizontalNeighbor(origin + Vec3i.South, canSwim, requiresSwimming, buffer);
+        TryAddHorizontalNeighbor(origin + Vec3i.East, canSwim, requiresSwimming, buffer);
+        TryAddHorizontalNeighbor(origin + Vec3i.West, canSwim, requiresSwimming, buffer);
+        TryAddVerticalNeighbor(origin, origin + Vec3i.Up, canSwim, requiresSwimming, buffer);
+        TryAddVerticalNeighbor(origin, origin + Vec3i.Down, canSwim, requiresSwimming, buffer);
+    }
+
+    private void TryAddHorizontalNeighbor(Vec3i target, bool canSwim, bool requiresSwimming, List<Vec3i> buffer)
+    {
+        if (IsTraversable(target, canSwim, requiresSwimming))
+            buffer.Add(target);
+    }
+
+    private void TryAddVerticalNeighbor(Vec3i origin, Vec3i target, bool canSwim, bool requiresSwimming, List<Vec3i> buffer)
+    {
+        if (!IsInBounds(target) || !IsTraversable(target, canSwim, requiresSwimming))
+            return;
+
+        var originTile = GetTile(origin);
+        var targetTile = GetTile(target);
+        if (originTile.TileDefId == TileDefIds.Staircase && targetTile.TileDefId == TileDefIds.Staircase)
+            buffer.Add(target);
+    }
+
     /// <summary>All chunks that are currently dirty (need a render snapshot rebuild).</summary>
     public IEnumerable<Chunk> GetDirtyChunks()
     {
@@ -303,6 +336,9 @@ public sealed class WorldMap : IGameSystem
     }
 
     public IEnumerable<Chunk> AllChunks() => _chunks.Values;
+
+    public bool TryGetChunk(Vec3i origin, out Chunk? chunk)
+        => _chunks.TryGetValue(origin, out chunk);
 
     // ── Private helpers ────────────────────────────────────────────────────
 
