@@ -69,40 +69,15 @@ public static class TileInspectionFormatter
     public static string BuildDetailedText(TileQueryResult result)
         => BuildTileDetailedText(result);
 
-    public static string BuildItemDetailedText(ItemView item, TileQueryResult tileResult)
+    public static string BuildItemDetailedText(ItemView item, TileQueryResult _)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("[Selected Item]");
-        sb.AppendLine(ItemTextFormatter.BuildContainedCardTitle(item));
-        sb.AppendLine($"Item #{item.Id}");
-        sb.AppendLine($"Position: ({item.Position.X}, {item.Position.Y}, z:{item.Position.Z})");
+        sb.AppendLine(ItemTextFormatter.BuildInspectorTitle(item));
 
-        if (item.Corpse is not null)
-        {
-            sb.AppendLine($"Formerly: {item.Corpse.DisplayName}");
-            sb.AppendLine($"Former type: {Humanize(item.Corpse.FormerDefId)}");
-            sb.AppendLine($"Cause of death: {Humanize(item.Corpse.DeathCause)}");
-            sb.AppendLine($"Rot stage: {Humanize(item.Corpse.RotStage)}");
-        }
-        else if (!string.IsNullOrWhiteSpace(item.MaterialId))
-        {
-            sb.AppendLine($"Material: {Humanize(item.MaterialId!)}");
-        }
+        var details = ItemTextFormatter.BuildInspectorDetails(item);
+        if (!string.IsNullOrWhiteSpace(details))
+            sb.Append(details);
 
-        if (item.StackSize > 1)
-            sb.AppendLine($"Stack size: {item.StackSize}");
-
-        if (item.Weight > 0f)
-            sb.AppendLine($"Weight: {item.Weight:F1} kg");
-
-        sb.AppendLine($"Location: {ResolveItemLocation(item)}");
-
-        if (item.Storage is not null)
-            sb.AppendLine($"Stores: {item.Storage.StoredItemCount} item(s)");
-
-        sb.AppendLine();
-        sb.AppendLine("Tile:");
-        sb.Append(BuildTileDetailedText(tileResult, item.Id));
         return sb.ToString().TrimEnd();
     }
 
@@ -195,23 +170,6 @@ public static class TileInspectionFormatter
             sb.AppendLine($"Stockpile #{stockpile.Id} [{string.Join(", ", stockpile.AcceptedTags)}]");
 
         return sb.ToString();
-    }
-
-    private static string ResolveItemLocation(ItemView item)
-    {
-        if (item.CarriedByEntityId >= 0)
-            return $"Carried by entity #{item.CarriedByEntityId}";
-
-        if (item.ContainerBuildingId >= 0)
-            return $"Stored in building #{item.ContainerBuildingId}";
-
-        if (item.ContainerItemId >= 0)
-            return $"Inside container #{item.ContainerItemId}";
-
-        if (item.StockpileId >= 0)
-            return $"On ground in stockpile #{item.StockpileId}";
-
-        return "On ground";
     }
 
     private static void AddDistinct(ICollection<string> labels, string? rawValue)

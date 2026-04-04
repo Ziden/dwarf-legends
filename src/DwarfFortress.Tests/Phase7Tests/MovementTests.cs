@@ -3,6 +3,7 @@ using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
+using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.Tests.Fakes;
@@ -16,6 +17,31 @@ namespace DwarfFortress.GameLogic.Tests.Phase7Tests;
 /// </summary>
 public sealed class MovementTests
 {
+    private sealed class PickupAndPlaceStrategy : IJobStrategy
+    {
+        public const string DefId = "test_pickup_place";
+
+        public string JobDefId => DefId;
+
+        public bool CanExecute(Job job, int dwarfId, GameContext ctx) => job.EntityId >= 0;
+
+        public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
+            =>
+            [
+                new PickUpItemStep(job.EntityId),
+                new MoveToStep(job.TargetPos),
+                new PlaceItemStep(job.EntityId, job.TargetPos),
+            ];
+
+        public void OnInterrupt(Job job, int dwarfId, GameContext ctx)
+        {
+        }
+
+        public void OnComplete(Job job, int dwarfId, GameContext ctx)
+        {
+        }
+    }
+
     private static (GameSimulation sim, EntityRegistry er, JobSystem js, WorldMap map) Build()
     {
         var (sim, map, er, js, _) = TestFixtures.BuildFullSim();
@@ -104,6 +130,31 @@ public sealed class MovementTests
         for (int i = 0; i < 50; i++) sim.Tick(0.1f);
 
         Assert.NotNull(failedEv);
+    }
+
+    [Fact]
+    public void JobSystem_Executes_Pickup_And_Place_Steps_Via_Action_Executor()
+    {
+        var (sim, er, js, _) = Build();
+        js.RegisterStrategy(new PickupAndPlaceStrategy());
+
+        var dwarf = new Dwarf(er.NextId(), "Carrier", new Vec3i(5, 5, 0));
+        er.Register(dwarf);
+
+        var items = sim.Context.Get<ItemSystem>();
+        var item = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarf.Position.Position);
+        var dropPos = dwarf.Position.Position + Vec3i.East;
+
+        js.CreateJob(PickupAndPlaceStrategy.DefId, dropPos, priority: 5, entityId: item.Id);
+
+        for (var i = 0; i < 6; i++)
+            sim.Tick(0.5f);
+
+        Assert.True(items.TryGetItem(item.Id, out var movedItem));
+        Assert.NotNull(movedItem);
+        Assert.Equal(dropPos, movedItem!.Position.Position);
+        Assert.Equal(-1, movedItem.CarriedByEntityId);
+        Assert.Equal(ItemCarryMode.None, movedItem.CarryMode);
     }
 
     [Fact]
@@ -252,6 +303,86 @@ public sealed class MovementTests
 
         Assert.True(movementPresentation.TryGetEntitySegment(dwarf.Id, out var segment));
         Assert.Equal(0f, segment.DurationSeconds);
+    }
+
+    [Fact]
+    public void MovementPresentationSystem_Records_Item_Pickup_As_Jump_To_Carrier()
+    {
+        var (sim, er, _, _) = Build();
+        var movementPresentation = sim.Context.Get<MovementPresentationSystem>();
+        var items = sim.Context.Get<ItemSystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "Carrier", new Vec3i(4, 4, 0));
+        er.Register(dwarf);
+        var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarf.Position.Position);
+
+        Assert.True(items.PickUpItem(log.Id, dwarf.Id, dwarf.Position.Position, ItemCarryMode.Hauling));
+        Assert.True(movementPresentation.TryGetItemSegment(log.Id, out var segment));
+
+        Assert.Equal(MovementPresentationMotionKind.Jump, segment.MotionKind);
+        Assert.Equal(MovementPresentationAnchorKind.Tile, segment.StartAnchor);
+        Assert.Equal(MovementPresentationAnchorKind.Carrier, segment.EndAnchor);
+        Assert.Equal(dwarf.Id, segment.EndAnchorEntityId);
+        Assert.Equal(dwarf.Position.Position, segment.OldPos);
+        Assert.Equal(dwarf.Position.Position, segment.NewPos);
+        Assert.True(segment.DurationSeconds > 0f);
+        Assert.True(segment.ArcHeight > 0f);
+    }
+
+    [Fact]
+    public void MovementPresentationSystem_Records_Item_Drop_As_Jump_From_Carrier()
+    {
+        var (sim, er, _, _) = Build();
+        var movementPresentation = sim.Context.Get<MovementPresentationSystem>();
+        var items = sim.Context.Get<ItemSystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "Dropper", new Vec3i(5, 5, 0));
+        er.Register(dwarf);
+        var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarf.Position.Position);
+
+        Assert.True(items.PickUpItem(log.Id, dwarf.Id, dwarf.Position.Position, ItemCarryMode.Hauling));
+        Assert.True(movementPresentation.TryGetItemSegment(log.Id, out var pickupSegment));
+
+        items.MoveItem(log.Id, dwarf.Position.Position);
+
+        Assert.True(movementPresentation.TryGetItemSegment(log.Id, out var dropSegment));
+        Assert.True(dropSegment.Sequence > pickupSegment.Sequence);
+        Assert.Equal(MovementPresentationMotionKind.Jump, dropSegment.MotionKind);
+        Assert.Equal(MovementPresentationAnchorKind.Carrier, dropSegment.StartAnchor);
+        Assert.Equal(dwarf.Id, dropSegment.StartAnchorEntityId);
+        Assert.Equal(MovementPresentationAnchorKind.Tile, dropSegment.EndAnchor);
+        Assert.Equal(dwarf.Position.Position, dropSegment.OldPos);
+        Assert.Equal(dwarf.Position.Position, dropSegment.NewPos);
+        Assert.True(dropSegment.DurationSeconds > 0f);
+        Assert.True(dropSegment.ArcHeight > 0f);
+    }
+
+    [Fact]
+    public void CutTreeStrategy_Records_New_Log_Fall_Segment()
+    {
+        var (sim, _, _, map) = Build();
+        var movementPresentation = sim.Context.Get<MovementPresentationSystem>();
+        var items = sim.Context.Get<ItemSystem>();
+        var strategy = new DwarfFortress.GameLogic.Jobs.Strategies.CutTreeStrategy();
+        var treePos = new Vec3i(8, 8, 0);
+
+        map.SetTile(treePos, new TileData
+        {
+            TileDefId = TileDefIds.Tree,
+            MaterialId = MaterialIds.Wood,
+            TreeSpeciesId = "oak",
+            IsDesignated = true,
+            IsPassable = false,
+        });
+
+        strategy.OnComplete(new Job(1, JobDefIds.CutTree, treePos), dwarfId: -1, sim.Context);
+
+        var log = items.GetAllItems().Single(item => item.Position.Position == treePos);
+        Assert.True(movementPresentation.TryGetItemSegment(log.Id, out var segment));
+        Assert.Equal(MovementPresentationMotionKind.Linear, segment.MotionKind);
+        Assert.Equal(treePos + Vec3i.Up, segment.OldPos);
+        Assert.Equal(treePos, segment.NewPos);
+        Assert.True(segment.DurationSeconds > 0f);
     }
 
     [Fact]

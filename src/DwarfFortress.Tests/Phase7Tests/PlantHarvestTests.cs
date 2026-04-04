@@ -147,6 +147,39 @@ public sealed class PlantHarvestTests
     }
 
     [Fact]
+    public void EatStrategy_Can_Forage_When_Inventory_Is_Full_Even_If_Food_Items_Exist()
+    {
+        var (sim, map, er, _, items) = TestFixtures.BuildFullSim();
+        var dwarf = new Dwarf(er.NextId(), "PackedForager", new Vec3i(9, 10, 0));
+        er.Register(dwarf);
+
+        dwarf.Inventory.AddCarriedItem(1001);
+        dwarf.Inventory.AddCarriedItem(1002);
+        dwarf.Inventory.AddCarriedItem(1003);
+        dwarf.Inventory.AddCarriedItem(1004);
+
+        items.CreateItem(ItemDefIds.Meal, MaterialIds.Food, new Vec3i(20, 20, 0));
+
+        var plantPos = new Vec3i(10, 10, 0);
+        var tile = map.GetTile(plantPos);
+        tile.TileDefId = TileDefIds.Grass;
+        tile.IsPassable = true;
+        tile.PlantDefId = "sunroot";
+        tile.PlantGrowthStage = PlantGrowthStages.Mature;
+        tile.PlantYieldLevel = 1;
+        tile.PlantSeedLevel = 1;
+        map.SetTile(plantPos, tile);
+
+        var eatJob = new Job(2, JobDefIds.Eat, dwarf.Position.Position, priority: 100);
+        var eatStrategy = new EatStrategy();
+
+        Assert.True(eatStrategy.CanExecute(eatJob, dwarf.Id, sim.Context));
+        var steps = eatStrategy.GetSteps(eatJob, dwarf.Id, sim.Context);
+        Assert.DoesNotContain(steps, step => step is PickUpItemStep);
+        Assert.Contains(steps, step => step is WorkAtStep work && work.AnimationHint == "gather_plants");
+    }
+
+    [Fact]
     public void IdleJob_Batch_Unloads_Harvested_Items_Using_Preferred_Stockpiles()
     {
         var (sim, map, er, _, items) = TestFixtures.BuildFullSim();

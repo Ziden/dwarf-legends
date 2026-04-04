@@ -14,8 +14,8 @@ namespace DwarfFortress.GameLogic.Systems;
 public record struct ItemCreatedEvent  (int ItemId, string ItemDefId, Vec3i Position);
 public record struct ItemDestroyedEvent(int ItemId, string ItemDefId);
 public record struct ItemMovedEvent    (int ItemId, Vec3i OldPos, Vec3i NewPos);
-public record struct ItemPickedUpEvent (int ItemId, string ItemDefId, int CarrierEntityId, Vec3i Position);
-public record struct ItemDroppedEvent  (int ItemId, string ItemDefId, int CarrierEntityId, Vec3i Position, int ContainerBuildingId = -1);
+public record struct ItemPickedUpEvent (int ItemId, string ItemDefId, int CarrierEntityId, Vec3i Position, Vec3i PreviousPosition = default, ItemCarryMode CarryMode = ItemCarryMode.None);
+public record struct ItemDroppedEvent  (int ItemId, string ItemDefId, int CarrierEntityId, Vec3i Position, Vec3i PreviousPosition = default, int ContainerBuildingId = -1);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -208,7 +208,7 @@ public sealed class ItemSystem : IGameSystem
 
         _ctx!.EventBus.Emit(new ItemMovedEvent(itemId, old, newPos));
         if (previousCarrierEntityId >= 0)
-            _ctx.EventBus.Emit(new ItemDroppedEvent(item.Id, item.DefId, previousCarrierEntityId, newPos, containerBuildingId));
+            _ctx.EventBus.Emit(new ItemDroppedEvent(item.Id, item.DefId, previousCarrierEntityId, newPos, old, containerBuildingId));
     }
 
     public void StoreItemInBuilding(int itemId, int buildingId, Vec3i newPos)
@@ -289,7 +289,7 @@ public sealed class ItemSystem : IGameSystem
 
         pos.Position = carrierPos;
 
-        _ctx!.EventBus.Emit(new ItemPickedUpEvent(item.Id, item.DefId, carrierEntityId, carrierPos));
+        _ctx!.EventBus.Emit(new ItemPickedUpEvent(item.Id, item.DefId, carrierEntityId, carrierPos, previousPosition, carryMode));
         return true;
     }
 
@@ -355,7 +355,8 @@ public sealed class ItemSystem : IGameSystem
         if (!_items.TryGetValue(itemId, out var item)) return;
 
         var carrierEntityId = item.CarriedByEntityId;
-        DetachFromCurrentLocation(item, item.Components.Get<PositionComponent>().Position);
+        var previousPosition = item.Components.Get<PositionComponent>().Position;
+        DetachFromCurrentLocation(item, previousPosition);
         item.Components.Get<PositionComponent>().Position = dropPos;
         item.CarriedByEntityId = -1;
         item.CarryMode = ItemCarryMode.None;
@@ -364,7 +365,7 @@ public sealed class ItemSystem : IGameSystem
         item.StockpileId = -1;
         AddToPos(itemId, dropPos);
 
-        _ctx!.EventBus.Emit(new ItemDroppedEvent(item.Id, item.DefId, carrierEntityId, dropPos));
+        _ctx!.EventBus.Emit(new ItemDroppedEvent(item.Id, item.DefId, carrierEntityId, dropPos, previousPosition));
     }
 
     // ── Queries ────────────────────────────────────────────────────────────

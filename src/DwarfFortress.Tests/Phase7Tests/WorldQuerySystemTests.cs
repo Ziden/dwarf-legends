@@ -154,7 +154,7 @@ public sealed class WorldQuerySystemTests
     }
 
     [Fact]
-    public void WorldQuerySystem_Emits_Dwarf_Need_Announcements_But_Ignores_Creatures()
+    public void WorldQuerySystem_Does_Not_Emit_Mood_Or_Need_Announcements()
     {
         var (sim, _, er, _, _) = TestFixtures.BuildFullSim();
         var queries = sim.Context.Get<WorldQuerySystem>();
@@ -167,14 +167,12 @@ public sealed class WorldQuerySystemTests
 
         sim.Context.EventBus.Emit(new NeedCriticalEvent(dwarf.Id, "thirst"));
         sim.Context.EventBus.Emit(new NeedCriticalEvent(elk.Id, "hunger"));
+        sim.Context.EventBus.Emit(new MoodChangedEvent(dwarf.Id, Mood.Content, Mood.Unhappy));
 
         var announcements = queries.GetFortressAnnouncements();
 
-        Assert.Contains(announcements, announcement =>
-            announcement.Kind == FortressAnnouncementKind.Need &&
-            announcement.Message.Contains("Urist needs thirst", System.StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(announcements, announcement =>
-            announcement.Message.Contains("elk needs hunger", System.StringComparison.OrdinalIgnoreCase));
+            announcement.Kind is FortressAnnouncementKind.Need or FortressAnnouncementKind.Mood);
     }
 
     [Fact]

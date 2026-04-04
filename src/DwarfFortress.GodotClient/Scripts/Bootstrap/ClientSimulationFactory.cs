@@ -35,12 +35,13 @@ public static class ClientSimulationFactory
             string.Join(", ", candidates.Select(path => $"'{path}'")));
     }
 
-    public static GameSimulation CreateSimulation(int seed = 42, int width = 48, int height = 48, int depth = 8)
+    public static GameSimulation CreateSimulation(int? seed = null, int width = 48, int height = 48, int depth = 8)
     {
         var logger = new GodotLogger();
         var dataSource = new FolderDataSource(ResolveDataPath());
         var simulation = GameBootstrapper.Build(logger, dataSource);
-        simulation.Context.Commands.Dispatch(new StartFortressCommand(seed, width, height, depth));
+        var resolvedSeed = seed ?? Random.Shared.Next(1, int.MaxValue);
+        simulation.Context.Commands.Dispatch(new StartFortressCommand(resolvedSeed, width, height, depth));
         return simulation;
     }
 }

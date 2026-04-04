@@ -2,6 +2,7 @@ using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Jobs;
+using DwarfFortress.GameLogic.Jobs.Strategies;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.Tests;
 using System.Collections.Generic;
@@ -12,6 +13,50 @@ namespace DwarfFortress.GameLogic.Tests.Phase6Tests;
 
 public sealed class NeedsSystemTests
 {
+    private sealed class LongRunningStrategy : IJobStrategy
+    {
+        public const string DefId = "test_long_running";
+
+        public bool Interrupted { get; private set; }
+
+        public string JobDefId => DefId;
+
+        public bool CanExecute(Job job, int dwarfId, GameContext ctx) => true;
+
+        public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
+            => [new WaitStep(10f)];
+
+        public void OnInterrupt(Job job, int dwarfId, GameContext ctx)
+        {
+            Interrupted = true;
+        }
+
+        public void OnComplete(Job job, int dwarfId, GameContext ctx)
+        {
+        }
+    }
+
+    private sealed class InterruptibleSleepStrategy : IJobStrategy
+    {
+        public bool Interrupted { get; private set; }
+
+        public string JobDefId => JobDefIds.Sleep;
+
+        public bool CanExecute(Job job, int dwarfId, GameContext ctx) => true;
+
+        public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
+            => [new WaitStep(10f)];
+
+        public void OnInterrupt(Job job, int dwarfId, GameContext ctx)
+        {
+            Interrupted = true;
+        }
+
+        public void OnComplete(Job job, int dwarfId, GameContext ctx)
+        {
+        }
+    }
+
     private static (NeedsSystem ns, EntityRegistry er, JobSystem js, GameSimulation sim) CreateSim()
     {
         var logger = new Fakes.TestLogger();
@@ -157,6 +202,71 @@ public sealed class NeedsSystemTests
 
         var drinkJobs = js.GetPendingJobs().Where(j => j.JobDefId == JobDefIds.Drink).ToList();
         Assert.NotEmpty(drinkJobs);
+    }
+
+    [Fact]
+    public void Tick_Gives_Drink_Higher_Priority_Than_Sleep_When_Both_Needs_Are_Critical()
+    {
+        var (_, er, js, sim) = CreateSim();
+        var dwarf = new Dwarf(1, "Urist", new Vec3i(0, 0, 0));
+        er.Register(dwarf);
+        dwarf.Needs.Thirst.SetLevel(0.05f);
+        dwarf.Needs.Sleep.SetLevel(0.05f);
+
+        sim.Tick(0.1f);
+
+        var drinkJob = Assert.Single(js.GetPendingJobs().Where(job => job.JobDefId == JobDefIds.Drink));
+        var sleepJob = Assert.Single(js.GetPendingJobs().Where(job => job.JobDefId == JobDefIds.Sleep));
+        Assert.True(drinkJob.Priority > sleepJob.Priority);
+    }
+
+    [Fact]
+    public void Tick_Cancels_Active_NonSurvival_Work_When_Hunger_Becomes_Critical()
+    {
+        var (_, er, js, sim) = CreateSim();
+        var strategy = new LongRunningStrategy();
+        js.RegisterStrategy(strategy);
+
+        var dwarf = new Dwarf(1, "Urist", new Vec3i(0, 0, 0));
+        er.Register(dwarf);
+
+        var workJob = js.CreateJob(LongRunningStrategy.DefId, dwarf.Position.Position, priority: 5);
+
+        sim.Tick(0.1f);
+
+        Assert.Equal(workJob.Id, js.GetAssignedJob(dwarf.Id)?.Id);
+
+        dwarf.Needs.Hunger.SetLevel(0.05f);
+
+        sim.Tick(0.1f);
+
+        Assert.True(strategy.Interrupted);
+        Assert.Null(js.GetJob(workJob.Id));
+        Assert.Contains(js.GetAllJobs(), job => job.JobDefId == JobDefIds.Eat);
+    }
+
+    [Fact]
+    public void Tick_Cancels_Active_Sleep_Job_When_Thirst_Becomes_Critical()
+    {
+        var (_, er, js, sim) = CreateSim();
+        var sleepStrategy = new InterruptibleSleepStrategy();
+        js.RegisterStrategy(sleepStrategy);
+
+        var dwarf = new Dwarf(1, "Urist", new Vec3i(0, 0, 0));
+        er.Register(dwarf);
+        dwarf.Needs.Sleep.SetLevel(0.05f);
+
+        sim.Tick(0.1f);
+
+        Assert.Equal(JobDefIds.Sleep, js.GetAssignedJob(dwarf.Id)?.JobDefId);
+
+        dwarf.Needs.Thirst.SetLevel(0.05f);
+
+        sim.Tick(0.1f);
+
+        Assert.True(sleepStrategy.Interrupted);
+        var drinkJob = Assert.Single(js.GetPendingJobs().Where(job => job.JobDefId == JobDefIds.Drink));
+        Assert.Equal(dwarf.Id, drinkJob.AssignedDwarfId);
     }
 
     [Fact]

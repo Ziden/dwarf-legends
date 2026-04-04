@@ -38,20 +38,22 @@ public sealed class EatStrategy : IJobStrategy
             if (d.Components.TryGet<StatusEffectComponent>()?.Has(StatusEffectIds.Nausea) == true)
                 return false;
 
+        var harvestTarget = ResolveHarvestTarget(job, dwarfId, ctx);
+
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
         if (itemSystem?.FindCarriedFoodItem(dwarfId) is not null)
             return true;
 
         // Harvest path — no inventory needed
         if (itemSystem?.FindFoodItem() is null)
-            return ResolveHarvestTarget(job, dwarfId, ctx) is not null;
+            return harvestTarget is not null;
 
         // Pickup path — check inventory capacity
         if (registry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) && dwarf is not null)
         {
             var inventory = dwarf.Components.TryGet<InventoryComponent>();
             if (inventory is not null && inventory.IsFull)
-                return false;
+                return harvestTarget is not null;
         }
 
         return true;
@@ -81,10 +83,14 @@ public sealed class EatStrategy : IJobStrategy
             return carriedSteps;
         }
 
+        var entityRegistry = ctx.Get<Entities.EntityRegistry>();
+        var inventory = entityRegistry.TryGetById<Entities.Dwarf>(dwarfId, out var actor) && actor is not null
+            ? actor.Components.TryGet<InventoryComponent>()
+            : null;
+        var harvestTarget = ResolveHarvestTarget(job, dwarfId, ctx);
         var food       = itemSystem?.FindFoodItem();
-        if (food is null)
+        if ((inventory?.IsFull == true && harvestTarget is not null) || food is null)
         {
-            var harvestTarget = ResolveHarvestTarget(job, dwarfId, ctx);
             if (harvestTarget is null)
                 return Array.Empty<ActionStep>();
 
@@ -100,7 +106,7 @@ public sealed class EatStrategy : IJobStrategy
 
         var steps = new List<ActionStep>
         {
-            new MoveToStep(food.Components.Get<PositionComponent>().Position),
+            ItemPickupHelper.CreatePickupMoveStep(food),
             new PickUpItemStep(food.Id),
         };
 
@@ -110,7 +116,7 @@ public sealed class EatStrategy : IJobStrategy
 
         steps.Add(new WorkAtStep(
             Duration: diningSpot?.Duration ?? FloorMealDuration,
-            RequiredPosition: diningSpot?.Target ?? food.Components.Get<PositionComponent>().Position));
+            RequiredPosition: diningSpot?.Target ?? ItemPickupHelper.ResolveConsumeWorkPosition(food)));
 
         return steps;
     }

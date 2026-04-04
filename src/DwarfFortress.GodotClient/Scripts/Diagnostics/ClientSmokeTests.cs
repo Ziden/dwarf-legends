@@ -4,12 +4,14 @@ using System.Reflection;
 using DwarfFortress.GameLogic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.World;
 using DwarfFortress.GodotClient.Rendering;
+using DwarfFortress.WorldGen.Ids;
 using Godot;
 
 namespace DwarfFortress.GodotClient.Diagnostics;
@@ -46,6 +48,18 @@ public partial class ClientSmokeTests : Node
 
             if (ShouldRun("tile-inspector"))
                 RunTileInspectorGeneralItemTest();
+
+            if (ShouldRun("loose-item-billboard"))
+                RunLooseItemBillboardCollectionTest();
+
+            if (ShouldRun("hauled-item-billboard"))
+                RunHauledItemBillboardCollectionTest();
+
+            if (ShouldRun("item-billboard-animation"))
+                await RunFreshItemBillboardInterpolationTest();
+
+            if (ShouldRun("hauled-item-render"))
+                await RunHauledItemBillboardRenderTest();
 
             if (ShouldRun("event-log-jump"))
                 await RunEventLogJumpSelectionTest();
@@ -150,6 +164,24 @@ public partial class ClientSmokeTests : Node
         Assert(customBar.GetSize() == new Vector2I(PixelArtFactory.Size, PixelArtFactory.Size), "Custom bar texture size mismatch.");
         Assert(ReferenceEquals(tile, PixelArtFactory.GetTile("soil")), "Expected cached tile texture instance.");
         Assert(ReferenceEquals(customLog, PixelArtFactory.GetItem("glowwood_log", "glowwood_wood")), "Expected cached custom log texture instance.");
+        AssertDistinctPlantSilhouettes(
+            PlantGrowthStages.Sprout,
+            yieldLevel: 0,
+            PlantSpeciesIds.BerryBush,
+            PlantSpeciesIds.Sunroot,
+            PlantSpeciesIds.StoneTuber,
+            PlantSpeciesIds.MarshReed,
+            PlantSpeciesIds.AppleCanopy,
+            PlantSpeciesIds.FigCanopy);
+        AssertDistinctPlantSilhouettes(
+            PlantGrowthStages.Mature,
+            yieldLevel: 1,
+            PlantSpeciesIds.BerryBush,
+            PlantSpeciesIds.Sunroot,
+            PlantSpeciesIds.StoneTuber,
+            PlantSpeciesIds.MarshReed,
+            PlantSpeciesIds.AppleCanopy,
+            PlantSpeciesIds.FigCanopy);
 
         var grassTile = new TileRenderData(TileDefIds.Grass, null);
         TileRenderData? ResolveSurfaceTile(int sx, int sy, int sz)
@@ -193,6 +225,38 @@ public partial class ClientSmokeTests : Node
             Assert(texture.GetSize() == new Vector2I(PixelArtFactory.Size, PixelArtFactory.Size),
                 $"Item texture size mismatch for '{itemId}'.");
         }
+    }
+
+    private static void AssertDistinctPlantSilhouettes(byte growthStage, byte yieldLevel, params string[] plantDefIds)
+    {
+        var duplicateSilhouettes = plantDefIds
+            .Select(plantDefId => (Id: plantDefId, Signature: GetAlphaMaskSignature(PixelArtFactory.GetPlantOverlay(plantDefId, growthStage, yieldLevel, 0))))
+            .GroupBy(entry => entry.Signature)
+            .Where(group => group.Count() > 1)
+            .Select(group => string.Join(", ", group.Select(entry => entry.Id)))
+            .ToArray();
+
+        Assert(duplicateSilhouettes.Length == 0,
+            $"Expected unique plant silhouettes for growth stage {growthStage}, duplicates: {string.Join(" | ", duplicateSilhouettes)}.");
+    }
+
+    private static string GetAlphaMaskSignature(Texture2D texture)
+    {
+        var image = texture.GetImage();
+        image.Convert(Image.Format.Rgba8);
+
+        var width = image.GetWidth();
+        var height = image.GetHeight();
+        var signature = new char[width * height];
+        var index = 0;
+
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+                signature[index++] = image.GetPixel(x, y).A > 0.01f ? '1' : '0';
+        }
+
+        return new string(signature);
     }
 
     // â”€â”€ Workshop tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -323,14 +387,210 @@ public partial class ClientSmokeTests : Node
         panel.ShowItem(item);
 
         var contentLabel = panel.GetNode<Label>("%ContentLabel");
+        var itemIconContainer = panel.GetNode<CenterContainer>("%SelectedItemIconContainer");
+        var itemIcon = panel.GetNode<TextureRect>("%SelectedItemIcon");
         var details = contentLabel.Text;
 
         Assert(panel.Visible || !panel.Visible, "Tile inspector should instantiate without requiring scene-specific visibility state.");
-        Assert(details.Contains("Selected Item", StringComparison.Ordinal), "Expected tile inspector to render the selected item section.");
         Assert(details.Contains(item.DisplayName, StringComparison.Ordinal), "Expected tile inspector to include the selected item display name.");
-        Assert(details.Contains("Tile:", StringComparison.Ordinal), "Expected tile inspector to include surrounding tile context for selected items.");
+        if (item.Weight > 0f)
+            Assert(details.Contains($"{item.Weight:F1} kg", StringComparison.Ordinal), "Expected tile inspector to include the selected item weight.");
+        Assert(itemIconContainer.Visible, "Expected tile inspector to show an item icon container for selected items.");
+        Assert(itemIcon.Texture is not null, "Expected tile inspector to render the selected item's icon.");
 
         panel.QueueFree();
+    }
+
+    private static void RunLooseItemBillboardCollectionTest()
+    {
+        var sim = ClientSimulationFactory.CreateSimulation(seed: 7, width: 24, height: 24, depth: 4);
+        var map = sim.Context.Get<WorldMap>();
+        var registry = sim.Context.Get<EntityRegistry>();
+        var items = sim.Context.Get<ItemSystem>();
+        var spatial = sim.Context.Get<SpatialIndexSystem>();
+        var movement = sim.Context.TryGet<MovementPresentationSystem>();
+
+        Vec3i? target = null;
+        for (var x = 0; x < map.Width && target is null; x++)
+        for (var y = 0; y < map.Height && target is null; y++)
+        {
+            var pos = new Vec3i(x, y, 0);
+            var tile = map.GetTile(pos);
+            if (!tile.IsPassable || tile.TileDefId == TileDefIds.Empty)
+                continue;
+
+            if (spatial.GetBuildingAt(pos).HasValue)
+                continue;
+
+            if (spatial.GetDwarvesAt(pos).Count > 0 ||
+                spatial.GetCreaturesAt(pos).Count > 0 ||
+                spatial.GetContainersAt(pos).Count > 0 ||
+                items.GetItemsAt(pos).Any())
+            {
+                continue;
+            }
+
+            target = pos;
+        }
+
+        Assert(target.HasValue, "Loose item billboard smoke test needs an empty visible tile.");
+
+        var testTile = target!.Value;
+        var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, testTile);
+        var box = new Box(registry.NextId(), testTile);
+        registry.Register(box);
+
+        var looseItemIds = new System.Collections.Generic.List<int>();
+        var containerIds = new System.Collections.Generic.List<int>();
+        var entries = new System.Collections.Generic.List<ItemLikeSceneEntry>();
+        ItemLikeSceneResolver.CollectVisibleEntries(
+            registry,
+            items,
+            spatial,
+            movement,
+            testTile.Z,
+            testTile.X,
+            testTile.Y,
+            testTile.X,
+            testTile.Y,
+            System.Array.Empty<int>(),
+            System.Array.Empty<int>(),
+            looseItemIds,
+            containerIds,
+            entries,
+            maxCount: 8);
+
+        Assert(entries.Any(entry => entry.RuntimeId == log.Id),
+            "Loose item billboard collection should keep loose world items in the visible render set.");
+        Assert(entries.Any(entry => entry.RuntimeId == box.Id),
+            "Loose item billboard collection should also keep container entities in the visible render set.");
+    }
+
+    private static void RunHauledItemBillboardCollectionTest()
+    {
+        var sim = ClientSimulationFactory.CreateSimulation(seed: 7, width: 24, height: 24, depth: 4);
+        var registry = sim.Context.Get<EntityRegistry>();
+        var items = sim.Context.Get<ItemSystem>();
+        var spatial = sim.Context.Get<SpatialIndexSystem>();
+        var movement = sim.Context.TryGet<MovementPresentationSystem>();
+        var dwarf = registry.GetAlive<Dwarf>().First();
+        var dwarfPos = dwarf.Position.Position;
+        var hauledLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarfPos);
+
+        Assert(items.PickUpItem(hauledLog.Id, dwarf.Id, dwarfPos, ItemCarryMode.Hauling),
+            "Hauled item billboard smoke test expected the dwarf to pick up the test log.");
+
+        var looseItemIds = new System.Collections.Generic.List<int>();
+        var containerIds = new System.Collections.Generic.List<int>();
+        var entries = new System.Collections.Generic.List<ItemLikeSceneEntry>();
+        ItemLikeSceneResolver.CollectVisibleEntries(
+            registry,
+            items,
+            spatial,
+            movement,
+            dwarfPos.Z,
+            dwarfPos.X,
+            dwarfPos.Y,
+            dwarfPos.X,
+            dwarfPos.Y,
+            new[] { dwarf.Id },
+            System.Array.Empty<int>(),
+            looseItemIds,
+            containerIds,
+            entries,
+            maxCount: 8);
+
+        var hauledEntry = entries.FirstOrDefault(entry => entry.RuntimeId == hauledLog.Id);
+        Assert(hauledEntry.RuntimeId == hauledLog.Id,
+            "Hauled item billboard collection should keep a visible dwarf's carried hauling item in the render set.");
+        Assert(hauledEntry.CarrierEntityId == dwarf.Id,
+            "Hauled item billboard collection should preserve the carrier entity so the client can anchor the item above the dwarf.");
+        Assert(hauledEntry.CarryMode == ItemCarryMode.Hauling,
+            "Hauled item billboard collection should preserve hauling carry mode for carried-world item presentation.");
+        Assert(hauledEntry.MovementSegment?.MotionKind == MovementPresentationMotionKind.Jump,
+            "Picking up a hauled item should expose a jump motion segment for the pickup animation.");
+    }
+
+    private async System.Threading.Tasks.Task RunFreshItemBillboardInterpolationTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var movementPresentation = simulation.Context.Get<MovementPresentationSystem>();
+            var tile = FindEmptyPassableTile(map, spatial, items, 0);
+
+            Assert(tile != Vec3i.Zero || map.GetTile(Vec3i.Zero).IsPassable,
+                "Fresh item billboard interpolation smoke test needs a passable empty tile.");
+
+            JumpCameraToTile(gameRoot, tile);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, tile);
+            movementPresentation.RecordItemMovement(log.Id, tile + Vec3i.Up, tile, 0.8f, MovementPresentationMotionKind.Linear);
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.TryGetDebugBillboardWorldPosition(log.Id, out var startPosition),
+                "Fresh item billboard interpolation smoke test should render the spawned item billboard.");
+
+            for (var index = 0; index < 6; index++)
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.TryGetDebugBillboardWorldPosition(log.Id, out var laterPosition),
+                "Fresh item billboard interpolation smoke test should keep the item billboard visible during interpolation.");
+            Assert(startPosition.DistanceTo(laterPosition) > 0.05f,
+                "A newly visible item with an active movement segment should animate instead of snapping directly to its final position.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunHauledItemBillboardRenderTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var simulation = ResolveSimulation(gameRoot);
+            var registry = simulation.Context.Get<EntityRegistry>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var dwarf = registry.GetAlive<Dwarf>().First();
+            var dwarfTile = dwarf.Position.Position;
+
+            JumpCameraToTile(gameRoot, dwarfTile);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var hauledLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarfTile);
+            Assert(items.PickUpItem(hauledLog.Id, dwarf.Id, dwarfTile, ItemCarryMode.Hauling),
+                "Hauled item billboard render smoke test expected the dwarf to pick up the test log.");
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.TryGetDebugBillboardWorldPosition(dwarf.Id, out var dwarfPosition),
+                "Hauled item billboard render smoke test should render the carrier billboard.");
+            Assert(world3DRoot.TryGetDebugBillboardWorldPosition(hauledLog.Id, out var hauledItemPosition),
+                "Hauled item billboard render smoke test should render the carried item billboard.");
+            Assert(hauledItemPosition.Y > dwarfPosition.Y + 0.2f,
+                "A hauled item billboard should render above its carrier instead of staying on the ground.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
     }
 
     private static ItemSelectionList? FindItemSelectionList(Control root)
@@ -1024,6 +1284,22 @@ public partial class ClientSmokeTests : Node
         updateMethod!.Invoke(gameRoot, null);
     }
 
+    private static GameSimulation ResolveSimulation(GameRoot gameRoot)
+    {
+        var simulationField = typeof(GameRoot).GetField("_simulation", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(simulationField is not null, "Smoke test needs access to GameRoot._simulation.");
+        var simulation = simulationField!.GetValue(gameRoot) as GameSimulation;
+        Assert(simulation is not null, "Smoke test expected a live simulation instance.");
+        return simulation!;
+    }
+
+    private static void JumpCameraToTile(GameRoot gameRoot, Vec3i pos)
+    {
+        var jumpMethod = typeof(GameRoot).GetMethod("JumpToTile", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(jumpMethod is not null, "Smoke test needs access to GameRoot.JumpToTile().");
+        jumpMethod!.Invoke(gameRoot, [pos]);
+    }
+
     private static Vec3i FindAdjacentPassableTile(WorldMap map, Vec3i origin)
     {
         foreach (var direction in new[] { Vec3i.East, Vec3i.West, Vec3i.North, Vec3i.South })
@@ -1037,6 +1313,31 @@ public partial class ClientSmokeTests : Node
         }
 
         return origin;
+    }
+
+    private static Vec3i FindEmptyPassableTile(WorldMap map, SpatialIndexSystem spatial, ItemSystem items, int z)
+    {
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            var pos = new Vec3i(x, y, z);
+            var tile = map.GetTile(pos);
+            if (!tile.IsPassable || tile.TileDefId == TileDefIds.Empty)
+                continue;
+
+            if (spatial.GetDwarvesAt(pos).Count > 0 ||
+                spatial.GetCreaturesAt(pos).Count > 0 ||
+                spatial.GetContainersAt(pos).Count > 0 ||
+                spatial.GetBuildingAt(pos).HasValue ||
+                items.GetItemsAt(pos).Any())
+            {
+                continue;
+            }
+
+            return pos;
+        }
+
+        return Vec3i.Zero;
     }
 
     private static void Assert(bool condition, string message)

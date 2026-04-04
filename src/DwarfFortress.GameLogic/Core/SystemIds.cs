@@ -14,6 +14,7 @@ public static class SystemIds
     public const string MapGenerationService = "map_generation_service";
     public const string BuildingSystem     = "building_system";
     public const string ItemSystem         = "item_system";
+    public const string FortressLocationSystem = "fortress_location_system";
     public const string SpatialIndexSystem = "spatial_index_system";
     public const string StockpileManager   = "stockpile_manager";
     public const string NeedsSystem        = "needs_system";
@@ -22,6 +23,7 @@ public static class SystemIds
     public const string PlantHarvestSystem = "plant_harvest_system";
     public const string ThoughtSystem      = "thought_system";
     public const string MoodSystem         = "mood_system";
+    public const string EmoteFeedbackSystem = "emote_feedback_system";
     public const string SkillSystem        = "skill_system";
     public const string HealthSystem       = "health_system";
     public const string DeathSystem        = "death_system";

@@ -48,7 +48,7 @@ public sealed class Need
 public sealed class NeedsComponent
 {
     public Need Hunger     { get; } = new(NeedIds.Hunger,      decayPerTick: 0.002f);
-    public Need Thirst     { get; } = new(NeedIds.Thirst,      decayPerTick: 0.004f);
+    public Need Thirst     { get; } = new(NeedIds.Thirst,      decayPerTick: 0.004f, criticalThreshold: 0.2f);
     public Need Sleep      { get; } = new(NeedIds.Sleep,       decayPerTick: 0.001f);
     public Need Social     { get; } = new(NeedIds.Social,      decayPerTick: 0.0005f);
     public Need Recreation { get; } = new(NeedIds.Recreation,  decayPerTick: 0.0008f);

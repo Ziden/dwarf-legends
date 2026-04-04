@@ -188,16 +188,24 @@ public partial class ItemSelectionList : ScrollContainer
 
     private static void UpdateCard(EntryRefs refs, ItemSelectionEntry entry)
     {
+        var hasSubtitle = !string.IsNullOrWhiteSpace(entry.Subtitle);
+        var hasDetails = !string.IsNullOrWhiteSpace(entry.Details);
+        var hasStatus = !string.IsNullOrWhiteSpace(entry.Status);
+
         refs.Icon.Texture = entry.Icon;
         refs.Title.Text = entry.Title;
         refs.Subtitle.Text = entry.Subtitle;
+        refs.Subtitle.Visible = hasSubtitle;
         refs.Details.Text = entry.Details;
+        refs.Details.Visible = hasDetails;
         refs.Status.Text = entry.Status;
         refs.Status.Modulate = entry.StatusColor;
+        refs.Status.Visible = hasStatus;
         refs.Action.Text = entry.ActionLabel;
         refs.Action.Icon = entry.ActionIcon;
         refs.Action.Disabled = !entry.IsEnabled;
         refs.Action.Visible = !string.IsNullOrWhiteSpace(entry.ActionLabel) || entry.ActionIcon is not null;
+        refs.Root.CustomMinimumSize = new Vector2(0, hasSubtitle || hasDetails || hasStatus ? 88 : 64);
     }
 
     private void EnsureContent()

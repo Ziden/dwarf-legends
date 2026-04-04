@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
+using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.World;
 
 namespace DwarfFortress.GameLogic.Jobs.Strategies;
@@ -18,13 +19,21 @@ public sealed class CutTreeStrategy : IJobStrategy
     {
         var map = ctx.Get<WorldMap>();
         var tile = map.GetTile(job.TargetPos);
-        return tile.TileDefId == TileDefIds.Tree && tile.IsDesignated && TerrainClearanceHelper.FindAdjacentPassable(map, job.TargetPos).HasValue;
+        if (tile.TileDefId != TileDefIds.Tree || !tile.IsDesignated)
+            return false;
+
+        var registry = ctx.TryGet<EntityRegistry>();
+        if (registry is not null && registry.TryGetById<Dwarf>(dwarfId, out var dwarf) && dwarf is not null)
+            return TerrainClearanceHelper.FindReachableAdjacentPassable(map, job.TargetPos, dwarf.Position.Position).HasValue;
+
+        return TerrainClearanceHelper.FindAdjacentPassable(map, job.TargetPos).HasValue;
     }
 
     public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
     {
         var map = ctx.Get<WorldMap>();
-        var chopFromPos = TerrainClearanceHelper.FindAdjacentPassable(map, job.TargetPos)
+        var chopFromPos = ResolveChopFromPos(ctx, map, job.TargetPos, dwarfId)
+            ?? TerrainClearanceHelper.FindAdjacentPassable(map, job.TargetPos)
             ?? job.TargetPos + Vec3i.South; // fallback (should pass CanExecute)
 
         return new ActionStep[]
@@ -51,7 +60,29 @@ public sealed class CutTreeStrategy : IJobStrategy
         map.SetTile(job.TargetPos, tile);
 
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
-        itemSystem?.CreateItem(logItemDefId, logMaterialId, job.TargetPos);
+        var log = itemSystem?.CreateItem(logItemDefId, logMaterialId, job.TargetPos);
+        if (log is not null)
+        {
+            ctx.TryGet<Systems.MovementPresentationSystem>()?.RecordItemMovement(
+                log.Id,
+                job.TargetPos + Vec3i.Up,
+                job.TargetPos,
+                0.45f,
+                Systems.MovementPresentationMotionKind.Linear);
+        }
+    }
+
+    private static Vec3i? ResolveChopFromPos(GameContext ctx, WorldMap map, Vec3i targetPos, int dwarfId)
+    {
+        var registry = ctx.TryGet<EntityRegistry>();
+        if (registry is not null && registry.TryGetById<Dwarf>(dwarfId, out var dwarf) && dwarf is not null)
+        {
+            var reachable = TerrainClearanceHelper.FindReachableAdjacentPassable(map, targetPos, dwarf.Position.Position);
+            if (reachable.HasValue)
+                return reachable;
+        }
+
+        return TerrainClearanceHelper.FindAdjacentPassable(map, targetPos);
     }
 
     private static string ResolveLogMaterialId(GameContext ctx, string? treeSpeciesId)

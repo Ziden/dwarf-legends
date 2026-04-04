@@ -5,9 +5,24 @@ using DwarfFortress.GameLogic.Systems;
 
 namespace DwarfFortress.GodotClient.UI;
 
-
 public static class ItemTextFormatter
 {
+    public static string BuildInspectorTitle(ItemView item)
+        => BuildCompactDisplayName(item, includeMaterialPrefix: true);
+
+    public static string BuildInspectorDetails(ItemView item)
+    {
+        var parts = new List<string>();
+        var weightText = BuildWeightText(item);
+        if (!string.IsNullOrWhiteSpace(weightText))
+            parts.Add(weightText);
+
+        if (item.Storage is not null && item.Storage.StoredItemCount > 0)
+            parts.Add($"{item.Storage.StoredItemCount} inside");
+
+        return string.Join("\n", parts);
+    }
+
     public static string BuildInspectorSummary(ItemView item)
     {
         var parts = new List<string>();
@@ -52,22 +67,10 @@ public static class ItemTextFormatter
     }
 
     public static string BuildContainedCardTitle(ItemView item)
-    {
-        if (item.Corpse is not null)
-            return item.DisplayName;
-
-        var stackText = item.StackSize > 1 ? $" x{item.StackSize}" : string.Empty;
-        var weightText = item.Weight > 0f ? $" [{item.Weight:F1} kg]" : string.Empty;
-        return $"{GetDisplayName(item, includeMaterialPrefix: true)}{stackText}{weightText}";
-    }
+        => BuildCompactDisplayName(item, includeMaterialPrefix: true);
 
     public static string BuildContainedCardDetails(ItemView item)
-    {
-        if (item.Corpse is not null)
-            return $"Died of {FormatToken(item.Corpse.DeathCause)} â€¢ {FormatToken(item.Corpse.RotStage)} â€¢ Item #{item.Id}";
-
-        return $"Item #{item.Id} â€¢ Position: ({item.Position.X}, {item.Position.Y}, {item.Position.Z})";
-    }
+        => BuildWeightText(item);
 
     public static string BuildStorageRowLabel(ItemView item)
     {
@@ -86,6 +89,9 @@ public static class ItemTextFormatter
         return $"{FormatToken(item.MaterialId!)} {item.DisplayName}";
     }
 
+    public static string BuildWeightText(ItemView item)
+        => item.Weight > 0f ? $"{item.Weight:F1} kg" : string.Empty;
+
     public static string FormatToken(string token)
     {
         if (string.IsNullOrWhiteSpace(token))
@@ -99,4 +105,13 @@ public static class ItemTextFormatter
 
     public static string Humanize(string token)
         => string.IsNullOrWhiteSpace(token) ? "Unknown" : token.Replace('_', ' ');
+
+    private static string BuildCompactDisplayName(ItemView item, bool includeMaterialPrefix)
+    {
+        if (item.Corpse is not null)
+            return item.DisplayName;
+
+        var stackText = item.StackSize > 1 ? $" x{item.StackSize}" : string.Empty;
+        return $"{GetDisplayName(item, includeMaterialPrefix)}{stackText}";
+    }
 }

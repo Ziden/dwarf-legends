@@ -67,6 +67,7 @@ public sealed class FortressBootstrapSystem : IGameSystem
         int cx = cmd.Width / 2;
         int cy = cmd.Height / 2;
         var embark = new Vec3i(cx, cy, 0);
+        _ctx.TryGet<FortressLocationSystem>()?.InitializeDefaultLocations(embark);
         var usedAppearanceSignatures = new HashSet<string>();
         var founderProfiles = historyRuntime?.GetStartingDwarfProfiles(3)
             ?? Array.Empty<RuntimeStartingDwarfProfile>();
@@ -187,7 +188,7 @@ public sealed class FortressBootstrapSystem : IGameSystem
         dwarf.ApplyBaseStats(dwarfDef);
         dwarf.Appearance.RandomizeDistinct(DwarfAppearanceComponent.CreateSeed(dwarf.Id, name, pos), usedAppearanceSignatures);
         dwarf.Labors.DisableAll();
-        dwarf.Labors.EnableAll(profile?.LaborIds is { Length: > 0 } ? profile.LaborIds : fallbackLabors);
+        dwarf.Labors.EnableAll(ResolveStartingLabors(profile, fallbackLabors));
         dwarf.Labors.Enable(LaborIds.Misc);
         dwarf.ProfessionId = string.IsNullOrWhiteSpace(profile?.ProfessionId) ? ProfessionIds.Peasant : profile.ProfessionId;
         DwarfAttributeGeneration.Randomize(dwarf, _ctx!.TryGet<DataManager>());
@@ -196,6 +197,16 @@ public sealed class FortressBootstrapSystem : IGameSystem
         ApplySkills(dwarf, profile?.SkillLevels);
         ApplyFoodPreferences(dwarf, profile?.LikedFoodId, profile?.DislikedFoodId);
         registry.Register(dwarf);
+    }
+
+    private static IEnumerable<string> ResolveStartingLabors(RuntimeStartingDwarfProfile? profile, IReadOnlyCollection<string> fallbackLabors)
+    {
+        if (profile?.LaborIds is not { Length: > 0 } authoredLabors)
+            return fallbackLabors;
+
+        return authoredLabors
+            .Concat(fallbackLabors)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
     private void InjectStarterHostileSpawn(GeneratedEmbarkMap generatedMap, Vec3i embarkCenter, int seed)

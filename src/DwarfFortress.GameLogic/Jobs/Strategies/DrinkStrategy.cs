@@ -21,9 +21,6 @@ public sealed class DrinkStrategy : IJobStrategy
     private const float ThirstSatisfaction = 0.9f;
     private const int WaterSearchRadius = 14;
 
-    private static readonly Vec3i[] CardinalDirections =
-        [Vec3i.North, Vec3i.South, Vec3i.East, Vec3i.West];
-
     // A dwarf drinking when thirst is above this is over-drinking → nausea
     private const float OverdrinkThreshold = 0.5f;
     private const float NauseaDuration = 60f;
@@ -46,8 +43,8 @@ public sealed class DrinkStrategy : IJobStrategy
             return true;
 
         var map = ctx.Get<WorldMap>();
-        return CanDrinkAt(map, dwarf.Position.Position)
-            || TryFindNearestDrinkablePosition(map, dwarf.Position.Position, out _);
+        return DrinkSourceLocator.CanDrinkAt(map, dwarf.Position.Position)
+            || TryResolveDrinkTileTarget(ctx, map, dwarf.Position.Position, out _);
     }
 
     public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
@@ -64,14 +61,14 @@ public sealed class DrinkStrategy : IJobStrategy
 
             return new ActionStep[]
             {
-                new MoveToStep(drink.Components.Get<PositionComponent>().Position),
+                ItemPickupHelper.CreatePickupMoveStep(drink),
                 new PickUpItemStep(drink.Id),
-                new WorkAtStep(Duration: 1f, RequiredPosition: drink.Components.Get<PositionComponent>().Position),
+                new WorkAtStep(Duration: 1f, RequiredPosition: ItemPickupHelper.ResolveConsumeWorkPosition(drink)),
             };
         }
 
         var origin = dwarf.Position.Position;
-        if (CanDrinkAt(map, origin))
+        if (DrinkSourceLocator.CanDrinkAt(map, origin))
         {
             return new ActionStep[]
             {
@@ -79,13 +76,13 @@ public sealed class DrinkStrategy : IJobStrategy
             };
         }
 
-        if (!TryFindNearestDrinkablePosition(map, origin, out var drinkTarget))
+        if (!TryResolveDrinkTileTarget(ctx, map, origin, out var drinkTile))
             return Array.Empty<ActionStep>();
 
         return new ActionStep[]
         {
-            new MoveToStep(drinkTarget),
-            new WorkAtStep(Duration: 1f, RequiredPosition: drinkTarget),
+            new MoveToStep(drinkTile, AcceptableDistance: 1, PreferAdjacent: true),
+            new WorkAtStep(Duration: 1f),
         };
     }
 
@@ -132,88 +129,16 @@ public sealed class DrinkStrategy : IJobStrategy
         return true;
     }
 
-    /// <summary>
-    /// Uses BFS flood-fill to find the nearest reachable drinkable water tile.
-    /// This is O(N) where N = reachable tiles, and avoids running A* on every candidate.
-    /// Early termination as soon as a drinkable tile is found.
-    /// </summary>
-    private static bool TryFindNearestDrinkablePosition(
-        WorldMap map,
-        Vec3i origin,
-        out Vec3i nearest)
+    private static bool TryResolveDrinkTileTarget(GameContext ctx, WorldMap map, Vec3i origin, out Vec3i drinkTile)
     {
-        nearest = origin;
-
-        // Quick check: can we drink right here?
-        if (CanDrinkAt(map, origin))
+        if (DrinkSourceLocator.TryFindNearestDrinkableTile(map, origin, WaterSearchRadius, out drinkTile))
             return true;
 
-        // BFS flood-fill to find nearest drinkable tile
-        // Only traverse walkable tiles, which guarantees the path is actually reachable
-        var visited = new HashSet<Vec3i>();
-        var queue = new Queue<(Vec3i pos, int distance)>();
-        queue.Enqueue((origin, 0));
-        visited.Add(origin);
-
-        while (queue.Count > 0)
-        {
-            var (current, distance) = queue.Dequeue();
-
-            // Don't search beyond configured radius
-            var dx = Math.Abs(current.X - origin.X);
-            var dy = Math.Abs(current.Y - origin.Y);
-            if (dx > WaterSearchRadius || dy > WaterSearchRadius)
-                continue;
-
-            // Check all 4 cardinal neighbours
-            foreach (var dir in CardinalDirections)
-            {
-                var next = current + dir;
-                if (!map.IsInBounds(next) || !visited.Add(next))
-                    continue;
-
-                // Non-walkable tiles cannot be traversed or used as drink sources
-                if (!map.IsWalkable(next))
-                    continue;
-
-                // Check if this tile has drinkable water — BFS guarantees nearest!
-                if (CanDrinkAt(map, next))
-                {
-                    nearest = next;
-                    return true;
-                }
-
-                // Enqueue for further BFS exploration
-                queue.Enqueue((next, distance + 1));
-            }
-        }
-
-        return false;
-    }
-
-    private static bool CanDrinkAt(WorldMap map, Vec3i position)
-    {
-        if (IsDrinkableWaterTile(map, position))
-            return true;
-
-        foreach (var direction in CardinalDirections)
-            if (IsDrinkableWaterTile(map, position + direction))
-                return true;
-
-        return false;
-    }
-
-    private static bool IsDrinkableWaterTile(WorldMap map, Vec3i position)
-    {
-        if (!map.IsInBounds(position))
+        var fortressLocations = ctx.TryGet<FortressLocationSystem>();
+        if (fortressLocations is null || !fortressLocations.TryGetClosestDrinkLocation(out drinkTile))
             return false;
 
-        var tile = map.GetTile(position);
-        if (tile.FluidType == FluidType.Magma || tile.TileDefId == TileDefIds.Magma)
-            return false;
-
-        return (tile.FluidType == FluidType.Water || tile.TileDefId == TileDefIds.Water)
-               && tile.FluidLevel > 0;
+        return DrinkSourceLocator.IsDrinkableWaterTile(map, drinkTile);
     }
 
     private static void ReleaseReserved(Job job, GameContext ctx)

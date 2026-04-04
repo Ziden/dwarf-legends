@@ -47,7 +47,7 @@ public sealed class CraftItemStrategy : IJobStrategy
             var itemPos = item.Position.Position;
             if (itemPos != job.TargetPos)
             {
-                steps.Add(new MoveToStep(itemPos));
+                steps.Add(ItemPickupHelper.CreatePickupMoveStep(item));
                 steps.Add(new PickUpItemStep(itemId));
                 steps.Add(new MoveToStep(job.TargetPos));
                 steps.Add(new PlaceItemStep(itemId, job.TargetPos, job.EntityId));

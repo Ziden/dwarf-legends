@@ -34,6 +34,9 @@ public record struct MiningDesignationSafetyCancelledEvent(Vec3i Position, strin
 /// </summary>
 public sealed class JobSystem : IGameSystem
 {
+    private static readonly Vec3i[] InteractionDirections =
+        [Vec3i.North, Vec3i.South, Vec3i.East, Vec3i.West];
+
     private enum MoveStepState : byte
     {
         Ready,
@@ -69,6 +72,7 @@ public sealed class JobSystem : IGameSystem
     private EventBus? _eventBus;
     private GameContext? _ctx;
     private SimulationProfiler? _profiler;
+    private readonly JobActionExecutor _actionExecutor = new();
 
     // ── IGameSystem ────────────────────────────────────────────────────────
 
@@ -467,78 +471,12 @@ public sealed class JobSystem : IGameSystem
 
             var step = steps.Peek();
 
-            switch (step)
-            {
-                case WorkAtStep work:
-                    if (!EnsureWorkPosition(job, work, steps, registry))
-                    {
-                        StopWorkAnimation(job);
-                        break;
-                    }
-
-                    StartWorkAnimation(job, work);
-                    job.WorkProgress += delta;
-                    if (job.WorkProgress >= work.Duration)
-                    {
-                        StopWorkAnimation(job);
-                        steps.Dequeue();
-                        job.WorkProgress = 0;
-                    }
-                    break;
-
-                case WaitStep wait:
-                    StopWorkAnimation(job);
-                    job.WorkProgress += delta;
-                    if (job.WorkProgress >= wait.Duration)
-                    {
-                        steps.Dequeue();
-                        job.WorkProgress = 0;
-                    }
-                    break;
-
-                case MoveToStep move:
-                    StopWorkAnimation(job);
-                    TickMoveStep(job, move, delta, steps, registry);
-                    break;
-
-                case PickUpItemStep pickup:
-                    StopWorkAnimation(job);
-                    var pickupItemSystem = _ctx!.TryGet<ItemSystem>();
-                    var pickupEntity = registry.TryGetById(job.AssignedDwarfId);
-                    if (pickupItemSystem is not null && pickupEntity is not null)
-                    {
-                        var carrierPos = pickupEntity.Components.Get<PositionComponent>().Position;
-                        if (!pickupItemSystem.PickUpItem(pickup.ItemEntityId, job.AssignedDwarfId, carrierPos, pickup.CarryMode))
-                        {
-                            FailJob(job, "pickup_failed");
-                            break;
-                        }
-                    }
-                    steps.Dequeue();
-                    break;
-
-                case PlaceItemStep place:
-                    StopWorkAnimation(job);
-                    var itemSys = _ctx!.TryGet<ItemSystem>();
-                    if (itemSys is not null)
-                    {
-                        if (place.ContainerBuildingId >= 0)
-                            itemSys.StoreItemInBuilding(place.ItemEntityId, place.ContainerBuildingId, place.Target);
-                        else
-                            itemSys.MoveItem(place.ItemEntityId, place.Target);
-                    }
-                    steps.Dequeue();
-                    break;
-
-                default:
-                    StopWorkAnimation(job);
-                    steps.Dequeue();
-                    break;
-            }
+            var executionContext = new JobActionExecutionContext(this, _ctx!, job, steps, registry, delta);
+            _actionExecutor.Execute(executionContext, step);
         }
     }
 
-    private void StartWorkAnimation(Job job, WorkAtStep work)
+    internal void StartWorkAnimation(Job job, WorkAtStep work)
     {
         if (job.AssignedDwarfId < 0 || string.IsNullOrWhiteSpace(work.AnimationHint))
             return;
@@ -551,7 +489,7 @@ public sealed class JobSystem : IGameSystem
         _eventBus?.Emit(new JobWorkStartedEvent(job.Id, job.AssignedDwarfId, job.JobDefId, work.AnimationHint, job.EntityId, job.TargetPos));
     }
 
-    private void StopWorkAnimation(Job job)
+    internal void StopWorkAnimation(Job job)
     {
         if (!_activeWorkAnimations.Remove(job.Id, out var currentHint) || job.AssignedDwarfId < 0)
             return;
@@ -559,7 +497,7 @@ public sealed class JobSystem : IGameSystem
         _eventBus?.Emit(new JobWorkStoppedEvent(job.Id, job.AssignedDwarfId, job.JobDefId, currentHint, job.EntityId, job.TargetPos));
     }
 
-    private void TickMoveStep(Job job, MoveToStep move, float delta,
+    internal void TickMoveStep(Job job, MoveToStep move, float delta,
                                Queue<ActionStep> steps, EntityRegistry registry)
     {
         var entity = registry.TryGetById(job.AssignedDwarfId);
@@ -568,7 +506,7 @@ public sealed class JobSystem : IGameSystem
         var map = _ctx!.Get<WorldMap>();
         var spatial = _ctx.TryGet<SpatialIndexSystem>();
         var posComp = entity.Components.Get<PositionComponent>();
-        if (posComp.Position == move.Target)
+        if (HasReachedMoveTarget(map, posComp.Position, move))
         {
             steps.Dequeue();
             _pathQueues.Remove(job.Id);
@@ -580,7 +518,7 @@ public sealed class JobSystem : IGameSystem
         // Compute or reuse existing path
         if (!_pathQueues.TryGetValue(job.Id, out var pathQ))
         {
-            var path = Pathfinder.FindPath(map, posComp.Position, move.Target);
+            var path = FindPathToMoveTarget(map, posComp.Position, move, entity.Id, spatial, avoidOccupiedTiles: false);
             if (path.Count == 0) { FailJob(job, "no_path"); return; }
 
             // Skip index 0 (current position) — manual iteration to avoid LINQ Skip()
@@ -649,7 +587,7 @@ public sealed class JobSystem : IGameSystem
         _moveElapsedSeconds[job.Id] = elapsedSeconds;
     }
 
-    private bool EnsureWorkPosition(Job job, WorkAtStep work, Queue<ActionStep> steps, EntityRegistry registry)
+    internal bool EnsureWorkPosition(Job job, WorkAtStep work, Queue<ActionStep> steps, EntityRegistry registry)
     {
         if (!work.RequiredPosition.HasValue)
             return true;
@@ -713,7 +651,7 @@ public sealed class JobSystem : IGameSystem
         if (!canRepath)
             return MoveStepState.Wait;
 
-        var reroute = FindPathAvoidingOccupiedTiles(map, origin, move.Target, entityId, spatial);
+        var reroute = FindPathToMoveTarget(map, origin, move, entityId, spatial, avoidOccupiedTiles: true);
         if (reroute.Count > 1)
         {
             pathQ = new Queue<Vec3i>();
@@ -726,23 +664,118 @@ public sealed class JobSystem : IGameSystem
                 : MoveStepState.Wait;
         }
 
-        var terrainOnlyPath = Pathfinder.FindPath(map, origin, move.Target);
+        var terrainOnlyPath = FindPathToMoveTarget(map, origin, move, entityId, spatial: null, avoidOccupiedTiles: false);
         return terrainOnlyPath.Count > 1
             ? MoveStepState.Wait
             : MoveStepState.Fail;
     }
 
-    private IReadOnlyList<Vec3i> FindPathAvoidingOccupiedTiles(
+    private IReadOnlyList<Vec3i> FindPathToMoveTarget(
         WorldMap map,
         Vec3i origin,
-        Vec3i target,
+        MoveToStep move,
         int entityId,
-        SpatialIndexSystem? spatial)
+        SpatialIndexSystem? spatial,
+        bool avoidOccupiedTiles)
     {
-        if (spatial is null)
-            return Pathfinder.FindPath(map, origin, target);
+        if (move.AcceptableDistance <= 0)
+        {
+            if (!avoidOccupiedTiles || spatial is null)
+                return Pathfinder.FindPath(map, origin, move.Target);
 
-        return Pathfinder.FindPath(map, origin, target, pos => IsOccupiedByOtherEntity(spatial, pos, entityId));
+            return Pathfinder.FindPath(map, origin, move.Target, pos => IsOccupiedByOtherEntity(spatial, pos, entityId));
+        }
+
+        IReadOnlyList<Vec3i> bestPath = Array.Empty<Vec3i>();
+        var bestPathLength = int.MaxValue;
+        var bestPenalty = int.MaxValue;
+
+        foreach (var candidate in EnumerateMoveTargetCandidates(map, move))
+        {
+            IReadOnlyList<Vec3i> path;
+            if (!avoidOccupiedTiles || spatial is null)
+            {
+                path = Pathfinder.FindPath(map, origin, candidate);
+            }
+            else
+            {
+                path = Pathfinder.FindPath(map, origin, candidate, pos => IsOccupiedByOtherEntity(spatial, pos, entityId));
+            }
+
+            if (path.Count == 0)
+                continue;
+
+            var penalty = move.PreferAdjacent && candidate == move.Target ? 1 : 0;
+            if (path.Count < bestPathLength || (path.Count == bestPathLength && penalty < bestPenalty))
+            {
+                bestPath = path;
+                bestPathLength = path.Count;
+                bestPenalty = penalty;
+            }
+        }
+
+        return bestPath;
+    }
+
+    private static bool HasReachedMoveTarget(WorldMap map, Vec3i position, MoveToStep move)
+    {
+        if (position == move.Target)
+            return true;
+
+        if (move.AcceptableDistance <= 0)
+            return false;
+
+        return IsValidMoveTargetCandidate(map, position, move);
+    }
+
+    private static IEnumerable<Vec3i> EnumerateMoveTargetCandidates(WorldMap map, MoveToStep move)
+    {
+        if (move.AcceptableDistance <= 0)
+        {
+            if (IsValidMoveTargetCandidate(map, move.Target, move))
+                yield return move.Target;
+            yield break;
+        }
+
+        if (move.PreferAdjacent)
+        {
+            foreach (var candidate in EnumerateAdjacentCandidates(map, move))
+                yield return candidate;
+
+            if (IsValidMoveTargetCandidate(map, move.Target, move))
+                yield return move.Target;
+            yield break;
+        }
+
+        if (IsValidMoveTargetCandidate(map, move.Target, move))
+            yield return move.Target;
+
+        foreach (var candidate in EnumerateAdjacentCandidates(map, move))
+            yield return candidate;
+    }
+
+    private static IEnumerable<Vec3i> EnumerateAdjacentCandidates(WorldMap map, MoveToStep move)
+    {
+        foreach (var direction in InteractionDirections)
+        {
+            var candidate = move.Target + direction;
+            if (IsValidMoveTargetCandidate(map, candidate, move))
+                yield return candidate;
+        }
+    }
+
+    private static bool IsValidMoveTargetCandidate(WorldMap map, Vec3i candidate, MoveToStep move)
+    {
+        if (!map.IsInBounds(candidate))
+            return false;
+
+        if (candidate.Z != move.Target.Z)
+            return false;
+
+        if (candidate.ManhattanDistanceTo(move.Target) > move.AcceptableDistance)
+            return false;
+
+        return map.IsWalkable(candidate);
     }
 
     private static bool IsStepAvailable(
@@ -774,7 +807,7 @@ public sealed class JobSystem : IGameSystem
         return false;
     }
 
-    private void FailJob(Job job, string reason)
+    internal void FailJob(Job job, string reason)
     {
         if (job.IsAssigned && _ctx is not null)
         {

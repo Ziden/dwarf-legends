@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
@@ -16,9 +15,41 @@ internal static class TerrainClearanceHelper
         [Vec3i.South, Vec3i.North, Vec3i.East, Vec3i.West];
 
     public static Vec3i? FindAdjacentPassable(WorldMap map, Vec3i pos)
-        => Neighbours.Select(offset => pos + offset)
-            .Cast<Vec3i?>()
-            .FirstOrDefault(candidate => map.IsWalkable(candidate!.Value));
+    {
+        foreach (var offset in Neighbours)
+        {
+            var candidate = pos + offset;
+            if (map.IsWalkable(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    public static Vec3i? FindReachableAdjacentPassable(WorldMap map, Vec3i targetPos, Vec3i origin)
+    {
+        Vec3i? bestCandidate = null;
+        var bestPathLength = int.MaxValue;
+
+        foreach (var offset in Neighbours)
+        {
+            var candidate = targetPos + offset;
+            if (!map.IsWalkable(candidate))
+                continue;
+
+            var path = Pathfinder.FindPath(map, origin, candidate);
+            if (path.Count == 0)
+                continue;
+
+            if (path.Count >= bestPathLength)
+                continue;
+
+            bestCandidate = candidate;
+            bestPathLength = path.Count;
+        }
+
+        return bestCandidate;
+    }
 
     public static ClearedTerrainResult ResolveClearedTerrain(GameContext ctx, WorldMap map, Vec3i pos, string? currentMaterialId)
     {

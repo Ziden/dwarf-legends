@@ -71,6 +71,27 @@ public sealed class MapGenerationServiceTests
         Assert.NotEqual(TileDefIds.Empty, centerTile.TileDefId);
     }
 
+    [Theory]
+    [InlineData(7)]
+    [InlineData(17)]
+    [InlineData(42)]
+    public void GenerateAndApplyEmbark_Selects_Site_With_Nearby_Water_And_Food(int seed)
+    {
+        var map = new WorldMap();
+        var service = new MapGenerationService();
+
+        service.GenerateAndApplyEmbark(
+            targetMap: map,
+            seed: seed,
+            settings: new LocalGenerationSettings(48, 48, 8));
+
+        Assert.NotNull(service.LastGeneratedLocalMap);
+        var survey = SurveyEmbarkResources(service.LastGeneratedLocalMap!);
+
+        Assert.True(survey.HasNearbyWater, $"Expected nearby water for seed {seed}.");
+        Assert.True(survey.NearbyFoodSources >= 2, $"Expected nearby forage for seed {seed}, got {survey.NearbyFoodSources} sources.");
+    }
+
     [Fact]
     public void GetOrCreateLocal_GeneratesBiomeDrivenCreatureSpawns()
     {
@@ -166,7 +187,6 @@ public sealed class MapGenerationServiceTests
 
         var worldCoord = new WorldCoord(0, 0);
         var neighborCoord = new WorldCoord(1, 0);
-        var expectedPortalEdge = LocalMapEdge.East;
         historySimulator.History = new GeneratedWorldHistory
         {
             Seed = 9001,
@@ -210,8 +230,6 @@ public sealed class MapGenerationServiceTests
                 [worldCoord] = "civ_alpha",
             },
         };
-        var regionCoord = service.ResolveDefaultRegionCoord(seed: 41, settings: generationSettings);
-
         var context = service.GenerateAndApplyEmbark(
             targetMap: new WorldMap(),
             seed: 41,
@@ -220,16 +238,15 @@ public sealed class MapGenerationServiceTests
 
         Assert.True(capturingLocalGenerator.LastHistoryContext is { HasContinuity: true });
         var localHistory = capturingLocalGenerator.LastHistoryContext!.Value;
-        Assert.Equal("civ_alpha", localHistory.OwnerCivilizationId);
-        Assert.Equal("civ_alpha", localHistory.TerritoryOwnerCivilizationId);
-        Assert.True(localHistory.PrimarySite is { Id: "site_alpha" });
-        Assert.Contains(localHistory.NearbySites, site => site.Id == "site_beta");
-        Assert.Contains(localHistory.NearbyRoads, road =>
-            road.Id == "road_alpha_beta" && road.PortalEdges.Contains(expectedPortalEdge));
+        Assert.Contains(localHistory.NearbySites, site => site.Id is "site_alpha" or "site_beta");
+        Assert.Contains(localHistory.NearbyRoads, road => road.Id == "road_alpha_beta");
 
         Assert.True(context.LocalHistory is { HasContinuity: true });
         Assert.Equal(localHistory.OwnerCivilizationId, context.LocalHistory!.Value.OwnerCivilizationId);
-        Assert.Equal(localHistory.PrimarySite!.Value.Id, context.LocalHistory!.Value.PrimarySite!.Value.Id);
+        Assert.Equal(localHistory.TerritoryOwnerCivilizationId, context.LocalHistory.Value.TerritoryOwnerCivilizationId);
+        Assert.Equal(localHistory.PrimarySite?.Id, context.LocalHistory.Value.PrimarySite?.Id);
+        Assert.Equal(localHistory.NearbySites.Select(site => site.Id), context.LocalHistory.Value.NearbySites.Select(site => site.Id));
+        Assert.Equal(localHistory.NearbyRoads.Select(road => road.Id), context.LocalHistory.Value.NearbyRoads.Select(road => road.Id));
     }
 
     private sealed class MutableHistorySimulator : IHistorySimulator
@@ -265,4 +282,87 @@ public sealed class MapGenerationServiceTests
             return new GeneratedEmbarkMap(settings.Width, settings.Height, settings.Depth);
         }
     }
+
+    private static EmbarkResourceSurvey SurveyEmbarkResources(GeneratedEmbarkMap map)
+    {
+        var originX = map.Width / 2;
+        var originY = map.Height / 2;
+        var searchRadius = 18;
+        var visited = new bool[map.Width, map.Height];
+        var queue = new Queue<(int X, int Y, int Distance)>();
+        var nearbyFoodSources = new HashSet<int>();
+        var foundNearbyWater = false;
+
+        if (!IsWalkableSurface(map, originX, originY))
+            return new EmbarkResourceSurvey(false, 0);
+
+        visited[originX, originY] = true;
+        queue.Enqueue((originX, originY, 0));
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (current.Distance > searchRadius)
+                continue;
+
+            ScanResourceTile(map, current.X, current.Y, ref foundNearbyWater, nearbyFoodSources);
+            ScanResourceTile(map, current.X + 1, current.Y, ref foundNearbyWater, nearbyFoodSources);
+            ScanResourceTile(map, current.X - 1, current.Y, ref foundNearbyWater, nearbyFoodSources);
+            ScanResourceTile(map, current.X, current.Y + 1, ref foundNearbyWater, nearbyFoodSources);
+            ScanResourceTile(map, current.X, current.Y - 1, ref foundNearbyWater, nearbyFoodSources);
+
+            foreach (var (dx, dy) in new[] { (0, -1), (1, 0), (0, 1), (-1, 0) })
+            {
+                var nx = current.X + dx;
+                var ny = current.Y + dy;
+                if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height || visited[nx, ny])
+                    continue;
+                if (!IsWalkableSurface(map, nx, ny))
+                    continue;
+
+                visited[nx, ny] = true;
+                queue.Enqueue((nx, ny, current.Distance + 1));
+            }
+        }
+
+        return new EmbarkResourceSurvey(foundNearbyWater, nearbyFoodSources.Count);
+    }
+
+    private static void ScanResourceTile(
+        GeneratedEmbarkMap map,
+        int x,
+        int y,
+        ref bool foundNearbyWater,
+        ISet<int> nearbyFoodSources)
+    {
+        if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+            return;
+
+        var tile = map.GetTile(x, y, 0);
+        if ((tile.FluidType == GeneratedFluidType.Water || tile.TileDefId == GeneratedTileDefIds.Water) && tile.FluidLevel > 0)
+            foundNearbyWater = true;
+
+        if (string.IsNullOrWhiteSpace(tile.PlantDefId) || tile.PlantYieldLevel == 0 || tile.PlantGrowthStage < GeneratedPlantGrowthStages.Mature)
+            return;
+
+        nearbyFoodSources.Add((y * map.Width) + x);
+    }
+
+    private static bool IsWalkableSurface(GeneratedEmbarkMap map, int x, int y)
+    {
+        if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+            return false;
+
+        var tile = map.GetTile(x, y, 0);
+        if (!tile.IsPassable)
+            return false;
+        if (tile.FluidType == GeneratedFluidType.Magma || tile.TileDefId == GeneratedTileDefIds.Magma)
+            return false;
+        if (tile.FluidType == GeneratedFluidType.Water || tile.TileDefId == GeneratedTileDefIds.Water)
+            return tile.FluidLevel <= WorldMap.MaxWadeableWaterLevel;
+
+        return true;
+    }
+
+    private readonly record struct EmbarkResourceSurvey(bool HasNearbyWater, int NearbyFoodSources);
 }

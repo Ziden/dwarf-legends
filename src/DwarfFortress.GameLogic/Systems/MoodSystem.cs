@@ -34,13 +34,14 @@ public sealed class MoodSystem : IGameSystem
 
             var newHappiness = System.Math.Clamp(thoughts.TotalHappiness, -1f, 1f);
             var newMood      = MoodComponent.FromHappiness(newHappiness);
+            var oldMood      = mood.Current;
 
-            if (newMood != mood.Current)
+            mood.Happiness = newHappiness;
+
+            if (newMood != oldMood)
             {
-                var old = mood.Current;
-                mood.Happiness = newHappiness;
                 mood.Current   = newMood;
-                _ctx.EventBus.Emit(new MoodChangedEvent(dwarf.Id, old, newMood));
+                _ctx.EventBus.Emit(new MoodChangedEvent(dwarf.Id, oldMood, newMood));
             }
         }
     }

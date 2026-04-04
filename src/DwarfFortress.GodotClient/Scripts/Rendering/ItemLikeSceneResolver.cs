@@ -11,7 +11,9 @@ public readonly record struct ItemLikeSceneEntry(
     Vec3i TilePosition,
     string NodeName,
     ItemLikeVisualDescriptor Descriptor,
-    MovementPresentationSegment? MovementSegment);
+    MovementPresentationSegment? MovementSegment,
+    int CarrierEntityId = -1,
+    ItemCarryMode CarryMode = ItemCarryMode.None);
 
 public static class ItemLikeSceneResolver
 {
@@ -25,23 +27,55 @@ public static class ItemLikeSceneResolver
         int minY,
         int maxX,
         int maxY,
-        List<int> scratchIds,
+        IReadOnlyList<int> visibleDwarfIds,
+        IReadOnlyList<int> visibleCreatureIds,
+        List<int> looseItemIds,
+        List<int> containerIds,
         List<ItemLikeSceneEntry> results,
         int maxCount)
     {
         results.Clear();
-        scratchIds.Clear();
+        looseItemIds.Clear();
+        containerIds.Clear();
         if (maxCount <= 0)
             return;
 
-        items.CollectLooseItemsInBounds(currentZ, minX, minY, maxX, maxY, scratchIds);
-        spatial.CollectContainersInBounds(currentZ, minX, minY, maxX, maxY, scratchIds);
-        if (scratchIds.Count > maxCount)
-            scratchIds.RemoveRange(maxCount, scratchIds.Count - maxCount);
-
-        foreach (var itemLikeId in scratchIds)
+        foreach (var dwarfId in visibleDwarfIds)
         {
-            if (TryResolveVisibleEntry(registry, items, movementPresentation, itemLikeId, out var entry))
+            if (results.Count >= maxCount)
+                break;
+
+            if (TryResolveHauledEntry(items, movementPresentation, dwarfId, out var hauledEntry))
+                results.Add(hauledEntry);
+        }
+
+        foreach (var creatureId in visibleCreatureIds)
+        {
+            if (results.Count >= maxCount)
+                break;
+
+            if (TryResolveHauledEntry(items, movementPresentation, creatureId, out var hauledEntry))
+                results.Add(hauledEntry);
+        }
+
+        items.CollectLooseItemsInBounds(currentZ, minX, minY, maxX, maxY, looseItemIds);
+        spatial.CollectContainersInBounds(currentZ, minX, minY, maxX, maxY, containerIds);
+
+        foreach (var itemId in looseItemIds)
+        {
+            if (results.Count >= maxCount)
+                break;
+
+            if (TryResolveVisibleEntry(registry, items, movementPresentation, itemId, out var entry))
+                results.Add(entry);
+        }
+
+        foreach (var containerId in containerIds)
+        {
+            if (results.Count >= maxCount)
+                break;
+
+            if (TryResolveVisibleEntry(registry, items, movementPresentation, containerId, out var entry))
                 results.Add(entry);
         }
     }
@@ -63,7 +97,9 @@ public static class ItemLikeSceneResolver
                 item.Position.Position,
                 $"Item_{item.Id}",
                 ItemLikeVisualResolver.ResolveLooseItem(item, items, includeStoragePreview: false),
-                itemSegment);
+                itemSegment,
+                item.CarriedByEntityId,
+                item.CarryMode);
             return true;
         }
 
@@ -90,6 +126,34 @@ public static class ItemLikeSceneResolver
             $"Container_{entity.Id}",
             containerDescriptor,
             entitySegment);
+        return true;
+    }
+
+    private static bool TryResolveHauledEntry(
+        ItemSystem items,
+        MovementPresentationSystem? movementPresentation,
+        int carrierEntityId,
+        out ItemLikeSceneEntry entry)
+    {
+        entry = default;
+        if (!items.TryGetHauledItem(carrierEntityId, out var item) ||
+            item is null ||
+            item.CarryMode != ItemCarryMode.Hauling)
+        {
+            return false;
+        }
+
+        var itemSegment = movementPresentation?.TryGetItemSegment(item.Id, out var itemMovementSegment) == true
+            ? itemMovementSegment
+            : (MovementPresentationSegment?)null;
+        entry = new ItemLikeSceneEntry(
+            item.Id,
+            item.Position.Position,
+            $"Item_{item.Id}",
+            ItemLikeVisualResolver.ResolveLooseItem(item, items, includeStoragePreview: false),
+            itemSegment,
+            carrierEntityId,
+            item.CarryMode);
         return true;
     }
 }

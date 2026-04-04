@@ -86,8 +86,6 @@ public sealed class FortressAnnouncementSystem : IGameSystem
         ctx.EventBus.On<JobFailedEvent>(OnJobFailed);
         ctx.EventBus.On<JobCompletedEvent>(OnJobCompleted);
         ctx.EventBus.On<JobCancelledEvent>(OnJobCancelled);
-        ctx.EventBus.On<MoodChangedEvent>(OnMoodChanged);
-        ctx.EventBus.On<NeedCriticalEvent>(OnNeedCritical);
         ctx.EventBus.On<EntityDiedEvent>(OnEntityDied);
         ctx.EventBus.On<BehaviorFiredEvent>(OnBehaviorFired);
         ctx.EventBus.On<CombatHitEvent>(OnCombatHit);
@@ -197,27 +195,6 @@ public sealed class FortressAnnouncementSystem : IGameSystem
     private void OnJobCancelled(JobCancelledEvent e)
     {
         _trackedJobs.Remove(e.JobId);
-    }
-
-    private void OnMoodChanged(MoodChangedEvent e)
-    {
-        if (e.NewMood > Mood.Unhappy)
-            return;
-
-        var name = ResolveEntityName(e.DwarfId);
-        Publish(FortressAnnouncementKind.Mood, $"{name} is now {Humanize(e.NewMood.ToString())}.", FortressAnnouncementSeverity.Warning,
-            TryGetEntityPosition(e.DwarfId), collapseKey: $"mood:{e.DwarfId}:{e.NewMood}", throttleHours: 8);
-    }
-
-    private void OnNeedCritical(NeedCriticalEvent e)
-    {
-        var entity = _ctx!.Get<EntityRegistry>().TryGetById(e.EntityId);
-        if (entity is not Dwarf)
-            return;
-
-        var name = ResolveEntityName(e.EntityId);
-        Publish(FortressAnnouncementKind.Need, $"{name} needs {Humanize(e.NeedId)}.", FortressAnnouncementSeverity.Warning,
-            TryGetEntityPosition(e.EntityId), collapseKey: $"need:{e.EntityId}:{e.NeedId}", throttleHours: 8);
     }
 
     private void OnEntityDied(EntityDiedEvent e)

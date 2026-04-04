@@ -9,8 +9,8 @@ namespace DwarfFortress.GameLogic.Jobs;
 /// <summary>Base class for a single atomic step a dwarf performs during a job.</summary>
 public abstract record ActionStep;
 
-/// <summary>Move to a world position (or as close as possible).</summary>
-public sealed record MoveToStep(Vec3i Target) : ActionStep;
+/// <summary>Move to a world position or a valid interaction tile near it.</summary>
+public sealed record MoveToStep(Vec3i Target, int AcceptableDistance = 0, bool PreferAdjacent = false) : ActionStep;
 
 /// <summary>Work at the current position for a fixed time.</summary>
 public sealed record WorkAtStep(float Duration, string AnimationHint = "", Vec3i? RequiredPosition = null) : ActionStep;

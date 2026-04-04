@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
@@ -36,6 +37,9 @@ public sealed class NeedsSystem : IGameSystem
 
     // Minimum time (in seconds) between satisfying a need and allowing another job for the same need
     private const float SatisfactionCooldown = 30f;
+    private const int SleepSurvivalPriority = 100;
+    private const int EatSurvivalPriority = 101;
+    private const int DrinkSurvivalPriority = 102;
 
     private float _elapsedTime;
     private GameContext? _ctx;
@@ -114,6 +118,7 @@ public sealed class NeedsSystem : IGameSystem
         if (!need.IsCritical)
         {
             _activeCriticalNeeds.Remove(criticalKey);
+            CancelTrackedPendingJob(dwarf.Id, jobDefId, jobSystem);
             return;
         }
 
@@ -135,6 +140,8 @@ public sealed class NeedsSystem : IGameSystem
 
         if (jobSystem is null) return;
 
+        TryPreemptActiveJobForNeed(dwarf, jobDefId, jobSystem);
+
         var key = (dwarf.Id, jobDefId);
         if (_activeJobIds.ContainsKey(key)) return;  // job already pending or in-progress
 
@@ -155,10 +162,59 @@ public sealed class NeedsSystem : IGameSystem
             }
         }
 
-        var job = jobSystem.CreateJob(jobDefId, targetPos, priority: 100);
+        var job = jobSystem.CreateJob(jobDefId, targetPos, priority: GetSurvivalPriority(jobDefId));
+        job.AssignedDwarfId = dwarf.Id;
         _activeJobIds[key] = job.Id;
         _jobIdToKey[job.Id] = key;  // O(1) reverse mapping
     }
+
+    private void CancelTrackedPendingJob(int entityId, string jobDefId, Jobs.JobSystem? jobSystem)
+    {
+        if (jobSystem is null)
+            return;
+
+        var key = (entityId, jobDefId);
+        if (!_activeJobIds.TryGetValue(key, out var jobId))
+            return;
+
+        var job = jobSystem.GetJob(jobId);
+        if (job is null)
+        {
+            RemoveTracked(jobId);
+            return;
+        }
+
+        if (job.Status == Jobs.JobStatus.Pending)
+            jobSystem.CancelJob(jobId);
+    }
+
+    private static void TryPreemptActiveJobForNeed(Dwarf dwarf, string requestedJobDefId, Jobs.JobSystem jobSystem)
+    {
+        var activeJob = jobSystem.GetAssignedJob(dwarf.Id);
+        if (activeJob is null)
+            return;
+
+        if (string.Equals(activeJob.JobDefId, requestedJobDefId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (IsSurvivalJob(activeJob.JobDefId)
+            && GetSurvivalPriority(requestedJobDefId) <= GetSurvivalPriority(activeJob.JobDefId))
+            return;
+
+        jobSystem.CancelJob(activeJob.Id);
+    }
+
+    private static int GetSurvivalPriority(string jobDefId)
+        => string.Equals(jobDefId, Jobs.JobDefIds.Drink, StringComparison.OrdinalIgnoreCase)
+            ? DrinkSurvivalPriority
+            : string.Equals(jobDefId, Jobs.JobDefIds.Eat, StringComparison.OrdinalIgnoreCase)
+                ? EatSurvivalPriority
+                : SleepSurvivalPriority;
+
+    private static bool IsSurvivalJob(string jobDefId)
+        => string.Equals(jobDefId, Jobs.JobDefIds.Eat, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(jobDefId, Jobs.JobDefIds.Drink, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(jobDefId, Jobs.JobDefIds.Sleep, StringComparison.OrdinalIgnoreCase);
 
     private void RemoveTracked(int jobId)
     {

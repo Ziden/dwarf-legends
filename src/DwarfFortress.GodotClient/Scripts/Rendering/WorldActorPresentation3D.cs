@@ -17,34 +17,41 @@ public sealed partial class WorldActorPresentation3D : Node3D
 {
     private const float EntityFeetHeight = 0.18f;
     private const float ItemFeetHeight = 0.12f;
+    private const float CarriedItemFeetHeight = 0.70f;
+    private const float CarriedItemScale = 0.78f;
     private const float WaterSurfaceOffset = 0.012f;
     private const float HoverOutlineScale = 1.14f;
     private const float HoverOutlineDepthOffset = -0.0025f;
     private const int MaxVisibleCreatureBillboards = 96;
     private const int MaxVisibleItemLikeBillboards = 160;
-    private const int EmoteLabelFontSize = 40;
-    private const float EmoteLabelPixelSize = 0.0032f;
     private const int WorldFxLabelFontSize = 24;
     private const float WorldFxLabelPixelSize = 0.0030f;
+    private const int EmoteBubbleRenderPriority = 10;
+    private const int EmoteIconRenderPriority = 11;
     private static readonly Color HoverOutlineTint = new(1f, 0.95f, 0.58f, 0.9f);
+    private static readonly Vector2 EmoteBubbleSize = new(0.94f, 0.68f);
+    private static readonly Vector2 EmoteTailSize = new(0.26f, 0.22f);
+    private static readonly Vector2 EmoteBubbleIconSize = new(0.58f, 0.58f);
+    private static readonly Vector2 EmoteSymbolIconSize = new(0.62f, 0.62f);
 
     private readonly Dictionary<int, BillboardState> _dwarfBillboards = new();
     private readonly Dictionary<int, BillboardState> _creatureBillboards = new();
     private readonly Dictionary<int, BillboardState> _itemBillboards = new();
     private readonly Dictionary<int, MovementInterpolationState> _movementInterpolations = new();
-    private readonly Dictionary<int, Label3D> _emoteLabels = new();
+    private readonly Dictionary<int, EmoteBubbleState> _emoteBubbles = new();
     private readonly Dictionary<int, Label3D> _worldFxLabels = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _billboardMaterials = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _outlineBillboardMaterials = new();
     private readonly List<int> _visibleDwarfIds = new();
     private readonly List<int> _visibleCreatureIds = new();
     private readonly List<int> _visibleItemIds = new();
+    private readonly List<int> _visibleContainerIds = new();
     private readonly List<ItemLikeSceneEntry> _visibleItemEntries = new();
     private readonly HashSet<int> _visibleDwarfIdSet = new();
     private readonly HashSet<int> _visibleCreatureIdSet = new();
     private readonly HashSet<int> _visibleItemIdSet = new();
     private readonly HashSet<int> _visibleInterpolatedIds = new();
-    private readonly HashSet<int> _visibleEmoteLabelIds = new();
+    private readonly HashSet<int> _visibleEmoteBubbleIds = new();
 
     private MeshInstance3D? _waterEffectMesh;
     private StandardMaterial3D? _waterEffectMaterial;
@@ -128,7 +135,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         ClearBillboards(_creatureBillboards);
         ClearBillboards(_itemBillboards);
         _movementInterpolations.Clear();
-        ClearLabels(_emoteLabels);
+        ClearEmoteBubbles(_emoteBubbles);
         ClearLabels(_worldFxLabels);
         ClearOverlayMesh(ref _waterEffectMesh);
         DisposeMaterials(_billboardMaterials);
@@ -160,8 +167,8 @@ public sealed partial class WorldActorPresentation3D : Node3D
             state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
         }
 
-        foreach (var label in _emoteLabels.Values)
-            label.Visible = active;
+        foreach (var bubble in _emoteBubbles.Values)
+            bubble.Root.Visible = active;
 
         foreach (var label in _worldFxLabels.Values)
             label.Visible = active;
@@ -192,7 +199,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
             ClearBillboards(_dwarfBillboards);
             ClearBillboards(_creatureBillboards);
             ClearBillboards(_itemBillboards);
-            ClearLabels(_emoteLabels);
+            ClearEmoteBubbles(_emoteBubbles);
             ClearLabels(_worldFxLabels);
             ClearOverlayMesh(ref _waterEffectMesh);
             return;
@@ -327,7 +334,10 @@ public sealed partial class WorldActorPresentation3D : Node3D
             minY,
             maxX,
             maxY,
+            _visibleDwarfIds,
+            _visibleCreatureIds,
             _visibleItemIds,
+            _visibleContainerIds,
             _visibleItemEntries,
             MaxVisibleItemLikeBillboards);
 
@@ -335,17 +345,89 @@ public sealed partial class WorldActorPresentation3D : Node3D
         {
             _visibleItemIdSet.Add(entry.RuntimeId);
             _visibleInterpolatedIds.Add(entry.RuntimeId);
+            var billboardSize = entry.Descriptor.Visual.WorldSize;
+            if (entry.CarryMode == ItemCarryMode.Hauling)
+                billboardSize *= CarriedItemScale;
+
             SyncBillboard(
                 _itemBillboards,
                 entry.RuntimeId,
                 entry.TilePosition,
                 entry.NodeName,
                 entry.Descriptor.Visual.Texture,
-                ResolveInterpolatedBillboardPosition(entry.RuntimeId, entry.TilePosition, ItemFeetHeight, entry.MovementSegment, nowSeconds),
-                entry.Descriptor.Visual.WorldSize);
+                ResolveItemBillboardPosition(entry, nowSeconds),
+                billboardSize);
         }
 
         RemoveStaleBillboards(_itemBillboards, _visibleItemIdSet);
+    }
+
+    private Vector3 ResolveItemBillboardPosition(ItemLikeSceneEntry entry, double nowSeconds)
+    {
+        var interpolation = ResolveInterpolatedMovementView(entry.RuntimeId, entry.TilePosition, entry.MovementSegment, nowSeconds);
+        if (TryResolveAnimatedItemPosition(interpolation, out var animatedPosition))
+            return animatedPosition;
+
+        if (entry.CarryMode == ItemCarryMode.Hauling &&
+            entry.CarrierEntityId >= 0 &&
+            TryResolveCarrierAnchorPosition(entry.CarrierEntityId, out var carriedPosition))
+        {
+            return carriedPosition;
+        }
+
+        var feetHeight = entry.CarryMode == ItemCarryMode.Hauling
+            ? CarriedItemFeetHeight
+            : ItemFeetHeight;
+        return ResolveBillboardPosition(interpolation.TilePosition, feetHeight);
+    }
+
+    private bool TryResolveAnimatedItemPosition(InterpolatedMovementView interpolation, out Vector3 position)
+    {
+        if (interpolation.ActiveSegment is not MovementPresentationSegment segment)
+        {
+            position = default;
+            return false;
+        }
+
+        var start = ResolvePresentationAnchorPosition(segment.StartAnchor, segment.OldPos, segment.StartAnchorEntityId);
+        var end = ResolvePresentationAnchorPosition(segment.EndAnchor, segment.NewPos, segment.EndAnchorEntityId);
+        position = start.Lerp(end, interpolation.Progress);
+        if (segment.MotionKind == MovementPresentationMotionKind.Jump && segment.ArcHeight > 0f)
+            position.Y += Mathf.Sin(interpolation.Progress * Mathf.Pi) * segment.ArcHeight;
+
+        return true;
+    }
+
+    private Vector3 ResolvePresentationAnchorPosition(MovementPresentationAnchorKind anchorKind, Vec3i tilePosition, int anchorEntityId)
+    {
+        if (anchorKind == MovementPresentationAnchorKind.Carrier &&
+            TryResolveCarrierAnchorPosition(anchorEntityId, out var carrierPosition))
+        {
+            return carrierPosition;
+        }
+
+        var feetHeight = anchorKind == MovementPresentationAnchorKind.Carrier
+            ? CarriedItemFeetHeight
+            : ItemFeetHeight;
+        return ResolveBillboardPosition(new Vector3(tilePosition.X, tilePosition.Y, tilePosition.Z), feetHeight);
+    }
+
+    private bool TryResolveCarrierAnchorPosition(int carrierEntityId, out Vector3 position)
+    {
+        if (_dwarfBillboards.TryGetValue(carrierEntityId, out var dwarfBillboard))
+        {
+            position = dwarfBillboard.Root.Position + new Vector3(0f, CarriedItemFeetHeight - EntityFeetHeight, 0f);
+            return true;
+        }
+
+        if (_creatureBillboards.TryGetValue(carrierEntityId, out var creatureBillboard))
+        {
+            position = creatureBillboard.Root.Position + new Vector3(0f, CarriedItemFeetHeight - EntityFeetHeight, 0f);
+            return true;
+        }
+
+        position = default;
+        return false;
     }
 
     private Vector3 ResolveInterpolatedBillboardPosition(
@@ -354,12 +436,36 @@ public sealed partial class WorldActorPresentation3D : Node3D
         float localFeetHeight,
         MovementPresentationSegment? segment,
         double nowSeconds)
+        => ResolveBillboardPosition(ResolveInterpolatedMovementView(entityId, logicalPosition, segment, nowSeconds).TilePosition, localFeetHeight);
+
+    private InterpolatedMovementView ResolveInterpolatedMovementView(
+        int entityId,
+        Vec3i logicalPosition,
+        MovementPresentationSegment? segment,
+        double nowSeconds)
     {
         var targetTilePosition = new Vector3(logicalPosition.X, logicalPosition.Y, logicalPosition.Z);
         if (!_movementInterpolations.TryGetValue(entityId, out var state))
         {
+            if (segment is MovementPresentationSegment initialSegment &&
+                initialSegment.NewPos == logicalPosition)
+            {
+                var initialTilePosition = new Vector3(initialSegment.OldPos.X, initialSegment.OldPos.Y, initialSegment.OldPos.Z);
+                state = new MovementInterpolationState(initialTilePosition, nowSeconds)
+                {
+                    LastLogicalTilePosition = targetTilePosition,
+                    StartTilePosition = initialTilePosition,
+                    TargetTilePosition = targetTilePosition,
+                    SegmentStartTimeSeconds = nowSeconds,
+                    SegmentDurationSeconds = initialSegment.DurationSeconds,
+                    LastAppliedSequence = initialSegment.Sequence,
+                };
+                _movementInterpolations[entityId] = state;
+                return new InterpolatedMovementView(initialTilePosition, 0f, initialSegment.DurationSeconds > 0f ? initialSegment : null);
+            }
+
             _movementInterpolations[entityId] = new MovementInterpolationState(targetTilePosition, nowSeconds);
-            return ResolveBillboardPosition(targetTilePosition, localFeetHeight);
+            return new InterpolatedMovementView(targetTilePosition, 1f, null);
         }
 
         if (segment is MovementPresentationSegment movementSegment
@@ -383,7 +489,17 @@ public sealed partial class WorldActorPresentation3D : Node3D
             state.SegmentDurationSeconds = 0f;
         }
 
-        return ResolveBillboardPosition(EvaluateInterpolatedTilePosition(state, nowSeconds), localFeetHeight);
+        var progress = EvaluateInterpolationProgress(state, nowSeconds);
+        MovementPresentationSegment? activeSegment = null;
+        if (segment is MovementPresentationSegment activeMovementSegment &&
+            activeMovementSegment.Sequence == state.LastAppliedSequence &&
+            state.SegmentDurationSeconds > 0f &&
+            progress < 1f)
+        {
+            activeSegment = activeMovementSegment;
+        }
+
+        return new InterpolatedMovementView(EvaluateInterpolatedTilePosition(state, nowSeconds), progress, activeSegment);
     }
 
     private static Vector3 EvaluateInterpolatedTilePosition(MovementInterpolationState state, double nowSeconds)
@@ -397,6 +513,18 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         var progress = Mathf.Clamp((float)(elapsedSeconds / state.SegmentDurationSeconds), 0f, 1f);
         return state.StartTilePosition.Lerp(state.TargetTilePosition, progress);
+    }
+
+    private static float EvaluateInterpolationProgress(MovementInterpolationState state, double nowSeconds)
+    {
+        if (state.SegmentDurationSeconds <= 0f)
+            return 1f;
+
+        var elapsedSeconds = nowSeconds - state.SegmentStartTimeSeconds;
+        if (elapsedSeconds <= 0d)
+            return 0f;
+
+        return Mathf.Clamp((float)(elapsedSeconds / state.SegmentDurationSeconds), 0f, 1f);
     }
 
     private void RemoveStaleInterpolations()
@@ -582,18 +710,18 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
     private void SyncEmoteLabels(EntityRegistry registry, RenderCache renderCache, int currentZ)
     {
-        _visibleEmoteLabelIds.Clear();
+        _visibleEmoteBubbleIds.Clear();
 
         foreach (var dwarfId in _visibleDwarfIds)
         {
             if (!registry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null || !dwarf.Emotes.HasEmote)
                 continue;
 
-            _visibleEmoteLabelIds.Add(dwarf.Id);
-            SyncEmoteLabel(
+            _visibleEmoteBubbleIds.Add(dwarf.Id);
+            SyncEmoteBubble(
                 dwarf.Id,
                 dwarf.Emotes.CurrentEmote!,
-                ResolveSmoothedFeedbackAnchor(renderCache, dwarf.Id, dwarf.Position.Position) + new Vector3(0f, 1.30f, 0f));
+                ResolveSmoothedFeedbackAnchor(renderCache, dwarf.Id, dwarf.Position.Position) + new Vector3(0f, EmoteVisuals.ResolveWorldLift(dwarf.Emotes.CurrentEmote!, isCreature: false), 0f));
         }
 
         foreach (var creatureId in _visibleCreatureIds)
@@ -601,29 +729,62 @@ public sealed partial class WorldActorPresentation3D : Node3D
             if (!registry.TryGetById<Creature>(creatureId, out var creature) || creature is null || !creature.Emotes.HasEmote)
                 continue;
 
-            _visibleEmoteLabelIds.Add(creature.Id);
-            SyncEmoteLabel(
+            _visibleEmoteBubbleIds.Add(creature.Id);
+            SyncEmoteBubble(
                 creature.Id,
                 creature.Emotes.CurrentEmote!,
-                ResolveSmoothedFeedbackAnchor(renderCache, creature.Id, creature.Position.Position) + new Vector3(0f, 1.36f, 0f));
+                ResolveSmoothedFeedbackAnchor(renderCache, creature.Id, creature.Position.Position) + new Vector3(0f, EmoteVisuals.ResolveWorldLift(creature.Emotes.CurrentEmote!, isCreature: true), 0f));
         }
 
-        RemoveStaleLabels(_emoteLabels, _visibleEmoteLabelIds);
+        RemoveStaleEmoteBubbles(_emoteBubbles, _visibleEmoteBubbleIds);
     }
 
-    private void SyncEmoteLabel(int entityId, Emote emote, Vector3 position)
+    private void SyncEmoteBubble(int entityId, Emote emote, Vector3 position)
     {
-        var label = _emoteLabels.TryGetValue(entityId, out var existing)
+        var bubbleState = _emoteBubbles.TryGetValue(entityId, out var existing)
             ? existing
-            : CreateLabel($"Emote_{entityId}", EmoteLabelFontSize, EmoteLabelPixelSize);
+            : CreateEmoteBubbleState(entityId);
 
-        _emoteLabels[entityId] = label;
-        label.Text = EmoteVisuals.ResolveSymbol(emote.Id);
-        label.Position = position;
-        var color = EmoteVisuals.ResolveColor(emote.Id);
-        var alpha = EmoteVisuals.ResolveAlpha(emote.TimeLeft);
-        label.Modulate = new Color(color.R, color.G, color.B, color.A * alpha);
-        label.Visible = _isActive;
+        _emoteBubbles[entityId] = bubbleState;
+
+        var alpha = EmoteVisuals.ResolveAlpha(emote);
+        bubbleState.Root.Position = position;
+        bubbleState.Root.Scale = Vector3.One * EmoteVisuals.ResolveScale(emote);
+        bubbleState.Root.Visible = _isActive;
+
+        var iconColor = EmoteVisuals.ResolveIconColor(emote);
+        ApplyEmoteQuadVisual(
+            bubbleState.Icon,
+            PixelArtFactory.GetEmoteIcon(emote),
+            emote.VisualStyle == EmoteVisualStyle.Balloon ? EmoteBubbleIconSize : EmoteSymbolIconSize,
+            emote.VisualStyle == EmoteVisualStyle.Balloon ? new Vector3(0f, 0.03f, 0f) : Vector3.Zero,
+            new Color(iconColor.R, iconColor.G, iconColor.B, iconColor.A * alpha),
+            visible: true);
+
+        if (emote.VisualStyle == EmoteVisualStyle.Balloon)
+        {
+            var bubbleColor = EmoteVisuals.ResolveBubbleColor(emote);
+            var bubbleTint = new Color(bubbleColor.R, bubbleColor.G, bubbleColor.B, bubbleColor.A * alpha);
+            ApplyEmoteQuadVisual(
+                bubbleState.Bubble,
+                PixelArtFactory.GetEmoteBubble(),
+                EmoteBubbleSize,
+                Vector3.Zero,
+                bubbleTint,
+                visible: true);
+            ApplyEmoteQuadVisual(
+                bubbleState.Tail,
+                PixelArtFactory.GetEmoteBubbleTail(),
+                EmoteTailSize,
+                new Vector3(0f, -0.30f, 0f),
+                bubbleTint,
+                visible: true);
+        }
+        else
+        {
+            bubbleState.Bubble.Mesh.Visible = false;
+            bubbleState.Tail.Mesh.Visible = false;
+        }
     }
 
     private void SyncWorldFxLabels(RenderCache renderCache, GameFeedbackController? feedback, int currentZ, Rect2I visibleTileBounds)
@@ -875,6 +1036,14 @@ public sealed partial class WorldActorPresentation3D : Node3D
         labels.Clear();
     }
 
+    private static void ClearEmoteBubbles(Dictionary<int, EmoteBubbleState> bubbles)
+    {
+        foreach (var bubble in bubbles.Values)
+            ReleaseEmoteBubbleState(bubble);
+
+        bubbles.Clear();
+    }
+
     private static void RemoveStaleBillboards<TKey>(Dictionary<TKey, BillboardState> states, HashSet<TKey> visibleIds)
         where TKey : notnull
     {
@@ -921,6 +1090,20 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private static void DisposeResource(IDisposable? resource)
         => resource?.Dispose();
 
+    private static void ReleaseEmoteBubbleState(EmoteBubbleState state)
+    {
+        ReplaceOwnedMesh(state.Bubble.Mesh, null);
+        state.Bubble.Mesh.MaterialOverride = null;
+        DisposeResource(state.Bubble.Material);
+        ReplaceOwnedMesh(state.Tail.Mesh, null);
+        state.Tail.Mesh.MaterialOverride = null;
+        DisposeResource(state.Tail.Material);
+        ReplaceOwnedMesh(state.Icon.Mesh, null);
+        state.Icon.Mesh.MaterialOverride = null;
+        DisposeResource(state.Icon.Material);
+        state.Root.QueueFree();
+    }
+
     private static void RemoveStaleLabels(Dictionary<int, Label3D> labels, HashSet<int> visibleIds)
     {
         if (labels.Count == 0)
@@ -931,6 +1114,19 @@ public sealed partial class WorldActorPresentation3D : Node3D
         {
             labels[staleId].QueueFree();
             labels.Remove(staleId);
+        }
+    }
+
+    private static void RemoveStaleEmoteBubbles(Dictionary<int, EmoteBubbleState> bubbles, HashSet<int> visibleIds)
+    {
+        if (bubbles.Count == 0)
+            return;
+
+        var staleIds = bubbles.Keys.Where(id => !visibleIds.Contains(id)).ToArray();
+        foreach (var staleId in staleIds)
+        {
+            ReleaseEmoteBubbleState(bubbles[staleId]);
+            bubbles.Remove(staleId);
         }
     }
 
@@ -960,10 +1156,11 @@ public sealed partial class WorldActorPresentation3D : Node3D
         _visibleDwarfIds.Clear();
         _visibleCreatureIds.Clear();
         _visibleItemIds.Clear();
+        _visibleContainerIds.Clear();
         _visibleDwarfIdSet.Clear();
         _visibleCreatureIdSet.Clear();
         _visibleItemIdSet.Clear();
-        _visibleEmoteLabelIds.Clear();
+        _visibleEmoteBubbleIds.Clear();
     }
 
     private static bool TileBoundsContains(Rect2I visibleTileBounds, int x, int y)
@@ -1032,7 +1229,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         return ResolveBillboardPosition(position, EntityFeetHeight);
     }
 
-    private Label3D CreateLabel(string name, int fontSize, float pixelSize)
+    private Label3D CreateLabel(string name, int fontSize, float pixelSize, Node3D? parent = null)
     {
         var label = new Label3D
         {
@@ -1051,8 +1248,64 @@ public sealed partial class WorldActorPresentation3D : Node3D
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        AddChild(label);
+        (parent ?? this).AddChild(label);
         return label;
+    }
+
+    private void ApplyEmoteQuadVisual(EmoteQuadState state, Texture2D texture, Vector2 size, Vector3 position, Color tint, bool visible)
+    {
+        state.Texture = texture;
+        state.Quad.Size = size;
+        state.Mesh.Position = position;
+        state.Material.AlbedoTexture = texture;
+        state.Material.AlbedoColor = tint;
+        state.Mesh.Visible = _isActive && visible;
+    }
+
+    private EmoteBubbleState CreateEmoteBubbleState(int entityId)
+    {
+        var root = new Node3D
+        {
+            Name = $"Emote_{entityId}",
+            Visible = _isActive,
+        };
+
+        AddChild(root);
+
+        var bubble = CreateEmoteQuad($"EmoteBubble_{entityId}", root, EmoteBubbleRenderPriority);
+        var tail = CreateEmoteQuad($"EmoteTail_{entityId}", root, EmoteBubbleRenderPriority);
+        var icon = CreateEmoteQuad($"EmoteIcon_{entityId}", root, EmoteIconRenderPriority);
+
+        return new EmoteBubbleState(root, bubble, tail, icon);
+    }
+
+    private static EmoteQuadState CreateEmoteQuad(string name, Node3D parent, int renderPriority)
+    {
+        var mesh = new MeshInstance3D
+        {
+            Name = name,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            Visible = false,
+        };
+        var quad = new QuadMesh();
+        mesh.Mesh = quad;
+        var material = CreateEmoteMaterial(renderPriority);
+        mesh.MaterialOverride = material;
+        parent.AddChild(mesh);
+        return new EmoteQuadState(mesh, quad, material);
+    }
+
+    private static StandardMaterial3D CreateEmoteMaterial(int renderPriority)
+    {
+        return new StandardMaterial3D
+        {
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+            NoDepthTest = true,
+            RenderPriority = renderPriority,
+        };
     }
 
     private static StandardMaterial3D CreateFlatColorMaterial()
@@ -1214,6 +1467,43 @@ public sealed partial class WorldActorPresentation3D : Node3D
         public Vec3i TilePosition { get; set; }
     }
 
+    private sealed class EmoteBubbleState
+    {
+        public EmoteBubbleState(Node3D root, EmoteQuadState bubble, EmoteQuadState tail, EmoteQuadState icon)
+        {
+            Root = root;
+            Bubble = bubble;
+            Tail = tail;
+            Icon = icon;
+        }
+
+        public Node3D Root { get; }
+
+        public EmoteQuadState Bubble { get; }
+
+        public EmoteQuadState Tail { get; }
+
+        public EmoteQuadState Icon { get; }
+    }
+
+    private sealed class EmoteQuadState
+    {
+        public EmoteQuadState(MeshInstance3D mesh, QuadMesh quad, StandardMaterial3D material)
+        {
+            Mesh = mesh;
+            Quad = quad;
+            Material = material;
+        }
+
+        public MeshInstance3D Mesh { get; }
+
+        public QuadMesh Quad { get; }
+
+        public StandardMaterial3D Material { get; }
+
+        public Texture2D? Texture { get; set; }
+    }
+
     private readonly record struct BillboardPickCandidate(
         BillboardState State,
         Vec3i TilePosition,
@@ -1243,4 +1533,9 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         public long LastAppliedSequence { get; set; }
     }
+
+    private readonly record struct InterpolatedMovementView(
+        Vector3 TilePosition,
+        float Progress,
+        MovementPresentationSegment? ActiveSegment);
 }

@@ -18,6 +18,8 @@ public partial class TileInfoPanel : PanelContainer
     private static readonly Color ContainedStatusColor = new(0.78f, 0.78f, 0.78f, 1f);
     private static readonly Color EmptyStatusColor = new(0.70f, 0.70f, 0.70f, 1f);
 
+    private CenterContainer? _selectedItemIconContainer;
+    private TextureRect? _selectedItemIcon;
     private Label? _label;
     private HSeparator? _resourceActionsSeparator;
     private Label? _resourceActionsHeading;
@@ -35,6 +37,8 @@ public partial class TileInfoPanel : PanelContainer
 
     public override void _Ready()
     {
+        _selectedItemIconContainer = GetNode<CenterContainer>("%SelectedItemIconContainer");
+        _selectedItemIcon = GetNode<TextureRect>("%SelectedItemIcon");
         _label = GetNode<Label>("%ContentLabel");
         _resourceActionsSeparator = GetNode<HSeparator>("%ResourceActionsSeparator");
         _resourceActionsHeading = GetNode<Label>("%ResourceActionsHeading");
@@ -42,6 +46,12 @@ public partial class TileInfoPanel : PanelContainer
         _containerContentsSeparator = GetNode<HSeparator>("%ContainerContentsSeparator");
         _containerContentsHeading = GetNode<Label>("%ContainerContentsHeading");
         _containerContentsList = GetNode<ItemSelectionList>("%ContainerContentsList");
+
+        if (_selectedItemIcon is not null)
+        {
+            _selectedItemIcon.ExpandMode = TextureRect.ExpandModeEnum.FitWidthProportional;
+            _selectedItemIcon.StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered;
+        }
     }
 
     public void Setup(GameSimulation sim)
@@ -61,6 +71,7 @@ public partial class TileInfoPanel : PanelContainer
 
         var result = _query.QueryTile(new Vec3i(selectedTile.X, selectedTile.Y, z));
         _label.Text = TileInspectionFormatter.BuildDetailedText(result);
+        SetSelectedItemIcon(null);
         RefreshTileResourceActions(result);
         RefreshTileContainerContents(result);
     }
@@ -72,6 +83,7 @@ public partial class TileInfoPanel : PanelContainer
 
         var tileResult = _query.QueryTile(item.Position);
         _label.Text = TileInspectionFormatter.BuildItemDetailedText(item, tileResult);
+        SetSelectedItemIcon(PixelArtFactory.GetItem(item.DefId, item.MaterialId));
         SetResourceActionsVisible(false);
         DebugActionSummaryText = string.Empty;
         RefreshFocusedItemContents(item);
@@ -123,25 +135,23 @@ public partial class TileInfoPanel : PanelContainer
 
         if (containerItems.Length == 0 && containerEntities.Length == 0)
         {
-            _containerContentsList.SetEntries(System.Array.Empty<ItemSelectionEntry>());
+            _containerContentsList.SetEntries(Array.Empty<ItemSelectionEntry>());
             SetContainerContentsVisible(false);
             return;
         }
 
         var entries = new List<ItemSelectionEntry>();
-        string? singleContainerHeading = null;
         foreach (var containerItem in containerItems)
         {
             var containerName = ItemTextFormatter.GetDisplayName(containerItem, includeMaterialPrefix: true);
-            singleContainerHeading ??= containerName;
             var containedItems = containerItem.Storage!.Contents;
             if (containerItem.Storage.StoredItemCount == 0)
             {
                 entries.Add(new ItemSelectionEntry(
                     Id: $"container-empty:{containerItem.Id}",
                     Title: containerName,
-                    Subtitle: "Container is empty",
-                    Details: $"Container #{containerItem.Id} • Position: ({containerItem.Position.X}, {containerItem.Position.Y}, {containerItem.Position.Z})",
+                    Subtitle: string.Empty,
+                    Details: ItemTextFormatter.BuildWeightText(containerItem),
                     Status: "Empty",
                     StatusColor: EmptyStatusColor,
                     Icon: PixelArtFactory.GetItem(containerItem.DefId, containerItem.MaterialId),
@@ -158,15 +168,14 @@ public partial class TileInfoPanel : PanelContainer
         foreach (var container in containerEntities)
         {
             var containerName = GetContainerEntityDisplayName(container);
-            singleContainerHeading ??= containerName;
             var containedItems = container.Storage.Contents;
             if (container.Storage.StoredItemCount == 0)
             {
                 entries.Add(new ItemSelectionEntry(
                     Id: $"container-entity-empty:{container.Id}",
                     Title: containerName,
-                    Subtitle: "Container is empty",
-                    Details: $"Container #{container.Id} • Capacity: {container.Storage.StoredItemCount}/{container.Storage.Capacity} • Position: ({container.Position.X}, {container.Position.Y}, {container.Position.Z})",
+                    Subtitle: string.Empty,
+                    Details: string.Empty,
                     Status: "Empty",
                     StatusColor: EmptyStatusColor,
                     Icon: PixelArtFactory.GetItem(container.DefId),
@@ -180,9 +189,7 @@ public partial class TileInfoPanel : PanelContainer
                 entries.Add(BuildContainedItemEntry(container.Id, containerName, containedItem));
         }
 
-        _containerContentsHeading.Text = containerItems.Length + containerEntities.Length == 1 && singleContainerHeading is not null
-            ? $"{singleContainerHeading} Contents"
-            : "Container Contents";
+        _containerContentsHeading.Text = "Contents";
         _containerContentsList.SetEntries(entries);
         SetContainerContentsVisible(true);
     }
@@ -206,8 +213,8 @@ public partial class TileInfoPanel : PanelContainer
             entries.Add(new ItemSelectionEntry(
                 Id: $"item-empty:{item.Id}",
                 Title: containerName,
-                Subtitle: "Container is empty",
-                Details: $"Item #{item.Id} • Position: ({item.Position.X}, {item.Position.Y}, {item.Position.Z})",
+                Subtitle: string.Empty,
+                Details: ItemTextFormatter.BuildWeightText(item),
                 Status: "Empty",
                 StatusColor: EmptyStatusColor,
                 Icon: PixelArtFactory.GetItem(item.DefId, item.MaterialId),
@@ -221,7 +228,7 @@ public partial class TileInfoPanel : PanelContainer
                 entries.Add(BuildContainedItemEntry(item.Id, containerName, containedItem));
         }
 
-        _containerContentsHeading.Text = $"{containerName} Contents";
+        _containerContentsHeading.Text = "Contents";
         _containerContentsList.SetEntries(entries);
         SetContainerContentsVisible(true);
     }
@@ -231,9 +238,9 @@ public partial class TileInfoPanel : PanelContainer
         return new ItemSelectionEntry(
             Id: $"contained:{containerItemId}:{containedItem.Id}",
             Title: ItemTextFormatter.BuildContainedCardTitle(containedItem),
-            Subtitle: $"Inside {containerName}",
+            Subtitle: containerName,
             Details: ItemTextFormatter.BuildContainedCardDetails(containedItem),
-            Status: "Contained",
+            Status: string.Empty,
             StatusColor: ContainedStatusColor,
             Icon: PixelArtFactory.GetItem(containedItem.DefId, containedItem.MaterialId),
             ActionLabel: "Inspect",
@@ -266,6 +273,15 @@ public partial class TileInfoPanel : PanelContainer
         _resourceActionsSeparator!.Visible = visible;
         _resourceActionsHeading!.Visible = visible;
         _resourceActionsList!.Visible = visible;
+    }
+
+    private void SetSelectedItemIcon(Texture2D? texture)
+    {
+        if (_selectedItemIconContainer is null || _selectedItemIcon is null)
+            return;
+
+        _selectedItemIcon.Texture = texture;
+        _selectedItemIconContainer.Visible = texture is not null;
     }
 
 }

@@ -26,6 +26,9 @@ public static class WorldSpriteVisuals
     public static WorldSpriteVisual Item(string defId, string? materialId = null)
         => new(PixelArtFactory.GetItem(defId, materialId), ItemPixelSize);
 
+    public static WorldSpriteVisual Tree(string? speciesId)
+        => new(PixelArtFactory.GetTile(TileDefIds.Tree, speciesId), TreePixelSize);
+
     public static WorldSpriteVisual Tree()
         => new(PixelArtFactory.GetTile(TileDefIds.Tree), TreePixelSize);
 

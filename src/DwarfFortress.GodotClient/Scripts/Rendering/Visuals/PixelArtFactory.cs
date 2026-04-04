@@ -19,8 +19,20 @@ public static class PixelArtFactory
     private const string UseSpritesEnvVar = "DF_USE_SPRITES";
     private const string Strict2DArtEnvVar = "DF_STRICT_2D_ART";
     private const int DefaultOutlineThickness = 2;
+    private enum PlantVisualKind : byte
+    {
+        GenericGround = 0,
+        BerryBush = 1,
+        Sunroot = 2,
+        StoneTuber = 3,
+        MarshReed = 4,
+        AppleCanopy = 5,
+        FigCanopy = 6,
+    }
+
     private readonly record struct TilePalette(Color Base, Color Shadow, Color Highlight);
-    private readonly record struct PlantPalette(Color Stem, Color Leaf, Color Accent, Color Outline, bool Canopy);
+    private readonly record struct PlantPalette(Color Stem, Color Leaf, Color Accent, Color Outline, PlantVisualKind VisualKind);
+    private readonly record struct TreePalette(Color Trunk, Color BarkDark, Color BarkLight, Color CanopyDark, Color CanopyMid, Color CanopyLight, Color Accent, Color Outline);
 
     private enum RegionGroundClass : byte
     {
@@ -127,6 +139,53 @@ public static class PixelArtFactory
         };
     }
 
+    public static Texture2D GetEmoteBubble()
+    {
+        const string key = "emote:bubble";
+        if (Cache.TryGetValue(key, out var cached))
+            return cached;
+
+        return Cache[key] = MakeEmoteBubbleTexture();
+    }
+
+    public static Texture2D GetEmoteBubbleTail()
+    {
+        const string key = "emote:tail";
+        if (Cache.TryGetValue(key, out var cached))
+            return cached;
+
+        return Cache[key] = MakeEmoteBubbleTailTexture();
+    }
+
+    public static Texture2D GetEmoteIcon(Emote emote)
+    {
+        var variantKey = ResolveEmoteVariantKey(emote);
+        var key = $"emote:icon:{variantKey}";
+        if (Cache.TryGetValue(key, out var cached))
+            return cached;
+
+        return Cache[key] = variantKey switch
+        {
+            EmoteIds.Sleep => MakeSleepEmoteIcon(),
+            EmoteIds.Fear => MakeFearEmoteIcon(),
+            EmoteIds.Hungry => MakeHungryEmoteIcon(),
+            EmoteIds.Happy => MakeHappyEmoteIcon(),
+            EmoteIds.Angry => MakeAngryEmoteIcon(),
+            EmoteIds.Sad => MakeSadEmoteIcon(),
+            EmoteIds.Eat => MakeEatEmoteIcon(),
+            EmoteIds.Drink => MakeDrinkEmoteIcon(),
+            EmoteIds.NeedFood => MakeNeedFoodEmoteIcon(),
+            EmoteIds.NeedWater => MakeNeedWaterEmoteIcon(),
+            "mood_up:0" => MakeMoodUpEmoteIcon(0),
+            "mood_up:1" => MakeMoodUpEmoteIcon(1),
+            "mood_up:2" => MakeMoodUpEmoteIcon(2),
+            "mood_down:0" => MakeMoodDownEmoteIcon(0),
+            "mood_down:1" => MakeMoodDownEmoteIcon(1),
+            "mood_down:2" => MakeMoodDownEmoteIcon(2),
+            _ => MakeFearEmoteIcon(),
+        };
+    }
+
     public static bool CanResolveTile(string tileDefId, string? materialId = null)
         => TryGetTile(tileDefId, materialId, out _);
 
@@ -176,7 +235,7 @@ public static class PixelArtFactory
         texture = tileDefId switch
         {
             TileDefIds.Empty => MakeFlatTile(new Color(0f, 0f, 0f, 0f)),
-            TileDefIds.Tree => MakeTree(),
+            TileDefIds.Tree => MakeTree(normalizedMaterialId),
             TileDefIds.Water => MakeWater(),
             TileDefIds.Magma => MakeMagma(),
             TileDefIds.Staircase => MakeStair(),
@@ -264,22 +323,115 @@ public static class PixelArtFactory
     private static Texture2D MakePlantOverlay(PlantPalette palette, byte growthStage, byte yieldLevel, byte seedLevel)
     {
         var image = NewImage();
-        var (stem, leaf, accent, outline, canopy) = palette;
-
-        if (canopy)
-        {
-            DrawCanopyOverlay(image, growthStage, yieldLevel, accent, leaf);
-            return CreateOutlinedTexture(image, outline);
-        }
+        var (stem, leaf, accent, outline, visualKind) = palette;
 
         if (growthStage == 0 || seedLevel > 0)
         {
-            FillRect(image, new Rect2I(20, 48, 6, 4), accent);
-            FillRect(image, new Rect2I(30, 50, 4, 3), accent.Darkened(0.10f));
-            FillRect(image, new Rect2I(38, 47, 5, 4), accent.Lightened(0.08f));
+            DrawPlantSeedOverlay(image, visualKind, stem, leaf, accent);
             return CreateOutlinedTexture(image, outline);
         }
 
+        switch (visualKind)
+        {
+            case PlantVisualKind.BerryBush:
+                DrawBerryBushOverlay(image, growthStage, yieldLevel, stem, leaf, accent);
+                break;
+
+            case PlantVisualKind.Sunroot:
+                DrawSunrootOverlay(image, growthStage, yieldLevel, stem, leaf, accent);
+                break;
+
+            case PlantVisualKind.StoneTuber:
+                DrawStoneTuberOverlay(image, growthStage, yieldLevel, stem, leaf, accent);
+                break;
+
+            case PlantVisualKind.MarshReed:
+                DrawMarshReedOverlay(image, growthStage, yieldLevel, stem, leaf, accent);
+                break;
+
+            case PlantVisualKind.AppleCanopy:
+                DrawAppleCanopyOverlay(image, growthStage, yieldLevel, accent, leaf);
+                break;
+
+            case PlantVisualKind.FigCanopy:
+                DrawFigCanopyOverlay(image, growthStage, yieldLevel, accent, leaf);
+                break;
+
+            default:
+                DrawGenericGroundPlantOverlay(image, growthStage, yieldLevel, stem, leaf, accent);
+                break;
+        }
+
+        return CreateOutlinedTexture(image, outline);
+    }
+
+    private static void DrawPlantSeedOverlay(Image image, PlantVisualKind visualKind, Color stem, Color leaf, Color accent)
+    {
+        switch (visualKind)
+        {
+            case PlantVisualKind.Sunroot:
+                FillRect(image, new Rect2I(26, 46, 12, 6), accent);
+                FillRect(image, new Rect2I(20, 40, 8, 10), leaf.Darkened(0.06f));
+                FillRect(image, new Rect2I(36, 40, 8, 10), leaf.Lightened(0.06f));
+                FillRect(image, new Rect2I(30, 38, 4, 10), stem.Lightened(0.08f));
+                return;
+
+            case PlantVisualKind.StoneTuber:
+                FillRect(image, new Rect2I(22, 46, 20, 6), accent);
+                FillRect(image, new Rect2I(18, 40, 10, 8), leaf);
+                FillRect(image, new Rect2I(34, 38, 12, 10), leaf.Darkened(0.05f));
+                return;
+
+            case PlantVisualKind.MarshReed:
+                FillRect(image, new Rect2I(24, 38, 4, 14), stem);
+                FillRect(image, new Rect2I(32, 34, 4, 18), leaf);
+                FillRect(image, new Rect2I(40, 40, 4, 12), accent.Darkened(0.06f));
+                return;
+
+            case PlantVisualKind.AppleCanopy:
+                FillRect(image, new Rect2I(30, 40, 4, 12), stem);
+                FillRect(image, new Rect2I(22, 32, 20, 10), leaf);
+                return;
+
+            case PlantVisualKind.FigCanopy:
+                FillRect(image, new Rect2I(30, 40, 4, 12), stem);
+                FillRect(image, new Rect2I(20, 30, 12, 10), leaf.Darkened(0.04f));
+                FillRect(image, new Rect2I(32, 30, 12, 12), leaf);
+                FillRect(image, new Rect2I(26, 40, 12, 6), accent.Lightened(0.10f));
+                return;
+
+            default:
+                FillRect(image, new Rect2I(20, 48, 6, 4), accent);
+                FillRect(image, new Rect2I(30, 50, 4, 3), accent.Darkened(0.10f));
+                FillRect(image, new Rect2I(38, 47, 5, 4), accent.Lightened(0.08f));
+                return;
+        }
+    }
+
+    private static void DrawGenericGroundPlantOverlay(Image image, byte growthStage, byte yieldLevel, Color stem, Color leaf, Color accent)
+    {
+        var stalkHeight = growthStage >= 3 ? 18 : growthStage == 2 ? 14 : 10;
+        FillRect(image, new Rect2I(26, 52 - stalkHeight, 3, stalkHeight), stem);
+        FillRect(image, new Rect2I(34, 54 - stalkHeight, 3, stalkHeight - 2), stem.Lightened(0.06f));
+
+        if (growthStage >= 1)
+        {
+            FillRect(image, new Rect2I(18, 36, 14, 8), leaf);
+            FillRect(image, new Rect2I(32, 34, 14, 8), leaf.Lightened(0.05f));
+        }
+
+        if (growthStage >= 2)
+            FillRect(image, new Rect2I(24, 26, 16, 8), leaf.Darkened(0.06f));
+
+        if (growthStage >= 3)
+            FillRect(image, new Rect2I(26, 18, 12, 6), leaf.Lightened(0.08f));
+
+        if (yieldLevel > 0)
+            FillRect(image, new Rect2I(28, 28, 6, 6), accent);
+    }
+
+    private static void DrawBerryBushOverlay(Image image, byte growthStage, byte yieldLevel, Color stem, Color leaf, Color accent)
+    {
         var stalkHeight = growthStage >= 3 ? 22 : growthStage == 2 ? 16 : 10;
         var stalkBottom = 52;
         var stalkWidth = growthStage >= 3 ? 4 : 3;
@@ -313,8 +465,113 @@ public static class PixelArtFactory
             FillRect(image, new Rect2I(28, 20, 4, 4), accent.Lightened(0.08f));
             FillRect(image, new Rect2I(36, 24, 4, 4), accent);
         }
+    }
 
-        return CreateOutlinedTexture(image, outline);
+    private static void DrawSunrootOverlay(Image image, byte growthStage, byte yieldLevel, Color stem, Color leaf, Color accent)
+    {
+        FillRect(image, new Rect2I(27, 42, 10, 10), accent.Darkened(0.10f));
+        FillRect(image, new Rect2I(30, 36, 4, 8), stem);
+
+        if (growthStage >= 1)
+        {
+            FillRect(image, new Rect2I(16, 34, 16, 6), leaf);
+            FillRect(image, new Rect2I(32, 34, 16, 6), leaf.Lightened(0.06f));
+        }
+
+        if (growthStage >= 2)
+        {
+            FillRect(image, new Rect2I(18, 24, 12, 6), leaf.Darkened(0.06f));
+            FillRect(image, new Rect2I(34, 22, 12, 6), leaf);
+            FillRect(image, new Rect2I(26, 18, 12, 8), leaf.Lightened(0.08f));
+        }
+
+        if (growthStage >= 3)
+        {
+            FillRect(image, new Rect2I(12, 28, 10, 6), leaf.Darkened(0.12f));
+            FillRect(image, new Rect2I(42, 28, 10, 6), leaf.Lightened(0.04f));
+            FillRect(image, new Rect2I(28, 12, 8, 8), accent.Lightened(0.10f));
+        }
+
+        if (yieldLevel > 0)
+        {
+            FillRect(image, new Rect2I(24, 40, 4, 4), accent.Lightened(0.08f));
+            FillRect(image, new Rect2I(32, 38, 6, 6), accent);
+            FillRect(image, new Rect2I(30, 20, 4, 4), accent.Lightened(0.18f));
+        }
+    }
+
+    private static void DrawStoneTuberOverlay(Image image, byte growthStage, byte yieldLevel, Color stem, Color leaf, Color accent)
+    {
+        if (growthStage >= 1)
+        {
+            FillRect(image, new Rect2I(16, 36, 14, 8), leaf.Darkened(0.06f));
+            FillRect(image, new Rect2I(30, 34, 18, 10), leaf);
+            FillRect(image, new Rect2I(24, 44, 16, 4), stem);
+        }
+
+        if (growthStage >= 2)
+        {
+            FillRect(image, new Rect2I(12, 28, 14, 8), leaf);
+            FillRect(image, new Rect2I(36, 26, 14, 8), leaf.Lightened(0.06f));
+            FillRect(image, new Rect2I(22, 24, 20, 6), leaf.Darkened(0.10f));
+        }
+
+        if (growthStage >= 3)
+        {
+            FillRect(image, new Rect2I(18, 20, 10, 6), leaf.Lightened(0.04f));
+            FillRect(image, new Rect2I(34, 18, 10, 6), leaf.Darkened(0.04f));
+        }
+
+        if (yieldLevel > 0)
+        {
+            FillRect(image, new Rect2I(18, 44, 8, 6), accent.Darkened(0.04f));
+            FillRect(image, new Rect2I(28, 46, 8, 5), accent.Lightened(0.08f));
+            FillRect(image, new Rect2I(38, 44, 8, 6), accent);
+        }
+    }
+
+    private static void DrawMarshReedOverlay(Image image, byte growthStage, byte yieldLevel, Color stem, Color leaf, Color accent)
+    {
+        var stalkHeights = growthStage >= 3
+            ? new[] { 22, 30, 26, 32, 24 }
+            : growthStage == 2
+                ? new[] { 18, 24, 20, 26 }
+                : new[] { 14, 18, 16 };
+
+        for (var i = 0; i < stalkHeights.Length; i++)
+        {
+            var x = 18 + (i * 7);
+            var color = i % 2 == 0 ? stem : stem.Lightened(0.08f);
+            FillRect(image, new Rect2I(x, 52 - stalkHeights[i], 3, stalkHeights[i]), color);
+        }
+
+        if (growthStage >= 1)
+        {
+            FillRect(image, new Rect2I(16, 34, 8, 4), leaf);
+            FillRect(image, new Rect2I(26, 30, 8, 4), leaf.Lightened(0.04f));
+            FillRect(image, new Rect2I(38, 36, 8, 4), leaf.Darkened(0.04f));
+        }
+
+        if (growthStage >= 2)
+        {
+            FillRect(image, new Rect2I(20, 22, 8, 4), leaf.Lightened(0.06f));
+            FillRect(image, new Rect2I(32, 18, 10, 4), leaf);
+            FillRect(image, new Rect2I(42, 26, 8, 4), leaf.Darkened(0.08f));
+        }
+
+        if (growthStage >= 3)
+        {
+            FillRect(image, new Rect2I(16, 16, 8, 4), leaf);
+            FillRect(image, new Rect2I(28, 12, 10, 4), leaf.Lightened(0.08f));
+            FillRect(image, new Rect2I(40, 14, 8, 4), leaf.Darkened(0.06f));
+        }
+
+        if (yieldLevel > 0)
+        {
+            FillRect(image, new Rect2I(18, 14, 4, 10), accent.Darkened(0.08f));
+            FillRect(image, new Rect2I(32, 10, 4, 10), accent);
+            FillRect(image, new Rect2I(46, 16, 4, 9), accent.Lightened(0.08f));
+        }
     }
 
     private static PlantPalette ResolvePlantPaletteOrFallback(string plantDefId)
@@ -325,25 +582,135 @@ public static class PixelArtFactory
                 new Color(0.34f, 0.62f, 0.24f),
                 new Color(0.88f, 0.72f, 0.32f),
                 new Color(0.08f, 0.16f, 0.08f, 0.95f),
-                false);
+                PlantVisualKind.GenericGround);
 
     private static bool TryResolvePlantPalette(string plantDefId, out PlantPalette palette)
     {
         palette = plantDefId switch
         {
-            "berry_bush" => new PlantPalette(new Color(0.22f, 0.40f, 0.14f), new Color(0.28f, 0.58f, 0.24f), new Color(0.74f, 0.18f, 0.42f), new Color(0.08f, 0.18f, 0.09f, 0.95f), false),
-            "sunroot" => new PlantPalette(new Color(0.38f, 0.30f, 0.12f), new Color(0.38f, 0.68f, 0.22f), new Color(0.94f, 0.78f, 0.22f), new Color(0.16f, 0.20f, 0.08f, 0.95f), false),
-            "stone_tuber" => new PlantPalette(new Color(0.36f, 0.30f, 0.16f), new Color(0.44f, 0.60f, 0.32f), new Color(0.66f, 0.60f, 0.46f), new Color(0.13f, 0.16f, 0.09f, 0.95f), false),
-            "marsh_reed" => new PlantPalette(new Color(0.26f, 0.42f, 0.18f), new Color(0.36f, 0.72f, 0.28f), new Color(0.86f, 0.72f, 0.38f), new Color(0.07f, 0.16f, 0.08f, 0.95f), false),
-            "apple_canopy" => new PlantPalette(new Color(0.22f, 0.34f, 0.14f), new Color(0.28f, 0.62f, 0.22f), new Color(0.88f, 0.16f, 0.12f), new Color(0.08f, 0.16f, 0.08f, 0.95f), true),
-            "fig_canopy" => new PlantPalette(new Color(0.24f, 0.34f, 0.18f), new Color(0.38f, 0.62f, 0.28f), new Color(0.62f, 0.22f, 0.48f), new Color(0.08f, 0.16f, 0.08f, 0.95f), true),
+            PlantSpeciesIds.BerryBush => new PlantPalette(new Color(0.22f, 0.40f, 0.14f), new Color(0.28f, 0.58f, 0.24f), new Color(0.74f, 0.18f, 0.42f), new Color(0.08f, 0.18f, 0.09f, 0.95f), PlantVisualKind.BerryBush),
+            PlantSpeciesIds.Sunroot => new PlantPalette(new Color(0.38f, 0.30f, 0.12f), new Color(0.38f, 0.68f, 0.22f), new Color(0.94f, 0.78f, 0.22f), new Color(0.16f, 0.20f, 0.08f, 0.95f), PlantVisualKind.Sunroot),
+            PlantSpeciesIds.StoneTuber => new PlantPalette(new Color(0.36f, 0.30f, 0.16f), new Color(0.44f, 0.60f, 0.32f), new Color(0.66f, 0.60f, 0.46f), new Color(0.13f, 0.16f, 0.09f, 0.95f), PlantVisualKind.StoneTuber),
+            PlantSpeciesIds.MarshReed => new PlantPalette(new Color(0.26f, 0.42f, 0.18f), new Color(0.36f, 0.72f, 0.28f), new Color(0.86f, 0.72f, 0.38f), new Color(0.07f, 0.16f, 0.08f, 0.95f), PlantVisualKind.MarshReed),
+            PlantSpeciesIds.AppleCanopy => new PlantPalette(new Color(0.22f, 0.34f, 0.14f), new Color(0.28f, 0.62f, 0.22f), new Color(0.88f, 0.16f, 0.12f), new Color(0.08f, 0.16f, 0.08f, 0.95f), PlantVisualKind.AppleCanopy),
+            PlantSpeciesIds.FigCanopy => new PlantPalette(new Color(0.24f, 0.34f, 0.18f), new Color(0.38f, 0.62f, 0.28f), new Color(0.62f, 0.22f, 0.48f), new Color(0.08f, 0.16f, 0.08f, 0.95f), PlantVisualKind.FigCanopy),
             _ => default,
         };
 
         return palette != default;
     }
 
-    private static void DrawCanopyOverlay(Image image, byte growthStage, byte yieldLevel, Color accent, Color leaf)
+    private static bool TryResolveTreePalette(string treeSpeciesId, out TreePalette palette)
+    {
+        palette = treeSpeciesId switch
+        {
+            "oak" => new TreePalette(
+                Trunk: new Color(0.42f, 0.25f, 0.11f),
+                BarkDark: new Color(0.36f, 0.20f, 0.08f),
+                BarkLight: new Color(0.52f, 0.32f, 0.16f),
+                CanopyDark: new Color(0.10f, 0.34f, 0.12f),
+                CanopyMid: new Color(0.16f, 0.46f, 0.18f),
+                CanopyLight: new Color(0.26f, 0.62f, 0.22f),
+                Accent: new Color(0.34f, 0.70f, 0.28f),
+                Outline: new Color(0.06f, 0.18f, 0.07f, 0.95f)),
+            
+            "birch" => new TreePalette(
+                Trunk: new Color(0.72f, 0.68f, 0.58f),
+                BarkDark: new Color(0.14f, 0.14f, 0.16f),
+                BarkLight: new Color(0.86f, 0.84f, 0.78f),
+                CanopyDark: new Color(0.18f, 0.48f, 0.16f),
+                CanopyMid: new Color(0.26f, 0.60f, 0.20f),
+                CanopyLight: new Color(0.36f, 0.74f, 0.26f),
+                Accent: new Color(0.46f, 0.82f, 0.34f),
+                Outline: new Color(0.08f, 0.22f, 0.08f, 0.95f)),
+            
+            "pine" => new TreePalette(
+                Trunk: new Color(0.32f, 0.22f, 0.10f),
+                BarkDark: new Color(0.24f, 0.16f, 0.07f),
+                BarkLight: new Color(0.42f, 0.30f, 0.14f),
+                CanopyDark: new Color(0.08f, 0.26f, 0.10f),
+                CanopyMid: new Color(0.12f, 0.38f, 0.14f),
+                CanopyLight: new Color(0.18f, 0.50f, 0.16f),
+                Accent: new Color(0.24f, 0.58f, 0.20f),
+                Outline: new Color(0.06f, 0.16f, 0.06f, 0.95f)),
+            
+            "spruce" => new TreePalette(
+                Trunk: new Color(0.28f, 0.20f, 0.08f),
+                BarkDark: new Color(0.18f, 0.14f, 0.06f),
+                BarkLight: new Color(0.38f, 0.28f, 0.12f),
+                CanopyDark: new Color(0.06f, 0.22f, 0.12f),
+                CanopyMid: new Color(0.08f, 0.32f, 0.14f),
+                CanopyLight: new Color(0.12f, 0.42f, 0.18f),
+                Accent: new Color(0.16f, 0.48f, 0.22f),
+                Outline: new Color(0.05f, 0.14f, 0.07f, 0.95f)),
+            
+            "willow" => new TreePalette(
+                Trunk: new Color(0.48f, 0.36f, 0.20f),
+                BarkDark: new Color(0.36f, 0.26f, 0.14f),
+                BarkLight: new Color(0.56f, 0.44f, 0.26f),
+                CanopyDark: new Color(0.14f, 0.42f, 0.24f),
+                CanopyMid: new Color(0.20f, 0.52f, 0.30f),
+                CanopyLight: new Color(0.30f, 0.66f, 0.38f),
+                Accent: new Color(0.40f, 0.76f, 0.46f),
+                Outline: new Color(0.08f, 0.20f, 0.12f, 0.95f)),
+            
+            "palm" => new TreePalette(
+                Trunk: new Color(0.62f, 0.48f, 0.22f),
+                BarkDark: new Color(0.46f, 0.34f, 0.14f),
+                BarkLight: new Color(0.74f, 0.60f, 0.30f),
+                CanopyDark: new Color(0.30f, 0.68f, 0.18f),
+                CanopyMid: new Color(0.42f, 0.78f, 0.22f),
+                CanopyLight: new Color(0.54f, 0.88f, 0.28f),
+                Accent: new Color(0.66f, 0.94f, 0.36f),
+                Outline: new Color(0.12f, 0.28f, 0.08f, 0.95f)),
+            
+            "baobab" => new TreePalette(
+                Trunk: new Color(0.48f, 0.38f, 0.26f),
+                BarkDark: new Color(0.38f, 0.28f, 0.18f),
+                BarkLight: new Color(0.60f, 0.50f, 0.36f),
+                CanopyDark: new Color(0.14f, 0.38f, 0.12f),
+                CanopyMid: new Color(0.22f, 0.50f, 0.18f),
+                CanopyLight: new Color(0.32f, 0.62f, 0.24f),
+                Accent: new Color(0.42f, 0.72f, 0.30f),
+                Outline: new Color(0.08f, 0.20f, 0.07f, 0.95f)),
+            
+            "apple" => new TreePalette(
+                Trunk: new Color(0.40f, 0.26f, 0.12f),
+                BarkDark: new Color(0.32f, 0.20f, 0.08f),
+                BarkLight: new Color(0.50f, 0.34f, 0.18f),
+                CanopyDark: new Color(0.12f, 0.40f, 0.14f),
+                CanopyMid: new Color(0.18f, 0.54f, 0.18f),
+                CanopyLight: new Color(0.24f, 0.64f, 0.22f),
+                Accent: new Color(0.86f, 0.16f, 0.12f),
+                Outline: new Color(0.06f, 0.18f, 0.07f, 0.95f)),
+            
+            "fig" => new TreePalette(
+                Trunk: new Color(0.44f, 0.30f, 0.14f),
+                BarkDark: new Color(0.34f, 0.22f, 0.09f),
+                BarkLight: new Color(0.54f, 0.40f, 0.20f),
+                CanopyDark: new Color(0.16f, 0.36f, 0.16f),
+                CanopyMid: new Color(0.24f, 0.50f, 0.20f),
+                CanopyLight: new Color(0.32f, 0.60f, 0.24f),
+                Accent: new Color(0.58f, 0.20f, 0.44f),
+                Outline: new Color(0.07f, 0.18f, 0.08f, 0.95f)),
+            
+            "deadwood" => new TreePalette(
+                Trunk: new Color(0.48f, 0.44f, 0.36f),
+                BarkDark: new Color(0.30f, 0.28f, 0.22f),
+                BarkLight: new Color(0.62f, 0.58f, 0.48f),
+                CanopyDark: new Color(0.38f, 0.36f, 0.28f),
+                CanopyMid: new Color(0.48f, 0.46f, 0.38f),
+                CanopyLight: new Color(0.58f, 0.56f, 0.48f),
+                Accent: new Color(0.68f, 0.66f, 0.58f),
+                Outline: new Color(0.16f, 0.14f, 0.12f, 0.95f)),
+
+            _ => default,
+        };
+
+        return palette != default;
+    }
+
+    private static void DrawAppleCanopyOverlay(Image image, byte growthStage, byte yieldLevel, Color accent, Color leaf)
     {
         if (growthStage <= 0)
             return;
@@ -364,6 +731,37 @@ public static class PixelArtFactory
             FillRect(image, new Rect2I(28, 14, 4, 4), accent.Lightened(0.10f));
             FillRect(image, new Rect2I(34, 20, 4, 4), accent);
             FillRect(image, new Rect2I(42, 16, 4, 4), accent.Lightened(0.06f));
+        }
+    }
+
+    private static void DrawFigCanopyOverlay(Image image, byte growthStage, byte yieldLevel, Color accent, Color leaf)
+    {
+        if (growthStage <= 0)
+            return;
+
+        FillRect(image, new Rect2I(26, 8, 12, 6), leaf.Darkened(0.10f));
+        FillRect(image, new Rect2I(18, 16, 12, 10), leaf);
+        FillRect(image, new Rect2I(34, 16, 12, 10), leaf.Lightened(0.04f));
+        FillRect(image, new Rect2I(24, 24, 16, 10), leaf.Darkened(0.02f));
+
+        if (growthStage >= 2)
+        {
+            FillRect(image, new Rect2I(14, 26, 12, 12), leaf.Darkened(0.06f));
+            FillRect(image, new Rect2I(38, 24, 12, 14), leaf);
+        }
+
+        if (growthStage >= 3)
+        {
+            FillRect(image, new Rect2I(20, 36, 10, 8), leaf);
+            FillRect(image, new Rect2I(32, 34, 10, 10), leaf.Darkened(0.04f));
+        }
+
+        if (yieldLevel > 0)
+        {
+            FillRect(image, new Rect2I(18, 28, 4, 6), accent.Darkened(0.04f));
+            FillRect(image, new Rect2I(28, 36, 4, 6), accent.Lightened(0.08f));
+            FillRect(image, new Rect2I(36, 26, 4, 6), accent);
+            FillRect(image, new Rect2I(42, 32, 4, 6), accent.Lightened(0.04f));
         }
     }
 
@@ -1832,13 +2230,89 @@ public static class PixelArtFactory
     {
         var image = NewImage();
         FillRect(image, new Rect2I(0, 0, Size, Size), new Color(0, 0, 0, 0));
-        FillRect(image, new Rect2I(26, 34, 12, 22), new Color(0.42f, 0.25f, 0.11f));
-        FillRect(image, new Rect2I(12, 8, 40, 28), new Color(0.18f, 0.53f, 0.20f));
-        FillRect(image, new Rect2I(18, 4, 28, 12), new Color(0.24f, 0.66f, 0.24f));
-        FillRect(image, new Rect2I(16, 14, 4, 4), new Color(0, 0, 0, 0));
-        FillRect(image, new Rect2I(42, 18, 5, 4), new Color(0, 0, 0, 0));
-        FillRect(image, new Rect2I(28, 10, 6, 3), new Color(0.33f, 0.75f, 0.31f, 0.85f));
+
+        // Trunk - tapered, wider at base
+        FillRect(image, new Rect2I(28, 36, 8, 20), new Color(0.42f, 0.25f, 0.11f));
+        FillRect(image, new Rect2I(26, 52, 12, 6), new Color(0.36f, 0.20f, 0.08f)); // Root flare
+        FillRect(image, new Rect2I(30, 32, 6, 6), new Color(0.48f, 0.30f, 0.14f));
+        FillRect(image, new Rect2I(31, 28, 4, 6), new Color(0.52f, 0.32f, 0.16f));
+
+        // Canopy base layers (dark shadow)
+        FillRect(image, new Rect2I(16, 16, 32, 20), new Color(0.12f, 0.38f, 0.14f));
+        FillRect(image, new Rect2I(12, 22, 40, 14), new Color(0.16f, 0.45f, 0.18f));
+
+        // Main canopy midtone
+        FillRect(image, new Rect2I(14, 12, 36, 6), new Color(0.18f, 0.53f, 0.20f));
+        FillRect(image, new Rect2I(10, 18, 44, 16), new Color(0.18f, 0.53f, 0.20f));
+        FillRect(image, new Rect2I(18, 8, 28, 10), new Color(0.22f, 0.60f, 0.22f));
+
+        // Upper canopy highlights
+        FillRect(image, new Rect2I(22, 6, 20, 8), new Color(0.26f, 0.68f, 0.26f));
+        FillRect(image, new Rect2I(26, 4, 12, 6), new Color(0.30f, 0.72f, 0.28f));
+
+        // Sun facing edge highlights
+        FillRect(image, new Rect2I(38, 12, 8, 12), new Color(0.24f, 0.66f, 0.24f));
+        FillRect(image, new Rect2I(44, 20, 4, 8), new Color(0.20f, 0.58f, 0.22f));
+
+        // Natural canopy gaps
+        FillRect(image, new Rect2I(16, 20, 3, 3), new Color(0, 0, 0, 0));
+        FillRect(image, new Rect2I(44, 24, 4, 3), new Color(0, 0, 0, 0));
+        FillRect(image, new Rect2I(22, 14, 2, 2), new Color(0, 0, 0, 0));
+        FillRect(image, new Rect2I(38, 18, 3, 2), new Color(0, 0, 0, 0));
+
+        // Leaf cluster details
+        FillRect(image, new Rect2I(20, 18, 2, 2), new Color(0.30f, 0.70f, 0.28f));
+        FillRect(image, new Rect2I(32, 12, 3, 3), new Color(0.33f, 0.75f, 0.31f, 0.85f));
+        FillRect(image, new Rect2I(40, 22, 2, 2), new Color(0.28f, 0.68f, 0.26f));
+        FillRect(image, new Rect2I(26, 24, 2, 2), new Color(0.14f, 0.42f, 0.16f));
+
         return CreateOutlinedTexture(image, new Color(0.07f, 0.20f, 0.08f, 0.95f));
+    }
+
+    private static Texture2D MakeTree(string? materialId)
+    {
+        if (!TryResolveTreePalette(materialId, out var palette))
+            return MakeTree();
+
+        var image = NewImage();
+        FillRect(image, new Rect2I(0, 0, Size, Size), new Color(0, 0, 0, 0));
+
+        // Trunk - tapered, wider at base
+        FillRect(image, new Rect2I(28, 36, 8, 20), palette.Trunk);
+        FillRect(image, new Rect2I(26, 52, 12, 6), palette.BarkDark); // Root flare
+        FillRect(image, new Rect2I(30, 32, 6, 6), palette.BarkLight);
+        FillRect(image, new Rect2I(31, 28, 4, 6), palette.BarkLight);
+
+        // Canopy base layers (dark shadow)
+        FillRect(image, new Rect2I(16, 16, 32, 20), palette.CanopyDark);
+        FillRect(image, new Rect2I(12, 22, 40, 14), palette.CanopyDark);
+
+        // Main canopy midtone
+        FillRect(image, new Rect2I(14, 12, 36, 6), palette.CanopyMid);
+        FillRect(image, new Rect2I(10, 18, 44, 16), palette.CanopyMid);
+        FillRect(image, new Rect2I(18, 8, 28, 10), palette.CanopyMid);
+
+        // Upper canopy highlights
+        FillRect(image, new Rect2I(22, 6, 20, 8), palette.CanopyLight);
+        FillRect(image, new Rect2I(26, 4, 12, 6), palette.CanopyLight);
+
+        // Sun facing edge highlights
+        FillRect(image, new Rect2I(38, 12, 8, 12), palette.Accent);
+        FillRect(image, new Rect2I(44, 20, 4, 8), palette.Accent);
+
+        // Natural canopy gaps
+        FillRect(image, new Rect2I(16, 20, 3, 3), new Color(0, 0, 0, 0));
+        FillRect(image, new Rect2I(44, 24, 4, 3), new Color(0, 0, 0, 0));
+        FillRect(image, new Rect2I(22, 14, 2, 2), new Color(0, 0, 0, 0));
+        FillRect(image, new Rect2I(38, 18, 3, 2), new Color(0, 0, 0, 0));
+
+        // Leaf cluster details
+        FillRect(image, new Rect2I(20, 18, 2, 2), palette.Accent);
+        FillRect(image, new Rect2I(32, 12, 3, 3), palette.Accent);
+        FillRect(image, new Rect2I(40, 22, 2, 2), palette.Accent);
+        FillRect(image, new Rect2I(26, 24, 2, 2), palette.Accent);
+
+        return CreateOutlinedTexture(image, palette.Outline);
     }
 
     private static Texture2D MakeStair()
@@ -3114,6 +3588,251 @@ public static class PixelArtFactory
         FillRect(image, new Rect2I(28, 14, 8, 8), new Color(0.60f, 0.42f, 0.26f));
         FillRect(image, new Rect2I(40, 20, 8, 8), new Color(0.60f, 0.42f, 0.26f));
         return CreateOutlinedTexture(image, new Color(0.24f, 0.16f, 0.08f, 0.95f));
+    }
+
+    private static string ResolveEmoteVariantKey(Emote emote)
+    {
+        if (string.Equals(emote.Id, EmoteIds.MoodUp, StringComparison.Ordinal))
+            return $"{EmoteIds.MoodUp}:{ResolveEmoteTier(emote.Intensity)}";
+
+        if (string.Equals(emote.Id, EmoteIds.MoodDown, StringComparison.Ordinal))
+            return $"{EmoteIds.MoodDown}:{ResolveEmoteTier(emote.Intensity)}";
+
+        return emote.Id;
+    }
+
+    private static int ResolveEmoteTier(float intensity)
+        => intensity switch
+        {
+            >= 0.85f => 2,
+            >= 0.55f => 1,
+            _ => 0,
+        };
+
+    private static Texture2D MakeEmoteBubbleTexture()
+    {
+        var image = NewImage();
+        var fill = new Color(0.98f, 0.98f, 1.00f);
+        var shadow = new Color(0.76f, 0.76f, 0.80f);
+        FillRect(image, new Rect2I(18, 12, 28, 32), fill);
+        FillRect(image, new Rect2I(12, 18, 40, 20), fill);
+        DrawDisk(image, 18, 18, 6, fill);
+        DrawDisk(image, 46, 18, 6, fill);
+        DrawDisk(image, 18, 38, 6, fill);
+        DrawDisk(image, 46, 38, 6, fill);
+        BlendRect(image, new Rect2I(16, 16, 32, 8), shadow, 0.22f);
+        BlendRect(image, new Rect2I(18, 32, 28, 8), shadow, 0.10f);
+        return CreateOutlinedTexture(image, new Color(0.08f, 0.08f, 0.10f, 0.96f));
+    }
+
+    private static Texture2D MakeEmoteBubbleTailTexture()
+    {
+        var image = NewImage();
+        var fill = new Color(0.98f, 0.98f, 1.00f);
+        var shadow = new Color(0.76f, 0.76f, 0.80f);
+        FillRect(image, new Rect2I(26, 16, 12, 16), fill);
+        DrawTriangle(image, 32, 48, 18, fill);
+        BlendRect(image, new Rect2I(28, 20, 8, 18), shadow, 0.18f);
+        return CreateOutlinedTexture(image, new Color(0.08f, 0.08f, 0.10f, 0.96f));
+    }
+
+    private static Texture2D MakeSleepEmoteIcon()
+    {
+        var image = NewImage();
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.70f, 0.72f, 0.80f);
+        DrawDisk(image, 28, 30, 14, fill);
+        DrawDisk(image, 34, 25, 12, new Color(0f, 0f, 0f, 0f));
+        FillRect(image, new Rect2I(38, 16, 4, 4), fill);
+        FillRect(image, new Rect2I(43, 20, 2, 2), fill);
+        FillRect(image, new Rect2I(16, 18, 3, 3), shadow);
+        FillRect(image, new Rect2I(20, 14, 2, 2), fill);
+        return CreateOutlinedTexture(image, new Color(0.10f, 0.12f, 0.22f, 0.95f));
+    }
+
+    private static Texture2D MakeFearEmoteIcon()
+    {
+        var image = NewImage();
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.72f, 0.72f, 0.76f);
+        FillRect(image, new Rect2I(28, 12, 8, 40), fill);
+        FillRect(image, new Rect2I(12, 28, 40, 8), fill);
+        FillRect(image, new Rect2I(18, 18, 8, 8), shadow);
+        FillRect(image, new Rect2I(38, 18, 8, 8), shadow);
+        FillRect(image, new Rect2I(18, 38, 8, 8), shadow);
+        FillRect(image, new Rect2I(38, 38, 8, 8), shadow);
+        DrawDisk(image, 32, 32, 8, fill);
+        DrawDisk(image, 32, 32, 3, shadow);
+        return CreateOutlinedTexture(image, new Color(0.16f, 0.06f, 0.06f, 0.95f));
+    }
+
+    private static Texture2D MakeHungryEmoteIcon()
+    {
+        var image = NewImage();
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.72f, 0.72f, 0.76f);
+        FillRect(image, new Rect2I(16, 34, 32, 8), fill);
+        FillRect(image, new Rect2I(20, 42, 24, 6), shadow);
+        FillRect(image, new Rect2I(22, 26, 20, 8), shadow);
+        FillRect(image, new Rect2I(18, 30, 28, 4), fill);
+        return CreateOutlinedTexture(image, new Color(0.18f, 0.12f, 0.06f, 0.95f));
+    }
+
+    private static Texture2D MakeHappyEmoteIcon()
+    {
+        var image = NewImage();
+        DrawFaceBase(image);
+        DrawFaceEyes(image, 24, 38, 24, new Color(0.20f, 0.20f, 0.22f));
+        DrawSmile(image, 36, new Color(0.28f, 0.28f, 0.30f));
+        return CreateOutlinedTexture(image, new Color(0.16f, 0.16f, 0.18f, 0.95f));
+    }
+
+    private static Texture2D MakeAngryEmoteIcon()
+    {
+        var image = NewImage();
+        var feature = new Color(0.20f, 0.20f, 0.22f);
+        DrawFaceBase(image);
+        FillRect(image, new Rect2I(20, 20, 8, 3), feature);
+        FillRect(image, new Rect2I(36, 20, 8, 3), feature);
+        FillRect(image, new Rect2I(26, 22, 4, 2), feature);
+        FillRect(image, new Rect2I(34, 22, 4, 2), feature);
+        DrawFaceEyes(image, 24, 38, 26, feature);
+        DrawFrown(image, 38, feature);
+        return CreateOutlinedTexture(image, new Color(0.16f, 0.16f, 0.18f, 0.95f));
+    }
+
+    private static Texture2D MakeSadEmoteIcon()
+    {
+        var image = NewImage();
+        var feature = new Color(0.20f, 0.20f, 0.22f);
+        DrawFaceBase(image);
+        DrawFaceEyes(image, 24, 38, 24, feature);
+        DrawFrown(image, 38, feature);
+        FillRect(image, new Rect2I(40, 30, 4, 8), new Color(0.72f, 0.72f, 0.76f));
+        return CreateOutlinedTexture(image, new Color(0.16f, 0.16f, 0.18f, 0.95f));
+    }
+
+    private static Texture2D MakeEatEmoteIcon()
+    {
+        var image = NewImage();
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.72f, 0.72f, 0.76f);
+        DrawDisk(image, 28, 34, 12, fill);
+        DrawDisk(image, 38, 30, 9, fill);
+        DrawDisk(image, 40, 28, 6, new Color(0f, 0f, 0f, 0f));
+        FillRect(image, new Rect2I(28, 16, 4, 10), shadow);
+        FillRect(image, new Rect2I(24, 18, 12, 4), fill);
+        return CreateOutlinedTexture(image, new Color(0.18f, 0.12f, 0.06f, 0.95f));
+    }
+
+    private static Texture2D MakeDrinkEmoteIcon()
+    {
+        var image = NewImage();
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.72f, 0.72f, 0.76f);
+        FillRect(image, new Rect2I(18, 18, 22, 28), fill);
+        FillRect(image, new Rect2I(40, 24, 8, 14), fill);
+        FillRect(image, new Rect2I(22, 22, 14, 18), shadow);
+        FillRect(image, new Rect2I(22, 14, 12, 4), fill);
+        return CreateOutlinedTexture(image, new Color(0.10f, 0.18f, 0.26f, 0.95f));
+    }
+
+    private static Texture2D MakeNeedFoodEmoteIcon()
+    {
+        var image = NewImage();
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.72f, 0.72f, 0.76f);
+        DrawDisk(image, 22, 34, 10, fill);
+        DrawDisk(image, 42, 34, 10, fill);
+        FillRect(image, new Rect2I(22, 24, 20, 20), fill);
+        FillRect(image, new Rect2I(20, 34, 24, 8), shadow);
+        FillRect(image, new Rect2I(24, 28, 4, 10), shadow);
+        FillRect(image, new Rect2I(34, 28, 4, 10), shadow);
+        return CreateOutlinedTexture(image, new Color(0.18f, 0.12f, 0.06f, 0.95f));
+    }
+
+    private static Texture2D MakeNeedWaterEmoteIcon()
+    {
+        var image = NewImage();
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.72f, 0.72f, 0.76f);
+        DrawTriangle(image, 32, 44, 20, fill);
+        DrawDisk(image, 32, 34, 11, fill);
+        BlendRect(image, new Rect2I(26, 30, 12, 14), shadow, 0.18f);
+        return CreateOutlinedTexture(image, new Color(0.10f, 0.18f, 0.26f, 0.95f));
+    }
+
+    private static Texture2D MakeMoodUpEmoteIcon(int tier)
+    {
+        var image = NewImage();
+        var feature = new Color(0.20f, 0.20f, 0.22f);
+        DrawFaceBase(image);
+        DrawFaceEyes(image, 24, 38, 24, feature);
+        DrawSmile(image, 36, feature);
+
+        if (tier >= 1)
+        {
+            FillRect(image, new Rect2I(16, 34, 4, 4), new Color(0.82f, 0.82f, 0.86f));
+            FillRect(image, new Rect2I(44, 34, 4, 4), new Color(0.82f, 0.82f, 0.86f));
+        }
+
+        if (tier >= 2)
+        {
+            FillRect(image, new Rect2I(30, 12, 4, 6), new Color(0.86f, 0.86f, 0.90f));
+            FillRect(image, new Rect2I(20, 16, 4, 4), new Color(0.76f, 0.76f, 0.80f));
+            FillRect(image, new Rect2I(40, 16, 4, 4), new Color(0.76f, 0.76f, 0.80f));
+        }
+
+        return CreateOutlinedTexture(image, new Color(0.16f, 0.16f, 0.18f, 0.95f));
+    }
+
+    private static Texture2D MakeMoodDownEmoteIcon(int tier)
+    {
+        var image = NewImage();
+        var feature = new Color(0.20f, 0.20f, 0.22f);
+        DrawFaceBase(image);
+        DrawFaceEyes(image, 24, 38, 24, feature);
+        DrawFrown(image, 36, feature);
+
+        if (tier >= 1)
+            FillRect(image, new Rect2I(42, 18, 6, 4), new Color(0.76f, 0.76f, 0.80f));
+
+        if (tier >= 2)
+        {
+            FillRect(image, new Rect2I(14, 18, 4, 10), new Color(0.76f, 0.76f, 0.80f));
+            FillRect(image, new Rect2I(18, 16, 4, 6), new Color(0.84f, 0.84f, 0.88f));
+        }
+
+        return CreateOutlinedTexture(image, new Color(0.16f, 0.16f, 0.18f, 0.95f));
+    }
+
+    private static void DrawFaceBase(Image image)
+    {
+        var fill = new Color(0.96f, 0.96f, 0.98f);
+        var shadow = new Color(0.72f, 0.72f, 0.76f);
+        DrawDisk(image, 32, 32, 15, fill);
+        BlendRect(image, new Rect2I(20, 20, 24, 8), shadow, 0.16f);
+        BlendRect(image, new Rect2I(22, 34, 20, 8), shadow, 0.08f);
+    }
+
+    private static void DrawFaceEyes(Image image, int leftX, int rightX, int y, Color color)
+    {
+        FillRect(image, new Rect2I(leftX, y, 4, 4), color);
+        FillRect(image, new Rect2I(rightX, y, 4, 4), color);
+    }
+
+    private static void DrawSmile(Image image, int y, Color color)
+    {
+        FillRect(image, new Rect2I(22, y, 4, 3), color);
+        FillRect(image, new Rect2I(38, y, 4, 3), color);
+        FillRect(image, new Rect2I(26, y + 2, 12, 3), color);
+    }
+
+    private static void DrawFrown(Image image, int y, Color color)
+    {
+        FillRect(image, new Rect2I(22, y + 2, 4, 3), color);
+        FillRect(image, new Rect2I(38, y + 2, 4, 3), color);
+        FillRect(image, new Rect2I(26, y, 12, 3), color);
     }
 
     private static void DrawLineRect(Image image, int x, int y, int width, int height, Color color)

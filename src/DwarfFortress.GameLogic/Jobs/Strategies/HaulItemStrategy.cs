@@ -60,7 +60,7 @@ public sealed class HaulItemStrategy : IJobStrategy
 
         return new ActionStep[]
         {
-            new MoveToStep(item.Position.Position),
+            ItemPickupHelper.CreatePickupMoveStep(item),
             new PickUpItemStep(item.Id, ItemCarryMode.Hauling),
             new MoveToStep(destPos),
             new PlaceItemStep(item.Id, destPos),

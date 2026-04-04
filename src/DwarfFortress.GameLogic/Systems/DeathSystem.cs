@@ -20,7 +20,7 @@ public sealed class DeathSystem : IGameSystem
     private GameContext? _ctx;
 
     public string SystemId => SystemIds.DeathSystem;
-    public int UpdateOrder => 10;
+    public int UpdateOrder => 11;
     public bool IsEnabled { get; set; } = true;
 
     public void Initialize(GameContext ctx)

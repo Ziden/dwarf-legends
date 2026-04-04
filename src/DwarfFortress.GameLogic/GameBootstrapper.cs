@@ -36,6 +36,7 @@ public static class GameBootstrapper
         sim.RegisterSystem(new WorldMacroStateService());
         sim.RegisterSystem(new WorldLoreSystem());
         sim.RegisterSystem(new BuildingSystem());
+        sim.RegisterSystem(new FortressLocationSystem());
 
         // ── Entities ──────────────────────────────────────────────────────
         sim.RegisterSystem(new EntityRegistry());
@@ -76,6 +77,7 @@ public static class GameBootstrapper
         // ── Emergent interaction systems ──────────────────────────────────
         sim.RegisterSystem(new ContaminationSystem());
         sim.RegisterSystem(new BehaviorSystem());
+        sim.RegisterSystem(new EmoteFeedbackSystem());
         sim.RegisterSystem(new AlcoholEffectSystem());
 
         // ── World dynamics ────────────────────────────────────────────────

@@ -11,6 +11,29 @@ namespace DwarfFortress.GameLogic.Tests.Phase5Tests;
 
 public sealed class JobSystemTests
 {
+    private sealed class WaitOnlyStrategy : IJobStrategy
+    {
+        public const string DefId = "test_wait_only";
+
+        public bool Completed { get; private set; }
+
+        public string JobDefId => DefId;
+
+        public bool CanExecute(Job job, int dwarfId, GameContext ctx) => true;
+
+        public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
+            => [new WaitStep(0.5f)];
+
+        public void OnInterrupt(Job job, int dwarfId, GameContext ctx)
+        {
+        }
+
+        public void OnComplete(Job job, int dwarfId, GameContext ctx)
+        {
+            Completed = true;
+        }
+    }
+
     private static (JobSystem js, EntityRegistry er, WorldMap wm, GameSimulation sim) CreateSim()
     {
         var logger = new Fakes.TestLogger();
@@ -97,6 +120,33 @@ public sealed class JobSystemTests
         var (js, _, _, _) = CreateSim();
 
         Assert.Null(js.GetJob(99999));
+    }
+
+    [Fact]
+    public void JobSystem_Completes_Wait_Step_Via_Action_Executor()
+    {
+        var (js, er, _, sim) = CreateSim();
+        var strategy = new WaitOnlyStrategy();
+        js.RegisterStrategy(strategy);
+
+        var dwarf = new Dwarf(er.NextId(), "Waiter", new Vec3i(1, 1, 0));
+        er.Register(dwarf);
+
+        JobCompletedEvent? completed = null;
+        sim.Context.EventBus.On<JobCompletedEvent>(e =>
+        {
+            if (e.JobDefId == WaitOnlyStrategy.DefId)
+                completed = e;
+        });
+
+        js.CreateJob(WaitOnlyStrategy.DefId, dwarf.Position.Position, priority: 5);
+
+        sim.Tick(0.25f);
+        sim.Tick(0.25f);
+        sim.Tick(0.25f);
+
+        Assert.True(strategy.Completed);
+        Assert.Equal(dwarf.Id, completed?.DwarfId);
     }
 
     [Fact]
@@ -311,5 +361,86 @@ public sealed class JobSystemTests
         var job = Assert.Single(js.GetAllJobs().Where(j => j.JobDefId == JobDefIds.CutTree));
         Assert.Equal(JobStatus.InProgress, job.Status);
         Assert.Equal(dwarf.Id, job.AssignedDwarfId);
+    }
+
+    [Fact]
+    public void CutTree_Jobs_Stay_Pending_Until_Front_Trees_Open_A_Route()
+    {
+        var (js, er, wm, sim) = CreateSim();
+        js.RegisterStrategy(new CutTreeStrategy());
+
+        var failures = new List<JobFailedEvent>();
+        sim.Context.EventBus.On<JobFailedEvent>(failure => failures.Add(failure));
+
+        for (var x = 0; x < wm.Width; x++)
+        for (var y = 0; y < wm.Height; y++)
+        {
+            wm.SetTile(new Vec3i(x, y, 0), new TileData
+            {
+                TileDefId = TileDefIds.GraniteWall,
+                MaterialId = "granite",
+                IsPassable = false,
+            });
+        }
+
+        foreach (var floorPos in new[]
+                 {
+                     new Vec3i(3, 6, 0),
+                     new Vec3i(4, 6, 0),
+                     new Vec3i(6, 5, 0),
+                     new Vec3i(6, 6, 0),
+                     new Vec3i(6, 7, 0),
+                     new Vec3i(7, 5, 0),
+                     new Vec3i(7, 7, 0),
+                 })
+        {
+            wm.SetTile(floorPos, new TileData
+            {
+                TileDefId = TileDefIds.StoneFloor,
+                MaterialId = "granite",
+                IsPassable = true,
+            });
+        }
+
+        var frontTreePos = new Vec3i(5, 6, 0);
+        var blockedTreePos = new Vec3i(7, 6, 0);
+
+        foreach (var treePos in new[] { frontTreePos, blockedTreePos })
+        {
+            wm.SetTile(treePos, new TileData
+            {
+                TileDefId = TileDefIds.Tree,
+                MaterialId = "wood",
+                TreeSpeciesId = "oak",
+                IsPassable = false,
+                IsDesignated = true,
+            });
+        }
+
+        var dwarf = new Dwarf(er.NextId(), "Woodcutter", new Vec3i(3, 6, 0));
+        dwarf.Labors.DisableAll();
+        dwarf.Labors.Enable(LaborIds.WoodCutting);
+        er.Register(dwarf);
+
+        js.CreateJob(JobDefIds.CutTree, blockedTreePos, priority: 5);
+        js.CreateJob(JobDefIds.CutTree, frontTreePos, priority: 4);
+
+        sim.Tick(0.1f);
+
+        Assert.Contains(js.GetPendingJobs(), job => job.JobDefId == JobDefIds.CutTree && job.TargetPos == blockedTreePos);
+        Assert.Contains(js.GetAllJobs(), job => job.JobDefId == JobDefIds.CutTree && job.TargetPos == frontTreePos && job.Status == JobStatus.InProgress);
+
+        for (var tick = 0; tick < 400; tick++)
+        {
+            sim.Tick(0.1f);
+            if (wm.GetTile(frontTreePos).TileDefId != TileDefIds.Tree
+                && wm.GetTile(blockedTreePos).TileDefId != TileDefIds.Tree)
+                break;
+        }
+
+        Assert.Empty(failures.Where(failure => failure.Reason == "no_path"));
+        Assert.NotEqual(TileDefIds.Tree, wm.GetTile(frontTreePos).TileDefId);
+        Assert.NotEqual(TileDefIds.Tree, wm.GetTile(blockedTreePos).TileDefId);
+        Assert.DoesNotContain(js.GetAllJobs(), job => job.JobDefId == JobDefIds.CutTree && job.Status is JobStatus.Pending or JobStatus.InProgress);
     }
 }
