@@ -92,7 +92,7 @@ public sealed class FortressAnnouncementSystem : IGameSystem
         ctx.EventBus.On<CombatMissEvent>(OnCombatMiss);
         ctx.EventBus.On<FloodedTileEvent>(OnFloodedTile);
         ctx.EventBus.On<MiningDesignationSafetyCancelledEvent>(OnMiningDesignationSafetyCancelled);
-        ctx.EventBus.On<DwarfFledFromAnimalEvent>(OnDwarfFledFromAnimal);
+        //ctx.EventBus.On<DwarfFledFromAnimalEvent>(OnDwarfFledFromAnimal);
         ctx.EventBus.On<GameSavedEvent>(OnGameSaved);
         ctx.EventBus.On<GameLoadedEvent>(OnGameLoaded);
     }

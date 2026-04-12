@@ -21,11 +21,22 @@ public partial class WorldRender3D : Node3D
 
     private const float OverlaySurfaceOffset = 0.014f;
     private const float OverlayThickness = 0.035f;
+    private const int OverlayRenderPriority = 0;
+    private const int BillboardRenderPriority = 1;
+    private const int BillboardOutlineRenderPriority = 2;
     private const float GroundSpriteHeight = 0.18f;
     private const float TreeSpriteOverlayHeight = 0.46f;
+    private const float StockpileRailInset = 0.05f;
+    private const float StockpileRailWidth = 0.11f;
+    private const float StockpileTrimInset = 0.10f;
+    private const float StockpileTrimWidth = 0.04f;
+    private const float StockpilePostSize = 0.17f;
     private const int MaxChunkBuildsPerSync = 2;
+    private const float ResourceDesignationOutlineScale = 1.08f;
+    private const float ResourceDesignationOutlineDepthOffset = -0.0035f;
     private const float ResourceHoverOutlineScale = 1.14f;
     private const float ResourceHoverOutlineDepthOffset = -0.0025f;
+    private static readonly Color ResourceDesignationOutlineTint = new(0.28f, 0.96f, 0.20f, 0.82f);
     private static readonly Color ResourceHoverOutlineTint = new(0.76f, 1f, 0.62f, 0.9f);
 
     private readonly Dictionary<Vec3i, WorldChunkRenderSnapshot> _chunkSnapshots = new();
@@ -39,6 +50,7 @@ public partial class WorldRender3D : Node3D
     private readonly HashSet<Vec3i> _pendingChunkBuildOriginSet = new();
     private readonly List<Vec3i> _pendingChunkScratch = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _billboardMaterials = new();
+    private readonly Dictionary<Texture2D, StandardMaterial3D> _designationOutlineBillboardMaterials = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _outlineBillboardMaterials = new();
     private readonly WorldChunkSliceMesher _sliceMesher = new();
     private readonly WorldWorkshopMesher _workshopMesher = new();
@@ -59,6 +71,9 @@ public partial class WorldRender3D : Node3D
     private int _debugVisibleCombatCueCount;
     private int _debugCombatCuePlateCount;
     private int _debugMaxVisibleCombatCueId;
+    private int _debugVisibleResourceBurstCount;
+    private int _debugResourceBurstPlateCount;
+    private int _debugMaxVisibleResourceBurstId;
 
     public override void _Ready()
     {
@@ -88,6 +103,7 @@ public partial class WorldRender3D : Node3D
         ClearBillboards(_treeBillboards);
         ClearBillboards(_plantBillboards);
         DisposeMaterials(_billboardMaterials);
+        DisposeMaterials(_designationOutlineBillboardMaterials);
         DisposeMaterials(_outlineBillboardMaterials);
 
         _chunkMeshes.Clear();
@@ -104,6 +120,9 @@ public partial class WorldRender3D : Node3D
         _debugVisibleCombatCueCount = 0;
         _debugCombatCuePlateCount = 0;
         _debugMaxVisibleCombatCueId = 0;
+        _debugVisibleResourceBurstCount = 0;
+        _debugResourceBurstPlateCount = 0;
+        _debugMaxVisibleResourceBurstId = 0;
     }
 
     public void SetActive(bool active)
@@ -314,14 +333,45 @@ public partial class WorldRender3D : Node3D
     public bool HasDebugHoveredResourceBillboardOutline()
         => _hoveredResourceBillboard?.Outline.Visible == true;
 
+    public bool HasDebugDesignatedResourceBillboardOutline(Vector2I tile)
+        => HasDebugDesignatedResourceBillboardOutline(_treeBillboards.Values, tile)
+            || HasDebugDesignatedResourceBillboardOutline(_plantBillboards.Values, tile);
+
     public int GetDebugEmphasizedResourceBillboardCount()
         => CountEmphasizedResourceBillboards(_treeBillboards.Values) + CountEmphasizedResourceBillboards(_plantBillboards.Values);
+
+    public int GetDebugItemBillboardRenderPriority()
+    {
+        EnsureActorPresentation();
+        return _actorPresentation?.GetDebugItemBillboardRenderPriority() ?? 0;
+    }
+
+        public int GetDebugItemPreviewCount(int itemLikeId)
+        {
+            EnsureActorPresentation();
+            return _actorPresentation?.GetDebugItemPreviewCount(itemLikeId) ?? 0;
+        }
+
+    public int GetDebugOverlayRenderPriority()
+        => _overlayMaterial?.RenderPriority ?? 0;
 
     public bool TryGetDebugBillboardWorldPosition(int entityId, out Vector3 worldPosition)
     {
         EnsureActorPresentation();
         worldPosition = default;
         return _actorPresentation?.TryGetDebugBillboardWorldPosition(entityId, out worldPosition) == true;
+    }
+
+    public bool TryGetDebugTreeBillboardTexture(Vec3i tilePosition, out Texture2D? texture)
+    {
+        if (_treeBillboards.TryGetValue(tilePosition, out var state))
+        {
+            texture = state.Texture;
+            return true;
+        }
+
+        texture = null;
+        return false;
     }
 
     public int GetDebugChunkMeshCount()
@@ -338,6 +388,24 @@ public partial class WorldRender3D : Node3D
 
     public int GetDebugMaxVisibleCombatCueId()
         => _debugMaxVisibleCombatCueId;
+
+    public int GetDebugVisibleInventoryPickupCueCount()
+        => _actorPresentation?.GetDebugVisibleInventoryPickupCueCount() ?? 0;
+
+    public int GetDebugMaxVisibleInventoryPickupCueId()
+        => _actorPresentation?.GetDebugMaxVisibleInventoryPickupCueId() ?? 0;
+
+    public bool HasDebugInventoryPickupCue(int cueId)
+        => _actorPresentation?.HasDebugInventoryPickupCue(cueId) == true;
+
+    public int GetDebugVisibleResourceBurstCount()
+        => _debugVisibleResourceBurstCount;
+
+    public int GetDebugResourceBurstPlateCount()
+        => _debugResourceBurstPlateCount;
+
+    public int GetDebugMaxVisibleResourceBurstId()
+        => _debugMaxVisibleResourceBurstId;
 
     private void CollectActiveChunks(WorldMap map, int currentZ, Rect2I visibleTileBounds)
     {
@@ -691,16 +759,15 @@ public partial class WorldRender3D : Node3D
                 continue;
 
             var style = StockpileVisualResolver.Resolve(stockpile.AcceptedTags);
-            var minX = Math.Min(stockpile.From.X, stockpile.To.X);
-            var maxX = Math.Max(stockpile.From.X, stockpile.To.X);
-            var minY = Math.Min(stockpile.From.Y, stockpile.To.Y);
-            var maxY = Math.Max(stockpile.From.Y, stockpile.To.Y);
+            var slots = stockpile.AllSlots()
+                .Where(slot => slot.Z == currentZ)
+                .ToArray();
+            var slotSet = slots.ToHashSet();
 
-            for (var x = minX; x <= maxX; x++)
-            for (var y = minY; y <= maxY; y++)
+            foreach (var slot in slots)
             {
-                var overlayBaseY = ResolveOverlayBaseY(map, x, y, currentZ) - 0.004f;
-                AddTilePlate(plates, x, y, visibleTileBounds, overlayBaseY, style.OverlayColor, 0.09f);
+                var overlayBaseY = ResolveOverlayBaseY(map, slot.X, slot.Y, currentZ) - 0.005f;
+                AddStockpilePerimeter(plates, slot, visibleTileBounds, overlayBaseY, style, slotSet);
             }
         }
 
@@ -724,6 +791,9 @@ public partial class WorldRender3D : Node3D
             _debugVisibleCombatCueCount = 0;
             _debugCombatCuePlateCount = 0;
             _debugMaxVisibleCombatCueId = 0;
+            _debugVisibleResourceBurstCount = 0;
+            _debugResourceBurstPlateCount = 0;
+            _debugMaxVisibleResourceBurstId = 0;
             return;
         }
 
@@ -744,6 +814,7 @@ public partial class WorldRender3D : Node3D
         var visibleTilePulses = new List<GameFeedbackController.TilePulseView>();
         var visibleBuildingPulses = new List<(BuildingView Building, GameFeedbackController.BuildingPulseView Pulse)>();
         var visibleCombatCues = new List<GameFeedbackController.CombatCueView>();
+        var visibleResourceBursts = new List<GameFeedbackController.ResourceBurstCueView>();
 
         if (feedback is not null)
         {
@@ -757,6 +828,12 @@ public partial class WorldRender3D : Node3D
             {
                 if (TileBoundsContains(visibleTileBounds, combatCue.Position.X, combatCue.Position.Y))
                     visibleCombatCues.Add(combatCue);
+            }
+
+            foreach (var resourceBurst in feedback.GetResourceBurstCueViews(currentZ))
+            {
+                if (TileBoundsContains(visibleTileBounds, resourceBurst.Position.X, resourceBurst.Position.Y))
+                    visibleResourceBursts.Add(resourceBurst);
             }
 
             if (query is not null)
@@ -775,6 +852,10 @@ public partial class WorldRender3D : Node3D
         _debugVisibleCombatCueCount = visibleCombatCues.Count;
         _debugMaxVisibleCombatCueId = visibleCombatCues.Count > 0
             ? visibleCombatCues.Max(combatCue => combatCue.Id)
+            : 0;
+        _debugVisibleResourceBurstCount = visibleResourceBursts.Count;
+        _debugMaxVisibleResourceBurstId = visibleResourceBursts.Count > 0
+            ? visibleResourceBursts.Max(resourceBurst => resourceBurst.Id)
             : 0;
 
         var overlayState = new HashCode();
@@ -844,6 +925,16 @@ public partial class WorldRender3D : Node3D
             overlayState.Add(combatCue.DidHit);
         }
 
+        overlayState.Add(visibleResourceBursts.Count);
+        foreach (var resourceBurst in visibleResourceBursts)
+        {
+            overlayState.Add(resourceBurst.Id);
+            overlayState.Add(resourceBurst.Position);
+            overlayState.Add(resourceBurst.Color);
+            overlayState.Add(resourceBurst.TimeLeft);
+            overlayState.Add(resourceBurst.Duration);
+        }
+
         overlayState.Add(visibleBuildingPulses.Count);
         foreach (var (building, buildingPulse) in visibleBuildingPulses)
         {
@@ -872,6 +963,7 @@ public partial class WorldRender3D : Node3D
         _dynamicOverlayStateHash = overlayHash;
         var plates = new List<WorldOverlayMesher.OverlayPlate>();
         var combatCuePlateCount = 0;
+        var resourceBurstPlateCount = 0;
 
         foreach (var tilePulse in visibleTilePulses)
         {
@@ -880,6 +972,17 @@ public partial class WorldRender3D : Node3D
                 tilePulse,
                 visibleTileBounds,
                 ResolveOverlayBaseY(map, tilePulse.Position.X, tilePulse.Position.Y, currentZ));
+        }
+
+        foreach (var resourceBurst in visibleResourceBursts)
+        {
+            var plateCountBefore = plates.Count;
+            AddResourceBurstCuePlate(
+                plates,
+                resourceBurst,
+                visibleTileBounds,
+                ResolveOverlayBaseY(map, resourceBurst.Position.X, resourceBurst.Position.Y, currentZ));
+            resourceBurstPlateCount += plates.Count - plateCountBefore;
         }
 
         foreach (var combatCue in visibleCombatCues)
@@ -894,6 +997,7 @@ public partial class WorldRender3D : Node3D
         }
 
         _debugCombatCuePlateCount = combatCuePlateCount;
+        _debugResourceBurstPlateCount = resourceBurstPlateCount;
 
         foreach (var (building, buildingPulse) in visibleBuildingPulses)
         {
@@ -985,7 +1089,6 @@ public partial class WorldRender3D : Node3D
 
         var visibleTreeIds = new HashSet<Vec3i>();
         var visiblePlantIds = new HashSet<Vec3i>();
-        var treeVisual = WorldSpriteVisuals.Tree();
 
         foreach (var snapshot in _chunkSnapshots.Values)
         {
@@ -1003,19 +1106,36 @@ public partial class WorldRender3D : Node3D
                 if (!TileBoundsContains(visibleTileBounds, position.X, position.Y))
                     continue;
 
+                var compositeTreeVisual = default(WorldSpriteVisual);
+                var hasTreeCanopyOverlay = tile.TileDefId == TileDefIds.Tree
+                    && WorldSpriteVisuals.TryTreeWithPlantOverlay(
+                        tile.TreeSpeciesId,
+                        tile.PlantDefId,
+                        tile.PlantGrowthStage,
+                        tile.PlantYieldLevel,
+                        tile.PlantSeedLevel,
+                        out compositeTreeVisual);
+
                 if (tile.TileDefId == TileDefIds.Tree)
                 {
+                    var treeVisual = hasTreeCanopyOverlay
+                        ? compositeTreeVisual
+                        : WorldSpriteVisuals.Tree(tile.TreeSpeciesId);
                     visibleTreeIds.Add(position);
                     SyncBillboard(
                         _treeBillboards,
                         position,
                         position,
                         ResourceBillboardKind.Tree,
+                        tile.IsDesignated,
                         $"Tree_{position.X}_{position.Y}_{position.Z}",
                         treeVisual.Texture,
                         ResolveBillboardPosition(position, GroundSpriteHeight),
                         treeVisual.WorldSize);
                 }
+
+                if (hasTreeCanopyOverlay)
+                    continue;
 
                 if (!WorldSpriteVisuals.TryPlantOverlay(tile.PlantDefId, tile.PlantGrowthStage, tile.PlantYieldLevel, tile.PlantSeedLevel, out var plantVisual))
                     continue;
@@ -1027,6 +1147,7 @@ public partial class WorldRender3D : Node3D
                     position,
                     position,
                     ResourceBillboardKind.Plant,
+                    isDesignated: false,
                     $"Plant_{position.X}_{position.Y}_{position.Z}",
                     plantVisual.Texture,
                     ResolveBillboardPosition(position, plantHeight),
@@ -1072,6 +1193,7 @@ public partial class WorldRender3D : Node3D
 
     private void ApplyResourceBillboardHighlight(BillboardState state)
     {
+        state.DesignationOutline.Visible = _isActive && state.IsDesignated;
         state.Outline.Visible = _isActive
             && (state.IsAreaSelected || ReferenceEquals(state, _hoveredResourceBillboard));
     }
@@ -1105,6 +1227,7 @@ public partial class WorldRender3D : Node3D
         TKey entityId,
         Vec3i tilePosition,
         ResourceBillboardKind kind,
+        bool isDesignated,
         string name,
         Texture2D texture,
         Vector3 position,
@@ -1114,11 +1237,18 @@ public partial class WorldRender3D : Node3D
         SyncBillboard(states, entityId, name, texture, position, size);
         states[entityId].TilePosition = tilePosition;
         states[entityId].Kind = kind;
+        states[entityId].IsDesignated = isDesignated;
+        ApplyResourceBillboardHighlight(states[entityId]);
     }
 
     private BillboardState CreateBillboardState(string name, Texture2D texture, Vector2 size)
     {
         var root = new Node3D { Name = name };
+        var designationOutline = new MeshInstance3D
+        {
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            Visible = false,
+        };
         var outline = new MeshInstance3D
         {
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
@@ -1129,11 +1259,12 @@ public partial class WorldRender3D : Node3D
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
         };
 
+        root.AddChild(designationOutline);
         root.AddChild(outline);
         root.AddChild(mesh);
         AddChild(root);
 
-        var state = new BillboardState(root, mesh, outline, texture, size);
+        var state = new BillboardState(root, mesh, designationOutline, outline, texture, size);
         ApplyBillboardVisual(state, texture, size);
         return state;
     }
@@ -1147,6 +1278,12 @@ public partial class WorldRender3D : Node3D
         state.Mesh.Mesh = quadMesh;
         state.Mesh.MaterialOverride = GetBillboardMaterial(texture);
         state.Mesh.Position = new Vector3(0f, size.Y * 0.5f, 0f);
+
+        var designationOutlineMesh = state.DesignationOutline.Mesh as QuadMesh ?? new QuadMesh();
+        designationOutlineMesh.Size = size * ResourceDesignationOutlineScale;
+        state.DesignationOutline.Mesh = designationOutlineMesh;
+        state.DesignationOutline.MaterialOverride = GetDesignationOutlineBillboardMaterial(texture);
+        state.DesignationOutline.Position = new Vector3(0f, size.Y * 0.5f, ResourceDesignationOutlineDepthOffset);
 
         var outlineMesh = state.Outline.Mesh as QuadMesh ?? new QuadMesh();
         outlineMesh.Size = size * ResourceHoverOutlineScale;
@@ -1168,9 +1305,30 @@ public partial class WorldRender3D : Node3D
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
             AlbedoTexture = texture,
+            RenderPriority = BillboardRenderPriority,
         };
 
         _billboardMaterials[texture] = material;
+        return material;
+    }
+
+    private StandardMaterial3D GetDesignationOutlineBillboardMaterial(Texture2D texture)
+    {
+        if (_designationOutlineBillboardMaterials.TryGetValue(texture, out var material))
+            return material;
+
+        material = new StandardMaterial3D
+        {
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+            AlbedoTexture = texture,
+            AlbedoColor = ResourceDesignationOutlineTint,
+            RenderPriority = BillboardOutlineRenderPriority,
+        };
+
+        _designationOutlineBillboardMaterials[texture] = material;
         return material;
     }
 
@@ -1187,6 +1345,7 @@ public partial class WorldRender3D : Node3D
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
             AlbedoTexture = texture,
             AlbedoColor = ResourceHoverOutlineTint,
+            RenderPriority = BillboardOutlineRenderPriority,
         };
 
         _outlineBillboardMaterials[texture] = material;
@@ -1312,6 +1471,12 @@ public partial class WorldRender3D : Node3D
     private static int CountEmphasizedResourceBillboards(IEnumerable<BillboardState> states)
         => states.Count(state => state.Outline.Visible);
 
+    private static bool HasDebugDesignatedResourceBillboardOutline(IEnumerable<BillboardState> states, Vector2I tile)
+        => states.Any(state => state.IsDesignated
+            && state.DesignationOutline.Visible
+            && state.TilePosition.X == tile.X
+            && state.TilePosition.Y == tile.Y);
+
     private static Vector3 ResolveBillboardPosition(Vec3i position, float localFeetHeight)
         => new(position.X + 0.5f, (position.Z * VerticalSliceSpacing) + localFeetHeight, position.Y + 0.5f);
 
@@ -1388,6 +1553,94 @@ public partial class WorldRender3D : Node3D
             overlayBaseY,
             color,
             ResolvePulseInset(0.12f, tilePulse.Pulse.Ring, 0.10f));
+    }
+
+    private static void AddResourceBurstCuePlate(List<WorldOverlayMesher.OverlayPlate> plates, GameFeedbackController.ResourceBurstCueView resourceBurst, Rect2I visibleTileBounds, float overlayBaseY)
+    {
+        var fade = Mathf.Clamp(resourceBurst.TimeLeft / resourceBurst.Duration, 0f, 1f);
+        var progress = 1f - fade;
+        var dustColor = resourceBurst.Color.Lightened(0.24f) with { A = 0.08f + (fade * 0.14f) };
+        var chipColor = resourceBurst.Color.Darkened(0.12f) with { A = 0.10f + (fade * 0.24f) };
+        var splinterColor = resourceBurst.Color.Lightened(0.08f) with { A = 0.10f + (fade * 0.22f) };
+        var centerInset = Mathf.Clamp(0.34f - (progress * 0.08f), 0.18f, 0.34f);
+        var drift = Mathf.Lerp(0.08f, 0.24f, progress);
+        var chipHalfWidth = Mathf.Lerp(0.07f, 0.04f, progress);
+        var chipHalfLength = Mathf.Lerp(0.10f, 0.06f, progress);
+        var diagonalDrift = Mathf.Lerp(0.05f, 0.18f, progress);
+
+        AddTileLocalPlate(
+            plates,
+            resourceBurst.Position.X,
+            resourceBurst.Position.Y,
+            visibleTileBounds,
+            overlayBaseY,
+            centerInset,
+            1f - centerInset,
+            centerInset,
+            1f - centerInset,
+            dustColor,
+            0.68f);
+
+        AddTileLocalPlate(
+            plates,
+            resourceBurst.Position.X,
+            resourceBurst.Position.Y,
+            visibleTileBounds,
+            overlayBaseY,
+            0.50f - drift - chipHalfWidth,
+            0.50f - drift + chipHalfWidth,
+            0.50f - chipHalfLength,
+            0.50f + chipHalfLength,
+            chipColor,
+            0.82f);
+        AddTileLocalPlate(
+            plates,
+            resourceBurst.Position.X,
+            resourceBurst.Position.Y,
+            visibleTileBounds,
+            overlayBaseY,
+            0.50f + drift - chipHalfWidth,
+            0.50f + drift + chipHalfWidth,
+            0.50f - chipHalfLength,
+            0.50f + chipHalfLength,
+            chipColor,
+            0.82f);
+        AddTileLocalPlate(
+            plates,
+            resourceBurst.Position.X,
+            resourceBurst.Position.Y,
+            visibleTileBounds,
+            overlayBaseY,
+            0.50f - chipHalfLength,
+            0.50f + chipHalfLength,
+            0.50f - drift - chipHalfWidth,
+            0.50f - drift + chipHalfWidth,
+            chipColor,
+            0.82f);
+        AddTileLocalPlate(
+            plates,
+            resourceBurst.Position.X,
+            resourceBurst.Position.Y,
+            visibleTileBounds,
+            overlayBaseY,
+            0.50f - chipHalfLength,
+            0.50f + chipHalfLength,
+            0.50f + drift - chipHalfWidth,
+            0.50f + drift + chipHalfWidth,
+            chipColor,
+            0.82f);
+        AddTileLocalPlate(
+            plates,
+            resourceBurst.Position.X,
+            resourceBurst.Position.Y,
+            visibleTileBounds,
+            overlayBaseY,
+            0.50f + diagonalDrift - 0.05f,
+            0.50f + diagonalDrift + 0.05f,
+            0.50f - diagonalDrift - 0.05f,
+            0.50f - diagonalDrift + 0.05f,
+            splinterColor,
+            0.76f);
     }
 
     private static void AddCombatCuePlate(List<WorldOverlayMesher.OverlayPlate> plates, GameFeedbackController.CombatCueView combatCue, Rect2I visibleTileBounds, float overlayBaseY)
@@ -1489,6 +1742,87 @@ public partial class WorldRender3D : Node3D
             overlayBaseY + (OverlayThickness * heightScale),
             color,
             color.Darkened(0.18f)));
+    }
+
+    private static void AddStockpilePerimeter(
+        List<WorldOverlayMesher.OverlayPlate> plates,
+        Vec3i slot,
+        Rect2I visibleTileBounds,
+        float overlayBaseY,
+        StockpileVisualStyle style,
+        HashSet<Vec3i> slotSet)
+    {
+        var hasNorth = slotSet.Contains(slot + Vec3i.North);
+        var hasSouth = slotSet.Contains(slot + Vec3i.South);
+        var hasEast = slotSet.Contains(slot + Vec3i.East);
+        var hasWest = slotSet.Contains(slot + Vec3i.West);
+
+        if (!hasNorth)
+            AddStockpileEdge(plates, slot, visibleTileBounds, overlayBaseY, style, StockpileRailInset, 1f - StockpileRailInset, StockpileRailInset, StockpileRailInset + StockpileRailWidth, StockpileTrimInset, 1f - StockpileTrimInset, StockpileTrimInset, StockpileTrimInset + StockpileTrimWidth);
+
+        if (!hasSouth)
+            AddStockpileEdge(plates, slot, visibleTileBounds, overlayBaseY, style, StockpileRailInset, 1f - StockpileRailInset, 1f - StockpileRailInset - StockpileRailWidth, 1f - StockpileRailInset, StockpileTrimInset, 1f - StockpileTrimInset, 1f - StockpileTrimInset - StockpileTrimWidth, 1f - StockpileTrimInset);
+
+        if (!hasWest)
+            AddStockpileEdge(plates, slot, visibleTileBounds, overlayBaseY, style, StockpileRailInset, StockpileRailInset + StockpileRailWidth, StockpileRailInset, 1f - StockpileRailInset, StockpileTrimInset, StockpileTrimInset + StockpileTrimWidth, StockpileTrimInset, 1f - StockpileTrimInset);
+
+        if (!hasEast)
+            AddStockpileEdge(plates, slot, visibleTileBounds, overlayBaseY, style, 1f - StockpileRailInset - StockpileRailWidth, 1f - StockpileRailInset, StockpileRailInset, 1f - StockpileRailInset, 1f - StockpileTrimInset - StockpileTrimWidth, 1f - StockpileTrimInset, StockpileTrimInset, 1f - StockpileTrimInset);
+
+        if (!hasNorth && !hasWest)
+            AddStockpilePost(plates, slot, visibleTileBounds, overlayBaseY, style.InnerBorderColor, StockpileRailInset, StockpileRailInset, StockpilePostSize);
+
+        if (!hasNorth && !hasEast)
+            AddStockpilePost(plates, slot, visibleTileBounds, overlayBaseY, style.InnerBorderColor, 1f - StockpileRailInset - StockpilePostSize, StockpileRailInset, StockpilePostSize);
+
+        if (!hasSouth && !hasWest)
+            AddStockpilePost(plates, slot, visibleTileBounds, overlayBaseY, style.InnerBorderColor, StockpileRailInset, 1f - StockpileRailInset - StockpilePostSize, StockpilePostSize);
+
+        if (!hasSouth && !hasEast)
+            AddStockpilePost(plates, slot, visibleTileBounds, overlayBaseY, style.InnerBorderColor, 1f - StockpileRailInset - StockpilePostSize, 1f - StockpileRailInset - StockpilePostSize, StockpilePostSize);
+    }
+
+    private static void AddStockpileEdge(
+        List<WorldOverlayMesher.OverlayPlate> plates,
+        Vec3i slot,
+        Rect2I visibleTileBounds,
+        float overlayBaseY,
+        StockpileVisualStyle style,
+        float minX,
+        float maxX,
+        float minY,
+        float maxY,
+        float trimMinX,
+        float trimMaxX,
+        float trimMinY,
+        float trimMaxY)
+    {
+        AddTileLocalPlate(plates, slot.X, slot.Y, visibleTileBounds, overlayBaseY, minX, maxX, minY, maxY, style.BorderColor, 1.10f);
+        AddTileLocalPlate(plates, slot.X, slot.Y, visibleTileBounds, overlayBaseY, trimMinX, trimMaxX, trimMinY, trimMaxY, style.InnerBorderColor, 1.55f);
+    }
+
+    private static void AddStockpilePost(
+        List<WorldOverlayMesher.OverlayPlate> plates,
+        Vec3i slot,
+        Rect2I visibleTileBounds,
+        float overlayBaseY,
+        Color color,
+        float minX,
+        float minY,
+        float size)
+    {
+        AddTileLocalPlate(
+            plates,
+            slot.X,
+            slot.Y,
+            visibleTileBounds,
+            overlayBaseY,
+            minX,
+            minX + size,
+            minY,
+            minY + size,
+            color,
+            1.85f);
     }
 
     private static float ResolvePulseInset(float baseInset, float ring, float spread)
@@ -1786,6 +2120,7 @@ public partial class WorldRender3D : Node3D
             VertexColorUseAsAlbedo = true,
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            RenderPriority = OverlayRenderPriority,
         };
     }
 
@@ -1842,12 +2177,14 @@ public partial class WorldRender3D : Node3D
         public BillboardState(
             Node3D root,
             MeshInstance3D mesh,
+            MeshInstance3D designationOutline,
             MeshInstance3D outline,
             Texture2D texture,
             Vector2 size)
         {
             Root = root;
             Mesh = mesh;
+            DesignationOutline = designationOutline;
             Outline = outline;
             Texture = texture;
             Size = size;
@@ -1856,6 +2193,8 @@ public partial class WorldRender3D : Node3D
         public Node3D Root { get; }
 
         public MeshInstance3D Mesh { get; }
+
+    public MeshInstance3D DesignationOutline { get; }
 
         public MeshInstance3D Outline { get; }
 
@@ -1866,6 +2205,8 @@ public partial class WorldRender3D : Node3D
         public Vec3i TilePosition { get; set; }
 
         public ResourceBillboardKind Kind { get; set; }
+
+        public bool IsDesignated { get; set; }
 
         public bool IsAreaSelected { get; set; }
     }

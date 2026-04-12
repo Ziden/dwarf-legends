@@ -9,7 +9,7 @@ using Godot;
 namespace DwarfFortress.GodotClient.UI;
 
 
-/// <summary>Icon-stack fortress notifications with right-click details and left-click dismiss.</summary>
+/// <summary>Icon-stack fortress notifications with left-click details and right-click dismiss.</summary>
 public partial class AnnouncementLog : PanelContainer
 {
     private const int MaxMessages = 40;
@@ -330,13 +330,13 @@ public partial class AnnouncementLog : PanelContainer
         switch (mouseButton.ButtonIndex)
         {
             case MouseButton.Left:
-                Dismiss(sequence);
-                return true;
-            case MouseButton.Right:
                 if (!TryGetVisibleEntry(sequence, out var entry))
                     return false;
 
                 ToggleDetails(entry, sourceControl);
+                return true;
+            case MouseButton.Right:
+                Dismiss(sequence);
                 return true;
             default:
                 return false;

@@ -3,11 +3,13 @@ using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
+using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Jobs.Strategies;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.Tests.Fakes;
 using DwarfFortress.GameLogic.World;
+using DwarfFortress.WorldGen.Ids;
 using Xunit;
 
 namespace DwarfFortress.GameLogic.Tests.Phase5Tests;
@@ -345,6 +347,96 @@ public sealed class CutTreeStrategyTests
         Assert.Equal(TileDefIds.Soil, tile.TileDefId);
         Assert.Equal("mud", tile.MaterialId);
         Assert.False(tile.IsDesignated);
+    }
+
+    [Fact]
+    public void OnComplete_Drops_Ripe_Fruit_For_FruitTrees_And_Clears_Canopy_State_Immediately()
+    {
+        var (sim, map, _, _, items) = TestFixtures.BuildFullSim();
+        var data = sim.Context.Get<DataManager>();
+        var expectedLogMaterialId = data.ContentQueries!.ResolveTreeWoodMaterialId(TreeSpeciesIds.Apple);
+        var appleCanopy = data.Plants.GetOrNull(PlantSpeciesIds.AppleCanopy);
+        var figCanopy = data.Plants.GetOrNull(PlantSpeciesIds.FigCanopy);
+
+        Assert.NotNull(appleCanopy);
+        Assert.NotNull(figCanopy);
+        Assert.True(appleCanopy!.DropYieldOnHostRemoval);
+        Assert.True(figCanopy!.DropYieldOnHostRemoval);
+        Assert.False(string.IsNullOrWhiteSpace(expectedLogMaterialId));
+
+        var pos = new Vec3i(Math.Min(map.Width - 3, 24), Math.Min(map.Height - 3, 24), 0);
+        var existingItemIds = items.GetAllItems().Select(item => item.Id).ToHashSet();
+
+        var tile = map.GetTile(pos);
+        tile.TileDefId = TileDefIds.Tree;
+        tile.MaterialId = MaterialIds.Wood;
+        tile.TreeSpeciesId = TreeSpeciesIds.Apple;
+        tile.PlantDefId = PlantSpeciesIds.AppleCanopy;
+        tile.PlantGrowthStage = PlantGrowthStages.Mature;
+        tile.PlantGrowthProgressSeconds = 0f;
+        tile.PlantYieldLevel = 1;
+        tile.PlantSeedLevel = 1;
+        tile.IsPassable = false;
+        tile.IsDesignated = true;
+        map.SetTile(pos, tile);
+
+        var strategy = new CutTreeStrategy();
+        strategy.OnComplete(new Job(1, JobDefIds.CutTree, pos), dwarfId: 0, sim.Context);
+
+        var newItems = items.GetAllItems()
+            .Where(item => !existingItemIds.Contains(item.Id) && item.Position.Position == pos)
+            .ToArray();
+
+        Assert.Single(newItems.Where(item => item.DefId == ItemDefIds.Apple));
+        Assert.Single(newItems.Where(item => item.MaterialId == expectedLogMaterialId));
+
+        var clearedTile = map.GetTile(pos);
+        Assert.Null(clearedTile.TreeSpeciesId);
+        Assert.Null(clearedTile.PlantDefId);
+        Assert.Equal(0, clearedTile.PlantGrowthStage);
+        Assert.Equal(0f, clearedTile.PlantGrowthProgressSeconds);
+        Assert.Equal(0, clearedTile.PlantYieldLevel);
+        Assert.Equal(0, clearedTile.PlantSeedLevel);
+        Assert.False(clearedTile.IsDesignated);
+        Assert.True(clearedTile.IsPassable);
+    }
+
+    [Fact]
+    public void OnComplete_Does_Not_Drop_Unripe_Fruit_When_Felling_FruitTree()
+    {
+        var (sim, map, _, _, items) = TestFixtures.BuildFullSim();
+        var data = sim.Context.Get<DataManager>();
+        var expectedLogMaterialId = data.ContentQueries!.ResolveTreeWoodMaterialId(TreeSpeciesIds.Apple);
+        var pos = new Vec3i(Math.Min(map.Width - 4, 25), Math.Min(map.Height - 4, 25), 0);
+        var existingItemIds = items.GetAllItems().Select(item => item.Id).ToHashSet();
+
+        var tile = map.GetTile(pos);
+        tile.TileDefId = TileDefIds.Tree;
+        tile.MaterialId = MaterialIds.Wood;
+        tile.TreeSpeciesId = TreeSpeciesIds.Apple;
+        tile.PlantDefId = PlantSpeciesIds.AppleCanopy;
+        tile.PlantGrowthStage = PlantGrowthStages.Mature;
+        tile.PlantGrowthProgressSeconds = 0f;
+        tile.PlantYieldLevel = 0;
+        tile.PlantSeedLevel = 0;
+        tile.IsPassable = false;
+        tile.IsDesignated = true;
+        map.SetTile(pos, tile);
+
+        var strategy = new CutTreeStrategy();
+        strategy.OnComplete(new Job(1, JobDefIds.CutTree, pos), dwarfId: 0, sim.Context);
+
+        var newItems = items.GetAllItems()
+            .Where(item => !existingItemIds.Contains(item.Id) && item.Position.Position == pos)
+            .ToArray();
+
+        Assert.DoesNotContain(newItems, item => item.DefId == ItemDefIds.Apple);
+        Assert.Single(newItems.Where(item => item.MaterialId == expectedLogMaterialId));
+
+        var clearedTile = map.GetTile(pos);
+        Assert.Null(clearedTile.PlantDefId);
+        Assert.Equal(0, clearedTile.PlantYieldLevel);
+        Assert.Equal(0, clearedTile.PlantSeedLevel);
     }
 
     private static (GameSimulation Sim, WorldMap Map, ItemSystem Items) CreateSimulation(string materialsJson)

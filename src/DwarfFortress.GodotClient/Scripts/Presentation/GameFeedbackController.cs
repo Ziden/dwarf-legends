@@ -16,17 +16,23 @@ public sealed class GameFeedbackController
 {
     private const float FxLifetimeSeconds = 0.55f;
     private const float CombatCueLifetimeSeconds = 0.26f;
+    private const float InventoryPickupCueLifetimeSeconds = 0.34f;
+    private const float ResourceBurstCueLifetimeSeconds = 0.42f;
     private const int MaxAreaSelectionPulseTiles = 32;
     private static readonly Color SelectionPulseColor = new(0.35f, 0.70f, 1f, 1f);
 
     private readonly Node _owner;
     private readonly List<WorldFx> _worldFx = new();
     private readonly List<CombatCue> _combatCues = new();
+    private readonly List<InventoryPickupCue> _inventoryPickupCues = new();
+    private readonly List<ResourceBurstCue> _resourceBurstCues = new();
     private readonly Dictionary<int, ActivityPulse> _dwarfActivityPulses = new();
     private readonly Dictionary<int, ActivityPulse> _buildingActivityPulses = new();
     private readonly Dictionary<Vec3i, ActivityPulse> _tileActivityPulses = new();
     private int _nextWorldFxId = 1;
     private int _nextCombatCueId = 1;
+    private int _nextInventoryPickupCueId = 1;
+    private int _nextResourceBurstCueId = 1;
 
     private WorldMap? _map;
     private WorldQuerySystem? _query;
@@ -48,6 +54,10 @@ public sealed class GameFeedbackController
     public readonly record struct BuildingPulseView(int BuildingId, ActivityPulseView Pulse);
 
     public readonly record struct WorldFxView(int Id, string Text, Vec3i Position, Color Color, float TimeLeft, float Duration, int FollowEntityId);
+
+    public readonly record struct InventoryPickupCueView(int Id, string ItemDefId, Vec3i SourcePosition, Vec3i TargetPosition, int CarrierEntityId, float TimeLeft, float Duration);
+
+    public readonly record struct ResourceBurstCueView(int Id, Vec3i Position, Color Color, float TimeLeft, float Duration);
 
     public readonly record struct CombatCueView(int Id, Vec3i Position, Color Color, float TimeLeft, float Duration, int DirectionX, int DirectionY, bool DidHit);
 
@@ -93,6 +103,7 @@ public sealed class GameFeedbackController
                 case JobDefIds.CutTree:
                     TriggerDwarfActivityPulse(e.DwarfId, new Color(0.50f, 0.95f, 0.38f, 1f), 1.12f, -8f, 0.85f);
                     TriggerTileActivityPulse(e.TargetPos, new Color(0.38f, 0.92f, 0.30f, 1f), 1.18f, 0.8f);
+                    SpawnResourceBurst(e.TargetPos, new Color(0.76f, 0.56f, 0.28f, 1f));
                     break;
 
                 case JobDefIds.HarvestPlant:
@@ -124,7 +135,11 @@ public sealed class GameFeedbackController
         });
 
         bus.On<ItemPickedUpEvent>(e =>
-            SpawnWorldFx($"Picked up {HumanizeId(e.ItemDefId)}", e.Position, new Color(1f, 0.9f, 0.45f, 1f)));
+        {
+            SpawnWorldFx($"Picked up {HumanizeId(e.ItemDefId)}", e.Position, new Color(1f, 0.9f, 0.45f, 1f));
+            if (e.CarryMode == ItemCarryMode.Inventory)
+                SpawnInventoryPickupCue(e.ItemDefId, e.PreviousPosition, e.Position, e.CarrierEntityId);
+        });
 
         bus.On<ItemDroppedEvent>(e =>
             SpawnWorldFx($"Dropped {HumanizeId(e.ItemDefId)}", e.Position, new Color(0.55f, 0.9f, 1f, 1f)));
@@ -185,6 +200,32 @@ public sealed class GameFeedbackController
 
             _combatCues[index] = cue;
         }
+
+        for (int index = _inventoryPickupCues.Count - 1; index >= 0; index--)
+        {
+            var cue = _inventoryPickupCues[index];
+            cue.TimeLeft -= delta;
+            if (cue.TimeLeft <= 0f)
+            {
+                _inventoryPickupCues.RemoveAt(index);
+                continue;
+            }
+
+            _inventoryPickupCues[index] = cue;
+        }
+
+        for (int index = _resourceBurstCues.Count - 1; index >= 0; index--)
+        {
+            var cue = _resourceBurstCues[index];
+            cue.TimeLeft -= delta;
+            if (cue.TimeLeft <= 0f)
+            {
+                _resourceBurstCues.RemoveAt(index);
+                continue;
+            }
+
+            _resourceBurstCues[index] = cue;
+        }
     }
 
     public IReadOnlyList<TilePulseView> GetTilePulseViews(int currentZ)
@@ -203,6 +244,18 @@ public sealed class GameFeedbackController
         => _worldFx
             .Where(fx => fx.Position.Z == currentZ)
             .Select(fx => new WorldFxView(fx.Id, fx.Text, fx.Position, fx.Color, fx.TimeLeft, fx.Duration, fx.FollowEntityId))
+            .ToArray();
+
+    public IReadOnlyList<InventoryPickupCueView> GetInventoryPickupCueViews(int currentZ)
+        => _inventoryPickupCues
+            .Where(cue => cue.SourcePosition.Z == currentZ || cue.TargetPosition.Z == currentZ)
+            .Select(cue => new InventoryPickupCueView(cue.Id, cue.ItemDefId, cue.SourcePosition, cue.TargetPosition, cue.CarrierEntityId, cue.TimeLeft, cue.Duration))
+            .ToArray();
+
+    public IReadOnlyList<ResourceBurstCueView> GetResourceBurstCueViews(int currentZ)
+        => _resourceBurstCues
+            .Where(cue => cue.Position.Z == currentZ)
+            .Select(cue => new ResourceBurstCueView(cue.Id, cue.Position, cue.Color, cue.TimeLeft, cue.Duration))
             .ToArray();
 
     public IReadOnlyList<CombatCueView> GetCombatCueViews(int currentZ)
@@ -326,6 +379,24 @@ public sealed class GameFeedbackController
 
     private void SpawnWorldFx(string text, Vec3i position, Color color, int followEntityId = -1)
         => _worldFx.Add(new WorldFx(_nextWorldFxId++, text, position, color, FxLifetimeSeconds, FxLifetimeSeconds, followEntityId));
+
+    private void SpawnInventoryPickupCue(string itemDefId, Vec3i sourcePosition, Vec3i targetPosition, int carrierEntityId)
+        => _inventoryPickupCues.Add(new InventoryPickupCue(
+            _nextInventoryPickupCueId++,
+            itemDefId,
+            sourcePosition,
+            targetPosition,
+            carrierEntityId,
+            InventoryPickupCueLifetimeSeconds,
+            InventoryPickupCueLifetimeSeconds));
+
+    private void SpawnResourceBurst(Vec3i position, Color color)
+        => _resourceBurstCues.Add(new ResourceBurstCue(
+            _nextResourceBurstCueId++,
+            position,
+            color,
+            ResourceBurstCueLifetimeSeconds,
+            ResourceBurstCueLifetimeSeconds));
 
     private static bool TryGetPulseView<TKey>(Dictionary<TKey, ActivityPulse> store, TKey key, out ActivityPulseView pulse) where TKey : notnull
     {
@@ -629,6 +700,46 @@ public sealed class GameFeedbackController
         public int DirectionX { get; }
         public int DirectionY { get; }
         public bool DidHit { get; }
+    }
+
+    private sealed class InventoryPickupCue
+    {
+        public InventoryPickupCue(int id, string itemDefId, Vec3i sourcePosition, Vec3i targetPosition, int carrierEntityId, float timeLeft, float duration)
+        {
+            Id = id;
+            ItemDefId = itemDefId;
+            SourcePosition = sourcePosition;
+            TargetPosition = targetPosition;
+            CarrierEntityId = carrierEntityId;
+            TimeLeft = timeLeft;
+            Duration = duration;
+        }
+
+        public int Id { get; }
+        public string ItemDefId { get; }
+        public Vec3i SourcePosition { get; }
+        public Vec3i TargetPosition { get; }
+        public int CarrierEntityId { get; }
+        public float TimeLeft { get; set; }
+        public float Duration { get; }
+    }
+
+    private sealed class ResourceBurstCue
+    {
+        public ResourceBurstCue(int id, Vec3i position, Color color, float timeLeft, float duration)
+        {
+            Id = id;
+            Position = position;
+            Color = color;
+            TimeLeft = timeLeft;
+            Duration = duration;
+        }
+
+        public int Id { get; }
+        public Vec3i Position { get; }
+        public Color Color { get; }
+        public float TimeLeft { get; set; }
+        public float Duration { get; }
     }
 
     private sealed class ActivityPulse

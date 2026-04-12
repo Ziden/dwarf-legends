@@ -63,6 +63,23 @@ public sealed class HaulingTests
     }
 
     [Fact]
+    public void PlaceBoxStrategy_Uses_Hauling_Mode_For_Box_Items()
+    {
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
+        var dwarf = new Dwarf(er.NextId(), "Box Carrier", new Vec3i(8, 8, 0));
+        er.Register(dwarf);
+
+        var boxItem = items.CreateItem(ItemDefIds.Box, MaterialIds.Wood, new Vec3i(9, 8, 0));
+        var job = new Job(2, JobDefIds.PlaceBox, new Vec3i(10, 8, 0), priority: 5, entityId: boxItem.Id);
+        var strategy = new PlaceBoxStrategy();
+
+        Assert.True(strategy.CanExecute(job, dwarf.Id, sim.Context));
+
+        var pickup = Assert.Single(strategy.GetSteps(job, dwarf.Id, sim.Context).OfType<PickUpItemStep>());
+        Assert.Equal(ItemCarryMode.Hauling, pickup.CarryMode);
+    }
+
+    [Fact]
     public void WorldQuerySystem_Separates_Inventory_Items_From_Hauled_Item()
     {
         var (sim, _, er, _, items) = TestFixtures.BuildFullSim();

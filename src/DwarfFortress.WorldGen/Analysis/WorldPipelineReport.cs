@@ -29,6 +29,8 @@ public sealed record WorldPipelineReport(
     float TropicalMedianTreeDensity,
     float AridMedianTreeDensity,
     float DenseForestMedianLargestPatchRatio,
+    float DenseForestMedianOpeningRatio,
+    float DenseForestMedianReachableOpeningRatio,
     bool DenseForestCoverageAchieved,
     bool TropicalCoverageAchieved,
     bool AridCoverageAchieved,

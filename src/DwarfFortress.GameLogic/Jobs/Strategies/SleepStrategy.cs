@@ -11,18 +11,13 @@ using DwarfFortress.GameLogic.World;
 namespace DwarfFortress.GameLogic.Jobs.Strategies;
 
 /// <summary>
-/// Dwarf walks to an owned bed (or floor) and sleeps until rest need is satisfied.
+/// Dwarf walks to an owned bed (or floor) and sleeps long enough to recover the current rest deficit.
 /// Enhanced with sleep location scoring: beds > near trees/plants > quiet workshops.
 /// </summary>
 public sealed class SleepStrategy : IJobStrategy
 {
     public string JobDefId => JobDefIds.Sleep;
 
-    // Sleep always fully restores the sleep need — waking before the timer
-    // ends (job interrupt) leaves it partially satisfied via NeedsSystem decay.
-    private const float SleepSatisfaction = 1.0f;
-    private const float GroundSleepDuration = 8f;
-    private const float BedSleepDuration = 5f;
     private const int SleepSearchRadius = 16;
 
     public bool CanExecute(Job job, int dwarfId, GameContext ctx) => true;
@@ -31,7 +26,7 @@ public sealed class SleepStrategy : IJobStrategy
     {
         var sleepTarget = FindBestSleepTarget(dwarfId, ctx) ?? job.TargetPos;
         var isNearBed = IsNearBed(sleepTarget, ctx);
-        var duration = isNearBed ? BedSleepDuration : GroundSleepDuration;
+        var duration = CalculateSleepDuration(dwarfId, isNearBed, ctx);
 
         return new ActionStep[]
         {
@@ -47,12 +42,25 @@ public sealed class SleepStrategy : IJobStrategy
         var entityRegistry = ctx.Get<EntityRegistry>();
         if (!entityRegistry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null) return;
 
-        // Sleep recovery is driven by stamina and focus attributes.
-        var recoveryMultiplier = SleepSystem.GetSleepRecoveryMultiplier(dwarf, ctx.TryGet<DataManager>());
-        dwarf.Needs.Get(NeedIds.Sleep).Satisfy(SleepSatisfaction * recoveryMultiplier);
+        dwarf.Needs.Get(NeedIds.Sleep).SetLevel(1f);
 
         // Emit satisfaction event to trigger cooldown in NeedsSystem
         ctx.EventBus.Emit(new Systems.NeedSatisfiedEvent(dwarfId, NeedIds.Sleep));
+    }
+
+    private static float CalculateSleepDuration(int dwarfId, bool inBed, GameContext ctx)
+    {
+        var entityRegistry = ctx.Get<EntityRegistry>();
+        if (!entityRegistry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null)
+            return 0f;
+
+        var sleepNeed = dwarf.Needs.Get(NeedIds.Sleep);
+        var missingSleep = System.MathF.Max(0f, 1f - sleepNeed.Level);
+        if (missingSleep <= 0f)
+            return 0f;
+
+        var recoveryPerSecond = SleepSystem.GetDwarfSleepNetRecoveryPerSecond(dwarf, inBed, ctx.TryGet<DataManager>());
+        return missingSleep / System.MathF.Max(recoveryPerSecond, 0.0001f);
     }
 
     /// <summary>
@@ -82,6 +90,9 @@ public sealed class SleepStrategy : IJobStrategy
 
             foreach (var bed in beds)
             {
+                if (!IsReachableSleepTarget(map, dwarfPos, bed.Origin))
+                    continue;
+
                 var score = ScoreDwarfSleepSpot(bed.Origin, dwarf, ctx, map, buildingSystem);
                 if (score > bestScore)
                 {
@@ -113,7 +124,10 @@ public sealed class SleepStrategy : IJobStrategy
         }
 
         // Only move if the new spot is significantly better
-        return bestScore > ScoreDwarfSleepSpot(dwarfPos, dwarf, ctx, map, buildingSystem) + 5
+        if (bestScore <= ScoreDwarfSleepSpot(dwarfPos, dwarf, ctx, map, buildingSystem) + 5)
+            return null;
+
+        return IsReachableSleepTarget(map, dwarfPos, bestPos)
             ? bestPos
             : null;
     }
@@ -188,4 +202,7 @@ public sealed class SleepStrategy : IJobStrategy
             .Any(b => b.BuildingDefId == BuildingDefIds.Bed &&
                       b.Origin.ManhattanDistanceTo(pos) <= 2);
     }
+
+    private static bool IsReachableSleepTarget(WorldMap map, Vec3i origin, Vec3i target)
+        => Pathfinder.FindPath(map, origin, target).Count > 0;
 }

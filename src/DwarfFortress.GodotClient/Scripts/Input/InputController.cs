@@ -111,6 +111,22 @@ public partial class InputController : Node
         return true;
     }
 
+    public bool TrySelectBuilding(int buildingId)
+    {
+        var building = _query?.GetBuildingView(buildingId);
+        if (building is null)
+            return false;
+
+        ClearAreaSelection();
+        SelectedBuildingId = buildingId;
+        SelectedDwarfId = null;
+        SelectedCreatureId = null;
+        SelectedItemId = null;
+        SelectedTile = new Vector2I(building.Origin.X, building.Origin.Y);
+        TileSelectionCommitted?.Invoke(building.Origin);
+        return true;
+    }
+
     public void SelectArea(Vector2I from, Vector2I to)
     {
         var normalized = NormalizeRect(from, to);
@@ -143,8 +159,31 @@ public partial class InputController : Node
 
     public override void _Process(double delta)
     {
-        if (IsDragging)
+        ReconcilePointerState(Godot.Input.IsMouseButtonPressed(MouseButton.Left));
+    }
+
+    public void ReconcilePointerState(bool leftButtonPressed)
+    {
+        if (!IsDragging)
+            return;
+
+        if (leftButtonPressed)
+        {
             DragCurrent = HoveredTile;
+            return;
+        }
+
+        DragCurrent = HoveredTile;
+        IsDragging = false;
+
+        if (_simulation is null || DragStart is null || DragCurrent is null)
+        {
+            DragStart = null;
+            DragCurrent = null;
+            return;
+        }
+
+        CommitAction();
     }
 
     public void SetMode(InputMode mode)

@@ -12,6 +12,86 @@ namespace DwarfFortress.GameLogic.Tests.Phase7Tests;
 public sealed class PlantHarvestTests
 {
     [Fact]
+    public void NeedsSystem_Reserves_Distinct_Boxed_Food_Items_When_Creating_Hunger_Jobs()
+    {
+        var (sim, _, er, js, items) = TestFixtures.BuildFullSim();
+        var needs = sim.Context.Get<DwarfFortress.GameLogic.Systems.NeedsSystem>();
+
+        var boxPos = new Vec3i(10, 10, 0);
+        var box = new Box(er.NextId(), boxPos);
+        er.Register(box);
+
+        var firstMeal = items.CreateItem(ItemDefIds.Meal, MaterialIds.Food, boxPos);
+        var secondMeal = items.CreateItem(ItemDefIds.Meal, MaterialIds.Food, boxPos);
+        items.StoreItemInBox(firstMeal.Id, box);
+        items.StoreItemInBox(secondMeal.Id, box);
+
+        var dwarves = new[]
+        {
+            new Dwarf(er.NextId(), "Urist", new Vec3i(4, 10, 0)),
+            new Dwarf(er.NextId(), "Rigoth", new Vec3i(4, 11, 0)),
+        };
+
+        foreach (var dwarf in dwarves)
+        {
+            dwarf.Needs.Hunger.SetLevel(0.01f);
+            er.Register(dwarf);
+        }
+
+        needs.Tick(0.1f);
+
+        var eatJobs = js.GetPendingJobs()
+            .Where(job => job.JobDefId == JobDefIds.Eat)
+            .OrderBy(job => job.Id)
+            .ToList();
+
+        Assert.Equal(2, eatJobs.Count);
+        Assert.All(eatJobs, job => Assert.Single(job.ReservedItemIds));
+        Assert.Equal(2, eatJobs.Select(job => job.ReservedItemIds[0]).Distinct().Count());
+        Assert.All(eatJobs.Select(job => job.ReservedItemIds[0]), itemId =>
+        {
+            Assert.True(items.TryGetItem(itemId, out var reservedMeal));
+            Assert.True(reservedMeal!.IsClaimed);
+        });
+    }
+
+    [Fact]
+    public void Critical_Hunger_Prefers_Forage_When_Inventory_Is_Full_Even_If_Food_Items_Exist()
+    {
+        var (sim, map, er, js, items) = TestFixtures.BuildFullSim();
+        var needs = sim.Context.Get<DwarfFortress.GameLogic.Systems.NeedsSystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "PackedForager", new Vec3i(9, 10, 0));
+        er.Register(dwarf);
+
+        dwarf.Inventory.AddCarriedItem(1001);
+        dwarf.Inventory.AddCarriedItem(1002);
+        dwarf.Inventory.AddCarriedItem(1003);
+        dwarf.Inventory.AddCarriedItem(1004);
+
+        var meal = items.CreateItem(ItemDefIds.Meal, MaterialIds.Food, new Vec3i(20, 20, 0));
+
+        var plantPos = new Vec3i(10, 10, 0);
+        var tile = map.GetTile(plantPos);
+        tile.TileDefId = TileDefIds.Grass;
+        tile.IsPassable = true;
+        tile.PlantDefId = "sunroot";
+        tile.PlantGrowthStage = PlantGrowthStages.Mature;
+        tile.PlantYieldLevel = 1;
+        tile.PlantSeedLevel = 1;
+        map.SetTile(plantPos, tile);
+
+        dwarf.Needs.Hunger.SetLevel(0.01f);
+
+        needs.Tick(0.1f);
+
+        var eatJob = Assert.Single(js.GetPendingJobs().Where(job => job.JobDefId == JobDefIds.Eat));
+        Assert.Equal(plantPos, eatJob.TargetPos);
+        Assert.Empty(eatJob.ReservedItemIds);
+        Assert.False(meal.IsClaimed);
+    }
+
+    [Fact]
     public void Mature_Plants_Do_Not_AutoQueue_Harvest_Jobs()
     {
         var (sim, map, _, js, _) = TestFixtures.BuildFullSim();

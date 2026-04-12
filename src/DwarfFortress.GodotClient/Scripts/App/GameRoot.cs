@@ -226,7 +226,11 @@ public partial class GameRoot : Node
             _hoverInfo?.Setup(_simulation);
             _selectionView?.Setup(_simulation);
             _tileInfo?.Setup(_simulation);
-            _tileInfo?.SetItemInspector(itemId => _input?.SelectItem(itemId));
+            _tileInfo?.SetSelectionHandlers(
+                itemId => _input?.SelectItem(itemId),
+                dwarfId => _input?.TrySelectDwarf(dwarfId),
+                creatureId => _input?.TrySelectCreature(creatureId),
+                buildingId => _input?.TrySelectBuilding(buildingId));
             _dwarfPanel?.Setup(_simulation);
             _dwarfPanel?.SetTileNavigator(JumpToTile);
             _dwarfPanel?.SetLinkedTargetNavigator(JumpToLinkedEventTarget);

@@ -8,8 +8,10 @@ using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Items;
+using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.World;
+using DwarfFortress.GodotClient.Input;
 using DwarfFortress.GodotClient.Rendering;
 using DwarfFortress.WorldGen.Ids;
 using Godot;
@@ -49,17 +51,32 @@ public partial class ClientSmokeTests : Node
             if (ShouldRun("tile-inspector"))
                 RunTileInspectorGeneralItemTest();
 
+            if (ShouldRun("tile-inspector-job-binding"))
+                RunTileInspectorJobBindingTest();
+
+            if (ShouldRun("tile-inspector-stacked-targets"))
+                RunTileInspectorStackedTargetsTest();
+
+            if (ShouldRun("tile-inspector-dwarf-context"))
+                await RunTileInspectorDwarfContextTest();
+
             if (ShouldRun("loose-item-billboard"))
                 RunLooseItemBillboardCollectionTest();
 
             if (ShouldRun("hauled-item-billboard"))
                 RunHauledItemBillboardCollectionTest();
 
+            if (ShouldRun("box-billboard-preview"))
+                await RunBoxBillboardPreviewTest();
+
             if (ShouldRun("item-billboard-animation"))
                 await RunFreshItemBillboardInterpolationTest();
 
             if (ShouldRun("hauled-item-render"))
                 await RunHauledItemBillboardRenderTest();
+
+            if (ShouldRun("inventory-pickup-render"))
+                await RunInventoryPickupCueRenderTest();
 
             if (ShouldRun("event-log-jump"))
                 await RunEventLogJumpSelectionTest();
@@ -72,6 +89,9 @@ public partial class ClientSmokeTests : Node
 
             if (ShouldRun("camera-3d-controls"))
                 RunWorldCamera3DControllerControlsTest();
+
+            if (ShouldRun("input-lost-release"))
+                RunInputControllerLostReleaseSelectionTest();
 
             if (ShouldRun("story-inspector"))
                 await RunStoryInspectorOpenTest();
@@ -88,17 +108,29 @@ public partial class ClientSmokeTests : Node
             if (ShouldRun("resource-billboard-area-selection"))
                 await RunResourceBillboardAreaSelectionHighlightTest();
 
+            if (ShouldRun("resource-billboard-designation"))
+                await RunResourceBillboardDesignationHighlightTest();
+
             if (ShouldRun("selection-view"))
                 await RunSelectionViewHarvestTest();
 
             if (ShouldRun("selection-view-plants"))
                 await RunSelectionViewMixedPlantHarvestTest();
 
+            if (ShouldRun("fruit-tree-actions"))
+                RunFruitTreeActionViewTest();
+
             if (ShouldRun("billboard-pause"))
                 await RunBillboardPauseInterpolationTest();
 
             if (ShouldRun("combat-cue-3d"))
                 await RunCombatCue3DSmokeTest();
+
+            if (ShouldRun("tree-species-billboard"))
+                await RunTreeSpeciesBillboardRenderTest();
+
+            if (ShouldRun("tree-chop-burst-3d"))
+                await RunTreeChopBurst3DSmokeTest();
 
             GD.Print("[ClientSmokeTests] All smoke tests passed.");
             GetTree().Quit(0);
@@ -139,7 +171,8 @@ public partial class ClientSmokeTests : Node
         Assert(registry.CountAlive<Dwarf>() > 0, "Expected starting dwarves.");
         Assert(items.GetAllItems().Any(), "Expected starting items.");
         Assert(stockpiles.GetAll().Any(), "Expected starting stockpiles.");
-        Assert(buildings.GetAll().Any(), "Expected starting buildings.");
+        Assert(!buildings.GetAll().Any(building => building.BuildingDefId == BuildingDefIds.CarpenterWorkshop),
+            "Starter fortress should not place an initial carpenter workshop.");
 
         simulation.Tick(0.5f);
         var updatedTime = queries.GetTimeView();
@@ -182,6 +215,9 @@ public partial class ClientSmokeTests : Node
             PlantSpeciesIds.MarshReed,
             PlantSpeciesIds.AppleCanopy,
             PlantSpeciesIds.FigCanopy);
+        AssertDistinctTreeTextures("oak", "pine", "birch", "willow");
+        AssertDistinctFruitingTreeTextures("apple", PlantSpeciesIds.AppleCanopy);
+        AssertDistinctFruitingTreeTextures("fig", PlantSpeciesIds.FigCanopy);
 
         var grassTile = new TileRenderData(TileDefIds.Grass, null);
         TileRenderData? ResolveSurfaceTile(int sx, int sy, int sz)
@@ -240,6 +276,28 @@ public partial class ClientSmokeTests : Node
             $"Expected unique plant silhouettes for growth stage {growthStage}, duplicates: {string.Join(" | ", duplicateSilhouettes)}.");
     }
 
+    private static void AssertDistinctTreeTextures(params string[] treeSpeciesIds)
+    {
+        var duplicateTextures = treeSpeciesIds
+            .Select(treeSpeciesId => (Id: treeSpeciesId, Signature: GetTextureColorSignature(PixelArtFactory.GetTile(TileDefIds.Tree, treeSpeciesId))))
+            .GroupBy(entry => entry.Signature)
+            .Where(group => group.Count() > 1)
+            .Select(group => string.Join(", ", group.Select(entry => entry.Id)))
+            .ToArray();
+
+        Assert(duplicateTextures.Length == 0,
+            $"Expected unique tree textures per species, duplicates: {string.Join(" | ", duplicateTextures)}.");
+    }
+
+    private static void AssertDistinctFruitingTreeTextures(string treeSpeciesId, string plantDefId)
+    {
+        var bareSignature = GetTextureColorSignature(PixelArtFactory.GetTreeWithOverlay(treeSpeciesId, plantDefId, PlantGrowthStages.Mature, yieldLevel: 0, seedLevel: 0));
+        var ripeSignature = GetTextureColorSignature(PixelArtFactory.GetTreeWithOverlay(treeSpeciesId, plantDefId, PlantGrowthStages.Mature, yieldLevel: 1, seedLevel: 0));
+
+        Assert(!string.Equals(bareSignature, ripeSignature, StringComparison.Ordinal),
+            $"Expected fruiting tree visuals for '{treeSpeciesId}' and '{plantDefId}' to differ between ripe and non-ripe states.");
+    }
+
     private static string GetAlphaMaskSignature(Texture2D texture)
     {
         var image = texture.GetImage();
@@ -257,6 +315,29 @@ public partial class ClientSmokeTests : Node
         }
 
         return new string(signature);
+    }
+
+    private static string GetTextureColorSignature(Texture2D texture)
+    {
+        var image = texture.GetImage();
+        image.Convert(Image.Format.Rgba8);
+
+        var width = image.GetWidth();
+        var height = image.GetHeight();
+        var signature = new System.Text.StringBuilder(width * height * 3);
+
+        for (var y = 0; y < height; y += 2)
+        {
+            for (var x = 0; x < width; x += 2)
+            {
+                var pixel = image.GetPixel(x, y);
+                signature.Append((int)System.MathF.Round(pixel.R * 255f)).Append(':');
+                signature.Append((int)System.MathF.Round(pixel.G * 255f)).Append(':');
+                signature.Append((int)System.MathF.Round(pixel.B * 255f)).Append('|');
+            }
+        }
+
+        return signature.ToString();
     }
 
     // â”€â”€ Workshop tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -401,6 +482,106 @@ public partial class ClientSmokeTests : Node
         panel.QueueFree();
     }
 
+    private void RunTileInspectorJobBindingTest()
+    {
+        var sim = ClientSimulationFactory.CreateSimulation(seed: 7, width: 24, height: 24, depth: 4);
+        var queries = sim.Context.Get<WorldQuerySystem>();
+        var jobs = sim.Context.Get<JobSystem>();
+        var items = sim.Context.Get<ItemSystem>();
+        var registry = sim.Context.Get<EntityRegistry>();
+        var dwarf = registry.GetAlive<Dwarf>().First();
+
+        var drink = items.CreateItem(ItemDefIds.Drink, MaterialIds.Drink, dwarf.Position.Position);
+        drink.IsClaimed = true;
+
+        var job = jobs.CreateJob(JobDefIds.Drink, drink.Position.Position, priority: 102, entityId: drink.Id);
+        job.AssignedDwarfId = dwarf.Id;
+        job.ReservedItemIds.Add(drink.Id);
+
+        var item = queries.GetItemView(drink.Id);
+        if (item is null)
+            throw new InvalidOperationException("Expected an item view for tile inspector job binding test.");
+
+        var panel = GD.Load<PackedScene>("res://Scenes/UI/TileInfoPanel.tscn").Instantiate<TileInfoPanel>();
+        AddChild(panel);
+        panel.Setup(sim);
+        panel.ShowItem(item);
+
+        var contentLabel = panel.GetNode<Label>("%ContentLabel");
+        var details = contentLabel.Text;
+
+        Assert(details.Contains("Job: Drink", StringComparison.Ordinal), "Expected tile inspector to show the selected item's active job binding.");
+        Assert(details.Contains(dwarf.FirstName, StringComparison.Ordinal), "Expected tile inspector to name the dwarf assigned to the selected item's job.");
+
+        panel.QueueFree();
+    }
+
+    private void RunTileInspectorStackedTargetsTest()
+    {
+        var sim = ClientSimulationFactory.CreateSimulation(seed: 7, width: 24, height: 24, depth: 4);
+        var map = sim.Context.Get<WorldMap>();
+        var spatial = sim.Context.Get<SpatialIndexSystem>();
+        var items = sim.Context.Get<ItemSystem>();
+        var queries = sim.Context.Get<WorldQuerySystem>();
+        var tile = FindEmptyPassableTile(map, spatial, items, 0);
+
+        Assert(tile != Vec3i.Zero || map.GetTile(Vec3i.Zero).IsPassable,
+            "Tile inspector stacked-target test needs a passable empty tile.");
+
+        var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, tile);
+        var corpse = items.CreateItem(ItemDefIds.Corpse, string.Empty, tile);
+        corpse.Components.Add(new CorpseComponent(corpse.Id, DefIds.Cat, "Cat", "test"));
+        corpse.Components.Add(new RotComponent());
+
+        var logView = queries.GetItemView(log.Id);
+        var corpseView = queries.GetItemView(corpse.Id);
+        Assert(logView is not null, "Tile inspector stacked-target test expected a log item view.");
+        Assert(corpseView is not null, "Tile inspector stacked-target test expected a corpse item view.");
+
+        var panel = GD.Load<PackedScene>("res://Scenes/UI/TileInfoPanel.tscn").Instantiate<TileInfoPanel>();
+        AddChild(panel);
+        panel.Setup(sim);
+        panel.ShowItem(logView!);
+
+        Assert(panel.DebugOccupantSummaryText.Contains(logView!.DisplayName, StringComparison.Ordinal),
+            "Tile inspector stacked-target test should keep the selected item in the tile target list.");
+        Assert(panel.DebugOccupantSummaryText.Contains(corpseView!.DisplayName, StringComparison.Ordinal),
+            "Tile inspector stacked-target test should expose overlapping corpse items in the tile target list.");
+
+        panel.QueueFree();
+    }
+
+    private async System.Threading.Tasks.Task RunTileInspectorDwarfContextTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var simulation = ResolveSimulation(gameRoot);
+            var registry = simulation.Context.Get<EntityRegistry>();
+            var dwarf = registry.GetAlive<Dwarf>().First();
+            var input = gameRoot.GetNode<InputController>("%InputController");
+            var tileInfo = gameRoot.GetNode<TileInfoPanel>("%TileInfoPanel");
+            var dwarfPanel = gameRoot.GetNode<DwarfPanel>("%DwarfPanel");
+
+            JumpCameraToTile(gameRoot, dwarf.Position.Position);
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(input.TrySelectDwarf(dwarf.Id), "Expected dwarf selection smoke test to select a visible dwarf.");
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(tileInfo.Visible, "Selecting a dwarf should keep the tile inspector visible so tile context remains available.");
+            Assert(dwarfPanel.Visible, "Selecting a dwarf should still show the dwarf panel.");
+            Assert(tileInfo.DebugSelectedTargetKey == $"dwarf:{dwarf.Id}", "Selecting a dwarf should focus the dwarf target in the tile inspector.");
+            Assert(tileInfo.DebugTargetSummaryText.Contains("tile|", StringComparison.Ordinal), "Selecting a dwarf should still expose a tile target in the tile inspector tab strip.");
+            Assert(tileInfo.DebugTargetSummaryText.Contains(dwarf.FirstName, StringComparison.Ordinal), "Selecting a dwarf should keep that dwarf in the tile inspector target strip.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+        }
+    }
+
     private static void RunLooseItemBillboardCollectionTest()
     {
         var sim = ClientSimulationFactory.CreateSimulation(seed: 7, width: 24, height: 24, depth: 4);
@@ -511,6 +692,46 @@ public partial class ClientSmokeTests : Node
             "Picking up a hauled item should expose a jump motion segment for the pickup animation.");
     }
 
+    private async System.Threading.Tasks.Task RunBoxBillboardPreviewTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var registry = simulation.Context.Get<EntityRegistry>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var tile = FindEmptyPassableTile(map, spatial, items, 0);
+
+            Assert(tile != Vec3i.Zero || map.GetTile(Vec3i.Zero).IsPassable,
+                "Box billboard preview smoke test needs a passable empty tile.");
+
+            JumpCameraToTile(gameRoot, tile);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var box = new Box(registry.NextId(), tile);
+            registry.Register(box);
+            items.StoreItemInBox(items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, tile).Id, box);
+            items.StoreItemInBox(items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, tile).Id, box);
+            items.StoreItemInBox(items.CreateItem(ItemDefIds.Drink, MaterialIds.Drink, tile).Id, box);
+            items.StoreItemInBox(items.CreateItem(ItemDefIds.Drink, MaterialIds.Drink, tile).Id, box);
+            items.StoreItemInBox(items.CreateItem(ItemDefIds.Meal, MaterialIds.Food, tile).Id, box);
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.GetDebugItemPreviewCount(box.Id) == 3,
+                "Box billboards should render preview sprites for the three most common stored item types.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+        }
+    }
+
     private async System.Threading.Tasks.Task RunFreshItemBillboardInterpolationTest()
     {
         var gameRoot = await StartGameRootAsync();
@@ -585,6 +806,57 @@ public partial class ClientSmokeTests : Node
                 "Hauled item billboard render smoke test should render the carried item billboard.");
             Assert(hauledItemPosition.Y > dwarfPosition.Y + 0.2f,
                 "A hauled item billboard should render above its carrier instead of staying on the ground.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunInventoryPickupCueRenderTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var simulation = ResolveSimulation(gameRoot);
+            var registry = simulation.Context.Get<EntityRegistry>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var dwarf = registry.GetAlive<Dwarf>().First();
+            var dwarfTile = dwarf.Position.Position;
+
+            JumpCameraToTile(gameRoot, dwarfTile);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var baselineMaxCueId = world3DRoot.GetDebugMaxVisibleInventoryPickupCueId();
+            var carriedItem = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarfTile);
+            Assert(items.PickUpItem(carriedItem.Id, dwarf.Id, dwarfTile, ItemCarryMode.Inventory),
+                "Inventory pickup cue smoke test expected the dwarf to pocket the test item.");
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var cueId = world3DRoot.GetDebugMaxVisibleInventoryPickupCueId();
+            Assert(cueId > baselineMaxCueId,
+                "Inventory pickup cue smoke test should emit a new transient pickup cue when an item enters inventory.");
+            Assert(world3DRoot.HasDebugInventoryPickupCue(cueId),
+                "Inventory pickup cue smoke test should render a transient item sprite for an inventory pickup.");
+
+            var cueCleared = false;
+            for (var index = 0; index < 64; index++)
+            {
+                Force3DWorldRefresh(gameRoot);
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                if (!world3DRoot.HasDebugInventoryPickupCue(cueId))
+                {
+                    cueCleared = true;
+                    break;
+                }
+            }
+
+            Assert(cueCleared,
+                "Inventory pickup cue smoke test should clear the transient sprite after the pickup animation completes.");
         }
         finally
         {
@@ -699,6 +971,8 @@ public partial class ClientSmokeTests : Node
         Assert(spriteCounts.Plants > 0 || spriteCounts.Trees > 0, "3D world should create vegetation sprite billboards on startup.");
         Assert(world3DRoot.GetDebugChunkMeshCount() > 0, "3D world should create terrain chunk meshes on startup.");
         Assert(world3DRoot.HasDebugStockpileOverlay(), "3D world should create stockpile overlay meshes on startup.");
+        Assert(world3DRoot.GetDebugItemBillboardRenderPriority() > world3DRoot.GetDebugOverlayRenderPriority(),
+            "3D item-like billboards should render after transparent tile overlays so stockpile rails do not draw over boxes or loose items.");
 
         var topBar = gameRoot.GetNode<TopBar>("%TopBar");
         var debugButton = topBar.GetNode<Button>("%DebugButton");
@@ -778,18 +1052,18 @@ public partial class ClientSmokeTests : Node
             "Announcement log hover tooltip should show the notification title for icon-only alerts.");
         Assert(panel.DebugUsesTransparentBackground(),
             "Announcement log root panel should use a transparent background so the game area stays visible behind it.");
-        Assert(panel.DebugHandleEntryClick(topSequence, MouseButton.Right), "Announcement log should open notification details on right click.");
+        Assert(panel.DebugHandleEntryClick(topSequence, MouseButton.Left), "Announcement log should open notification details on left click.");
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
-        Assert(panel.DebugIsDetailPopupVisible(), "Announcement log should show a detail popup after right clicking an icon notification.");
+        Assert(panel.DebugIsDetailPopupVisible(), "Announcement log should show a detail popup after left clicking an icon notification.");
         Assert(panel.DebugOpenSequence == topSequence, "Announcement log should track the currently opened notification sequence.");
         Assert(panel.DebugDetailMessageText.Contains("Goblin raid spotted.", StringComparison.Ordinal), "Announcement log detail popup should render the clicked notification message.");
 
-        Assert(panel.DebugHandleEntryClick(topSequence, MouseButton.Left), "Announcement log should dismiss notification icons on left click.");
+        Assert(panel.DebugHandleEntryClick(topSequence, MouseButton.Right), "Announcement log should dismiss notification icons on right click.");
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
         Assert(!panel.DebugIsDetailPopupVisible(), "Dismissing an opened notification should also close its detail popup.");
-        Assert(panel.DebugGetVisibleSequences().Length == 1, "Left clicking an icon notification should remove it from the visible stack.");
+        Assert(panel.DebugGetVisibleSequences().Length == 1, "Right clicking an icon notification should remove it from the visible stack.");
 
         panel.QueueFree();
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
@@ -985,6 +1259,96 @@ public partial class ClientSmokeTests : Node
         }
     }
 
+    private async System.Threading.Tasks.Task RunTreeSpeciesBillboardRenderTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var firstTreeTile = FindEmptyPassableTile(map, spatial, items, 0);
+            var secondTreeTile = FindAdjacentPassableTile(map, firstTreeTile);
+
+            Assert(secondTreeTile != firstTreeTile,
+                "Tree species billboard smoke test needs a second adjacent passable tile.");
+
+            SetTreeTile(map, firstTreeTile, "oak");
+            SetTreeTile(map, secondTreeTile, "pine");
+
+            JumpCameraToTile(gameRoot, firstTreeTile);
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.TryGetDebugTreeBillboardTexture(firstTreeTile, out var oakTexture) && oakTexture is not null,
+                "Tree species billboard smoke test should render an oak tree billboard at the injected test tile.");
+            Assert(world3DRoot.TryGetDebugTreeBillboardTexture(secondTreeTile, out var pineTexture) && pineTexture is not null,
+                "Tree species billboard smoke test should render a pine tree billboard at the injected test tile.");
+
+            var expectedOakTexture = PixelArtFactory.GetTile(TileDefIds.Tree, "oak");
+            var expectedPineTexture = PixelArtFactory.GetTile(TileDefIds.Tree, "pine");
+
+            Assert(ReferenceEquals(oakTexture, expectedOakTexture),
+                "Tree species billboard smoke test should use the oak species texture instead of a generic tree fallback.");
+            Assert(ReferenceEquals(pineTexture, expectedPineTexture),
+                "Tree species billboard smoke test should use the pine species texture instead of a generic tree fallback.");
+            Assert(!ReferenceEquals(oakTexture, pineTexture),
+                "Tree species billboard smoke test should render different billboard textures for different tree species.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunTreeChopBurst3DSmokeTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var registry = simulation.Context.Get<EntityRegistry>();
+            var targetTile = FindEmptyPassableTile(map, spatial, items, 0);
+
+            Assert(targetTile != Vec3i.Zero || map.GetTile(Vec3i.Zero).IsPassable,
+                "Tree chop burst smoke test needs a visible passable tile.");
+
+            JumpCameraToTile(gameRoot, targetTile);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var dwarfId = registry.GetAlive<Dwarf>().First().Id;
+            var baselineMaxBurstId = world3DRoot.GetDebugMaxVisibleResourceBurstId();
+
+            simulation.Context.EventBus.Emit(new JobCompletedEvent(1, dwarfId, JobDefIds.CutTree, TargetPos: targetTile));
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.GetDebugVisibleResourceBurstCount() > 0,
+                "Tree chop burst smoke test should expose at least one visible wood-chip burst in the 3D overlay.");
+            Assert(world3DRoot.GetDebugMaxVisibleResourceBurstId() > baselineMaxBurstId,
+                "Tree chop burst smoke test should push a newer resource burst cue through the 3D overlay state.");
+            Assert(world3DRoot.GetDebugResourceBurstPlateCount() >= 5,
+                "Tree chop burst smoke test should build multiple overlay plates so the chop burst reads as more than a single flash.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
     private async System.Threading.Tasks.Task RunGameRootRenderResidencyTest()
     {
         var gameRoot = await StartGameRootAsync();
@@ -1067,6 +1431,35 @@ public partial class ClientSmokeTests : Node
         Assert(pressHandled && motionHandled && releaseHandled, "3D camera rotation drag should consume Shift-drag pointer input.");
         Assert(!Mathf.IsEqualApprox(controller.YawRadians, yawBeforeDrag), "3D camera rotation drag should change camera yaw.");
         Assert(!controller.IsRotating, "3D camera rotation drag should end when the drag button is released.");
+    }
+
+    private void RunInputControllerLostReleaseSelectionTest()
+    {
+        var sim = ClientSimulationFactory.CreateSimulation(seed: 7, width: 24, height: 24, depth: 4);
+        var controller = new InputController();
+        AddChild(controller);
+        controller.Setup(sim);
+        controller.UseExternalHoveredTile(new Vector2I(3, 4));
+
+        controller._UnhandledInput(new InputEventMouseButton
+        {
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+        });
+
+        controller.UseExternalHoveredTile(new Vector2I(6, 8));
+        controller.ReconcilePointerState(leftButtonPressed: false);
+
+        Assert(!controller.IsDragging,
+            "Input controller should stop dragging if the mouse button is no longer pressed even when the release event was lost.");
+        Assert(controller.GetSelectedAreaRect().HasValue,
+            "Input controller should commit the current area selection when recovering from a lost mouse release.");
+
+        var selection = controller.GetSelectedAreaRect()!.Value;
+        Assert(selection.from == new Vector2I(3, 4) && selection.to == new Vector2I(6, 8),
+            "Lost-release reconciliation should preserve the dragged tile rectangle instead of dropping or corrupting the selection.");
+
+        controller.QueueFree();
     }
 
     private async System.Threading.Tasks.Task RunResourceBillboardHoverSelectionTest()
@@ -1161,6 +1554,52 @@ public partial class ClientSmokeTests : Node
             Assert(input.GetSelectedAreaRect().HasValue, "Area selection should persist after selecting multiple tiles.");
             Assert(world3DRoot.GetDebugEmphasizedResourceBillboardCount() >= 1,
                 "Selecting an area containing a tree or plant should highlight at least one resource billboard.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunResourceBillboardDesignationHighlightTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var mainCamera3D = gameRoot.GetNode<Camera3D>("%MainCamera3D");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+
+            Assert(world3DRoot.TryGetDebugResourceBillboardProbe(mainCamera3D, GetViewport(), out _, out var resourceTile),
+                "Resource billboard designation smoke test needs at least one visible resource tile.");
+
+            var tilePos = new Vec3i(resourceTile.X, resourceTile.Y, 0);
+            var canopyTree = map.GetTile(tilePos);
+            canopyTree.TileDefId = TileDefIds.Tree;
+            canopyTree.MaterialId = MaterialIds.Wood;
+            canopyTree.IsPassable = false;
+            canopyTree.TreeSpeciesId = TreeSpeciesIds.Apple;
+            canopyTree.PlantDefId = PlantSpeciesIds.AppleCanopy;
+            canopyTree.PlantGrowthStage = PlantGrowthStages.Sprout;
+            canopyTree.PlantYieldLevel = 0;
+            canopyTree.PlantSeedLevel = 0;
+            canopyTree.IsDesignated = false;
+            map.SetTile(tilePos, canopyTree);
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            simulation.Context.Commands.Dispatch(new DesignateCutTreesCommand(tilePos, tilePos));
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(map.GetTile(tilePos).IsDesignated,
+                "Unripe canopy tree smoke test expected the cut-tree command to mark the tree designated.");
+            Assert(world3DRoot.HasDebugDesignatedResourceBillboardOutline(resourceTile),
+                "Cut-designated canopy trees should keep a visible billboard outline so the designation remains readable under the canopy sprite.");
         }
         finally
         {
@@ -1273,6 +1712,48 @@ public partial class ClientSmokeTests : Node
         }
     }
 
+    private static void RunFruitTreeActionViewTest()
+    {
+        var sim = ClientSimulationFactory.CreateSimulation(seed: 23, width: 24, height: 24, depth: 4);
+        var map = sim.Context.Get<WorldMap>();
+        var data = sim.Context.Get<DataManager>();
+        var query = sim.Context.Get<WorldQuerySystem>();
+        var ripePos = new Vec3i(10, 10, 0);
+        var growingPos = new Vec3i(11, 10, 0);
+
+        var ripeTree = map.GetTile(ripePos);
+        ripeTree.TileDefId = TileDefIds.Tree;
+        ripeTree.IsPassable = false;
+        ripeTree.TreeSpeciesId = "apple";
+        ripeTree.PlantDefId = PlantSpeciesIds.AppleCanopy;
+        ripeTree.PlantGrowthStage = PlantGrowthStages.Mature;
+        ripeTree.PlantYieldLevel = 1;
+        ripeTree.PlantSeedLevel = 1;
+        map.SetTile(ripePos, ripeTree);
+
+        var growingTree = map.GetTile(growingPos);
+        growingTree.TileDefId = TileDefIds.Tree;
+        growingTree.IsPassable = false;
+        growingTree.TreeSpeciesId = "apple";
+        growingTree.PlantDefId = PlantSpeciesIds.AppleCanopy;
+        growingTree.PlantGrowthStage = PlantGrowthStages.Sprout;
+        growingTree.PlantYieldLevel = 0;
+        growingTree.PlantSeedLevel = 0;
+        map.SetTile(growingPos, growingTree);
+
+        var ripeActions = SelectionResourceViewBuilder.BuildSingleTileActionView(query, map, data, query.QueryTile(ripePos));
+        Assert(ripeActions.Groups.Any(group => group.ActionKind == SelectionResourceActionKind.HarvestPlant),
+            "Ripe apple canopy trees should expose a harvest action in the single-tile resource action view.");
+        Assert(ripeActions.Groups.Any(group => group.ActionKind == SelectionResourceActionKind.CutTree),
+            "Ripe apple canopy trees should still expose a chop action in the single-tile resource action view.");
+
+        var growingActions = SelectionResourceViewBuilder.BuildSingleTileActionView(query, map, data, query.QueryTile(growingPos));
+        Assert(!growingActions.Groups.Any(group => group.ActionKind == SelectionResourceActionKind.HarvestPlant),
+            "Unripe apple canopy trees should not expose a harvest action before fruit is ready.");
+        Assert(growingActions.Groups.Any(group => group.ActionKind == SelectionResourceActionKind.CutTree),
+            "Unripe apple canopy trees should still expose a chop action in the single-tile resource action view.");
+    }
+
     private static void Force3DWorldRefresh(GameRoot gameRoot)
     {
         var dirtyField = typeof(GameRoot).GetField("_world3DDirty", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -1313,6 +1794,22 @@ public partial class ClientSmokeTests : Node
         }
 
         return origin;
+    }
+
+    private static void SetTreeTile(WorldMap map, Vec3i position, string treeSpeciesId)
+    {
+        var tile = map.GetTile(position);
+        tile.TileDefId = TileDefIds.Tree;
+        tile.IsPassable = false;
+        tile.TreeSpeciesId = treeSpeciesId;
+        tile.PlantDefId = null;
+        tile.PlantGrowthStage = 0;
+        tile.PlantYieldLevel = 0;
+        tile.PlantSeedLevel = 0;
+        tile.FluidType = FluidType.None;
+        tile.FluidLevel = 0;
+        tile.FluidMaterialId = null;
+        map.SetTile(position, tile);
     }
 
     private static Vec3i FindEmptyPassableTile(WorldMap map, SpatialIndexSystem spatial, ItemSystem items, int z)

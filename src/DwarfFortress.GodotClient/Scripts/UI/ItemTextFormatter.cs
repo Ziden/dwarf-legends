@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
 
 namespace DwarfFortress.GodotClient.UI;
@@ -19,6 +20,9 @@ public static class ItemTextFormatter
 
         if (item.Storage is not null && item.Storage.StoredItemCount > 0)
             parts.Add($"{item.Storage.StoredItemCount} inside");
+
+        foreach (var binding in item.JobBindings.OrderBy(job => job.JobId))
+            parts.Add(FormatJobBinding(binding));
 
         return string.Join("\n", parts);
     }
@@ -105,6 +109,17 @@ public static class ItemTextFormatter
 
     public static string Humanize(string token)
         => string.IsNullOrWhiteSpace(token) ? "Unknown" : token.Replace('_', ' ');
+
+    private static string FormatJobBinding(ItemJobBindingView binding)
+    {
+        var status = binding.Status == JobStatus.InProgress
+            ? "In Progress"
+            : FormatToken(binding.Status.ToString());
+        var assignedDwarf = !string.IsNullOrWhiteSpace(binding.AssignedDwarfName)
+            ? $" for {binding.AssignedDwarfName}"
+            : string.Empty;
+        return $"Job: {FormatToken(binding.JobDefId)} ({status}{assignedDwarf})";
+    }
 
     private static string BuildCompactDisplayName(ItemView item, bool includeMaterialPrefix)
     {

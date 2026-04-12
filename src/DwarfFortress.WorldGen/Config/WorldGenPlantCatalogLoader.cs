@@ -62,7 +62,8 @@ public static class WorldGenPlantCatalogLoader
             PrefersFarFromWater: plant.PrefersFarFromWater,
             MaxGrowthStage: plant.MaxGrowthStage,
             HarvestItemDefId: plant.HarvestItemDefId,
-            FruitItemDefId: plant.FruitItemDefId)));
+            FruitItemDefId: plant.FruitItemDefId,
+            DropYieldOnHostRemoval: plant.DropYieldOnHostRemoval)));
 
     private static WorldGenPlantDefinition MapDefinition(WorldGenPlantDefinitionConfig config)
     {
@@ -80,7 +81,8 @@ public static class WorldGenPlantCatalogLoader
             PrefersFarFromWater: config.PrefersFarFromWater,
             MaxGrowthStage: config.MaxGrowthStage,
             HarvestItemDefId: config.HarvestItemDefId,
-            FruitItemDefId: config.FruitItemDefId);
+            FruitItemDefId: config.FruitItemDefId,
+            DropYieldOnHostRemoval: config.DropYieldOnHostRemoval);
     }
 
     private static WorldGenPlantHostKind ParseHostKind(string? hostKind)
@@ -106,6 +108,7 @@ public static class WorldGenPlantCatalogLoader
         public byte MaxGrowthStage { get; init; } = 3;
         public string? HarvestItemDefId { get; init; }
         public string? FruitItemDefId { get; init; }
+        public bool DropYieldOnHostRemoval { get; init; }
     }
 
     private const string FallbackJson =

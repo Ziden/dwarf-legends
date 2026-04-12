@@ -24,7 +24,8 @@ public sealed record WorldGenPlantDefinition(
     bool PrefersFarFromWater,
     byte MaxGrowthStage,
     string? HarvestItemDefId,
-    string? FruitItemDefId);
+    string? FruitItemDefId,
+    bool DropYieldOnHostRemoval = false);
 
 public sealed class WorldGenPlantCatalog
 {

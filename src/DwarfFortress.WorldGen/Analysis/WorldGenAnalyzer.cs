@@ -13,6 +13,14 @@ namespace DwarfFortress.WorldGen.Analysis;
 
 public static class WorldGenAnalyzer
 {
+    private readonly record struct ForestMobilityMetrics(
+        int TreeTiles,
+        float TreeDensity,
+        int OpeningTiles,
+        int ReachableOpeningTiles,
+        float OpeningRatio,
+        float ReachableOpeningRatio);
+
     public static MapMetrics AnalyzeMap(GeneratedEmbarkMap map)
     {
         var surfaceTiles = map.Width * map.Height;
@@ -58,6 +66,8 @@ public static class WorldGenAnalyzer
         var surfaceTileCount = map.Width * map.Height;
         var undergroundTileCount = surfaceTileCount * Math.Max(0, map.Depth - 1);
         var mapMetrics = AnalyzeMap(map);
+        var forestMobility = MeasureForestMobility(map);
+        var forestMobilityApplies = forestMobility.TreeDensity >= 0.16f;
 
         var inputsSnapshot = stageSnapshots.Count > 0
             ? stageSnapshots[0]
@@ -111,6 +121,12 @@ public static class WorldGenAnalyzer
                 populationSnapshot.SurfaceWallTiles == mapMetrics.WallTiles &&
                 populationSnapshot.CreatureSpawnCount == map.CreatureSpawns.Count,
                 $"final snapshot surfacePassable={populationSnapshot.SurfacePassableTiles}, water={populationSnapshot.SurfaceWaterTiles}, trees={populationSnapshot.SurfaceTreeTiles}, walls={populationSnapshot.SurfaceWallTiles}, spawns={populationSnapshot.CreatureSpawnCount}"),
+            Budget(
+                "Forest Mobility Openings",
+                !forestMobilityApplies || (forestMobility.OpeningRatio >= 0.005f && forestMobility.ReachableOpeningRatio >= 0.60f),
+                forestMobilityApplies
+                    ? $"treeDensity={forestMobility.TreeDensity:0.000}, openings={forestMobility.OpeningTiles}, openingRatio={forestMobility.OpeningRatio:0.000}, reachableOpeningRatio={forestMobility.ReachableOpeningRatio:0.000}, expected openingRatio >= 0.005 and reachable >= 0.600"
+                    : $"skipped (treeDensity={forestMobility.TreeDensity:0.000} below dense-forest threshold)"),
         };
 
         return new EmbarkStageReport(
@@ -364,6 +380,8 @@ public static class WorldGenAnalyzer
         var localEmbarkStagePassCount = 0;
         var localTreeDensityByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
         var localLargestPatchRatioByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
+        var localOpeningRatioByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
+        var localReachableOpeningRatioByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
         var worldForestRegionSignals = new List<float>(seedCount * sampledRegionsPerWorld);
         var regionAvgVegetationSignals = new List<float>(seedCount * sampledRegionsPerWorld);
         var worldForestLocalSignals = new List<float>(seedCount * sampledRegionsPerWorld);
@@ -468,11 +486,14 @@ public static class WorldGenAnalyzer
                 var treeDensity = treeCount / (float)(local.Width * local.Height);
                 var largestTreePatch = CountLargestConnectedSurfacePatch(local, GeneratedTileDefIds.Tree);
                 var largestTreePatchRatio = largestTreePatch / (float)(local.Width * local.Height);
+                var forestMobility = MeasureForestMobility(local);
                 localTreeDensity.Add(treeDensity);
                 localSuitability.Add(region.GetTile(centerX, centerY).VegetationSuitability);
                 worldForestLocalSignals.Add(parent.ForestCover);
                 AddMacroSample(localTreeDensityByMacro, parent.MacroBiomeId, treeDensity);
                 AddMacroSample(localLargestPatchRatioByMacro, parent.MacroBiomeId, largestTreePatchRatio);
+                AddMacroSample(localOpeningRatioByMacro, parent.MacroBiomeId, forestMobility.OpeningRatio);
+                AddMacroSample(localReachableOpeningRatioByMacro, parent.MacroBiomeId, forestMobility.ReachableOpeningRatio);
             }
 
             if (evaluatedSeedCount < targetSeedCount)
@@ -544,11 +565,23 @@ public static class WorldGenAnalyzer
             MacroBiomeIds.ConiferForest,
             MacroBiomeIds.BorealForest,
             MacroBiomeIds.TropicalRainforest);
+        var denseForestOpeningSamples = CollectMacroSamples(
+            localOpeningRatioByMacro,
+            MacroBiomeIds.ConiferForest,
+            MacroBiomeIds.BorealForest,
+            MacroBiomeIds.TropicalRainforest);
+        var denseForestReachableOpeningSamples = CollectMacroSamples(
+            localReachableOpeningRatioByMacro,
+            MacroBiomeIds.ConiferForest,
+            MacroBiomeIds.BorealForest,
+            MacroBiomeIds.TropicalRainforest);
 
         var denseForestMedianTreeDensity = Median(denseForestSamples);
         var tropicalMedianTreeDensity = Median(tropicalSamples);
         var aridMedianTreeDensity = Median(aridSamples);
         var denseForestMedianLargestPatchRatio = Median(denseForestPatchSamples);
+        var denseForestMedianOpeningRatio = Median(denseForestOpeningSamples);
+        var denseForestMedianReachableOpeningRatio = Median(denseForestReachableOpeningSamples);
         var hasDenseForestCoverage = denseForestSamples.Count > 0;
         var hasTropicalCoverage = tropicalSamples.Count > 0;
         var hasAridCoverage = aridSamples.Count > 0;
@@ -661,6 +694,16 @@ public static class WorldGenAnalyzer
                 denseForestPatchSamples.Count,
                 denseForestMedianLargestPatchRatio >= 0.020f,
                 $"median largest-patch ratio={denseForestMedianLargestPatchRatio:0.000} across {denseForestPatchSamples.Count} samples, expected >= 0.020"),
+            BudgetWithSamples(
+                "Dense Forest Opening Median",
+                denseForestOpeningSamples.Count,
+                denseForestMedianOpeningRatio >= 0.008f,
+                $"median opening ratio={denseForestMedianOpeningRatio:0.000} across {denseForestOpeningSamples.Count} samples, expected >= 0.008"),
+            BudgetWithSamples(
+                "Dense Forest Opening Reachability",
+                denseForestReachableOpeningSamples.Count,
+                denseForestMedianReachableOpeningRatio >= 0.75f,
+                $"median reachable-opening ratio={denseForestMedianReachableOpeningRatio:0.000} across {denseForestReachableOpeningSamples.Count} samples, expected >= 0.750"),
             Budget(
                 "Local Tree-Suitability Correlation",
                 localTreeSuitabilityCorrelation >= 0.15f,
@@ -705,6 +748,8 @@ public static class WorldGenAnalyzer
             TropicalMedianTreeDensity: tropicalMedianTreeDensity,
             AridMedianTreeDensity: aridMedianTreeDensity,
             DenseForestMedianLargestPatchRatio: denseForestMedianLargestPatchRatio,
+            DenseForestMedianOpeningRatio: denseForestMedianOpeningRatio,
+            DenseForestMedianReachableOpeningRatio: denseForestMedianReachableOpeningRatio,
             DenseForestCoverageAchieved: hasDenseForestCoverage,
             TropicalCoverageAchieved: hasTropicalCoverage,
             AridCoverageAchieved: hasAridCoverage,
@@ -1204,6 +1249,145 @@ public static class WorldGenAnalyzer
         }
 
         return largest;
+    }
+
+    private static ForestMobilityMetrics MeasureForestMobility(GeneratedEmbarkMap map)
+    {
+        var surfaceTiles = map.Width * map.Height;
+        if (surfaceTiles <= 0)
+            return new ForestMobilityMetrics(0, 0f, 0, 0, 0f, 0f);
+
+        var treeTiles = 0;
+        var openingTiles = 0;
+        var openingMask = new bool[map.Width, map.Height];
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            var tile = map.GetTile(x, y, 0);
+            if (string.Equals(tile.TileDefId, GeneratedTileDefIds.Tree, StringComparison.OrdinalIgnoreCase))
+            {
+                treeTiles++;
+                continue;
+            }
+
+            if (!IsForestOpeningTile(map, x, y))
+                continue;
+
+            openingMask[x, y] = true;
+            openingTiles++;
+        }
+
+        var treeDensity = treeTiles / (float)surfaceTiles;
+        if (openingTiles <= 0)
+            return new ForestMobilityMetrics(treeTiles, treeDensity, 0, 0, 0f, 0f);
+
+        var reachableOpeningTiles = CountOpeningTilesInLargestTraversableSurfaceComponent(map, openingMask);
+        return new ForestMobilityMetrics(
+            treeTiles,
+            treeDensity,
+            openingTiles,
+            reachableOpeningTiles,
+            openingTiles / (float)surfaceTiles,
+            reachableOpeningTiles / (float)openingTiles);
+    }
+
+    private static bool IsForestOpeningTile(GeneratedEmbarkMap map, int x, int y)
+    {
+        var tile = map.GetTile(x, y, 0);
+        if (!IsTraversableSurfaceTile(tile))
+            return false;
+
+        return CountAdjacentSurfaceTrees(map, x, y) >= 3;
+    }
+
+    private static int CountAdjacentSurfaceTrees(GeneratedEmbarkMap map, int x, int y)
+    {
+        var count = 0;
+        for (var dx = -1; dx <= 1; dx++)
+        for (var dy = -1; dy <= 1; dy++)
+        {
+            if (dx == 0 && dy == 0)
+                continue;
+
+            var nx = x + dx;
+            var ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
+                continue;
+            if (string.Equals(map.GetTile(nx, ny, 0).TileDefId, GeneratedTileDefIds.Tree, StringComparison.OrdinalIgnoreCase))
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountOpeningTilesInLargestTraversableSurfaceComponent(GeneratedEmbarkMap map, bool[,] openingMask)
+    {
+        var visited = new bool[map.Width, map.Height];
+        var queue = new Queue<(int X, int Y)>();
+        var bestOpeningCount = 0;
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (visited[x, y])
+                continue;
+            if (!IsTraversableSurfaceTile(map.GetTile(x, y, 0)))
+                continue;
+
+            visited[x, y] = true;
+            queue.Enqueue((x, y));
+            var openingCount = 0;
+
+            while (queue.Count > 0)
+            {
+                var (cx, cy) = queue.Dequeue();
+                if (openingMask[cx, cy])
+                    openingCount++;
+
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx + 1, cy);
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx - 1, cy);
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx, cy + 1);
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx, cy - 1);
+            }
+
+            if (openingCount > bestOpeningCount)
+                bestOpeningCount = openingCount;
+        }
+
+        return bestOpeningCount;
+    }
+
+    private static void EnqueueTraversableSurfaceNeighbor(
+        GeneratedEmbarkMap map,
+        bool[,] visited,
+        Queue<(int X, int Y)> queue,
+        int x,
+        int y)
+    {
+        if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+            return;
+        if (visited[x, y])
+            return;
+        if (!IsTraversableSurfaceTile(map.GetTile(x, y, 0)))
+            return;
+
+        visited[x, y] = true;
+        queue.Enqueue((x, y));
+    }
+
+    private static bool IsTraversableSurfaceTile(GeneratedTile tile)
+    {
+        if (!tile.IsPassable)
+            return false;
+        if (string.Equals(tile.TileDefId, GeneratedTileDefIds.Tree, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(tile.TileDefId, GeneratedTileDefIds.Water, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (tile.FluidType is GeneratedFluidType.Water or GeneratedFluidType.Magma)
+            return false;
+
+        return true;
     }
 
     private static void EnqueueSurfacePatchNeighbor(

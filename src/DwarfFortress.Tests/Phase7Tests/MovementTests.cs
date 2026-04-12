@@ -8,6 +8,7 @@ using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.Tests.Fakes;
 using DwarfFortress.GameLogic.World;
+using DwarfFortress.WorldGen.Ids;
 using Xunit;
 
 namespace DwarfFortress.GameLogic.Tests.Phase7Tests;
@@ -383,6 +384,39 @@ public sealed class MovementTests
         Assert.Equal(treePos + Vec3i.Up, segment.OldPos);
         Assert.Equal(treePos, segment.NewPos);
         Assert.True(segment.DurationSeconds > 0f);
+    }
+
+    [Fact]
+    public void CutTreeStrategy_Records_Fruit_Fall_Segment_For_Ripe_FruitTree()
+    {
+        var (sim, _, _, map) = Build();
+        var movementPresentation = sim.Context.Get<MovementPresentationSystem>();
+        var items = sim.Context.Get<ItemSystem>();
+        var strategy = new DwarfFortress.GameLogic.Jobs.Strategies.CutTreeStrategy();
+        var treePos = new Vec3i(9, 8, 0);
+
+        map.SetTile(treePos, new TileData
+        {
+            TileDefId = TileDefIds.Tree,
+            MaterialId = MaterialIds.Wood,
+            TreeSpeciesId = TreeSpeciesIds.Apple,
+            PlantDefId = PlantSpeciesIds.AppleCanopy,
+            PlantGrowthStage = PlantGrowthStages.Mature,
+            PlantYieldLevel = 1,
+            PlantSeedLevel = 1,
+            IsDesignated = true,
+            IsPassable = false,
+        });
+
+        strategy.OnComplete(new Job(1, JobDefIds.CutTree, treePos), dwarfId: -1, sim.Context);
+
+        var apple = items.GetAllItems().Single(item => item.DefId == ItemDefIds.Apple && item.Position.Position == treePos);
+        Assert.True(movementPresentation.TryGetItemSegment(apple.Id, out var segment));
+        Assert.Equal(MovementPresentationMotionKind.Jump, segment.MotionKind);
+        Assert.Equal(treePos + Vec3i.Up, segment.OldPos);
+        Assert.Equal(treePos, segment.NewPos);
+        Assert.True(segment.DurationSeconds > 0f);
+        Assert.True(segment.ArcHeight > 0f);
     }
 
     [Fact]

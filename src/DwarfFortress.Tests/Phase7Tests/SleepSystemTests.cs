@@ -60,6 +60,44 @@ public sealed class SleepSystemTests
     }
 
     [Fact]
+    public void SleepSystem_Creature_Does_Not_Wake_After_First_Recovery_Pulse()
+    {
+        var (sim, map, er, _, _) = TestFixtures.BuildFullSim();
+        var center = new Vec3i(16, 16, 0);
+        CarveDeepWaterPatch(map, center, radius: 2);
+
+        var carp = new Creature(er.NextId(), DefIds.GiantCarp, center, maxHealth: 55f, isHostile: false);
+        carp.Needs.Sleep.SetLevel(0.01f);
+        er.Register(carp);
+
+        var sleepSystem = sim.Context.Get<SleepSystem>();
+        var sleepStarted = false;
+        var wokeUp = false;
+        sim.EventBus.On<EntitySleepEvent>(ev =>
+        {
+            if (ev.EntityId == carp.Id)
+                sleepStarted = true;
+        });
+        sim.EventBus.On<EntityWakeEvent>(ev =>
+        {
+            if (ev.EntityId == carp.Id)
+                wokeUp = true;
+        });
+
+        for (var tick = 0; tick < 150 && !sleepStarted; tick++)
+            sim.Tick(0.1f);
+
+        Assert.True(sleepStarted);
+
+        for (var tick = 0; tick < 120; tick++)
+            sim.Tick(0.1f);
+
+        Assert.False(wokeUp);
+        Assert.True(sleepSystem.IsCreatureSleeping(carp.Id));
+        Assert.False(carp.Needs.Sleep.IsSatisfied);
+    }
+
+    [Fact]
     public void SleepSystem_LandCreature_SeekingSleep_Does_Not_Teleport()
     {
         var (sim, map, er, _, _) = TestFixtures.BuildFullSim();
@@ -129,43 +167,44 @@ public sealed class SleepSystemTests
         Assert.True(false, "Expected the dwarf to spend at least one full tick walking toward a sleep target.");
     }
 
-        [Fact]
-        public void SleepSystem_Uses_Configured_Stamina_Effects()
-        {
-                var dwarf = new Dwarf(1, "Rigoth", new Vec3i(0, 0, 0));
-                dwarf.Attributes.SetLevel(AttributeIds.Stamina, 4);
+    [Fact]
+    public void SleepSystem_Uses_Configured_Stamina_Effects()
+    {
+        var dwarf = new Dwarf(1, "Rigoth", new Vec3i(0, 0, 0));
+        dwarf.Attributes.SetLevel(AttributeIds.Stamina, 4);
 
-                var dataManager = CreateAttributeDataManager(
-                        """
-                        {
-                            "stamina": {
-                                "id": "stamina",
-                                "displayName": "Stamina",
-                                "description": "Test stamina config.",
-                                "category": "physiological",
-                                "tags": ["sleep"],
-                                "effectCurves": {
-                                    "3": { "effects": {} },
-                                    "4": { "effects": { "sleep_need_decay_multiplier": 0.33, "sleep_recovery_multiplier": 1.77 } }
-                                }
-                            }
-                        }
-                        """);
+        var dataManager = CreateAttributeDataManager(
+            """
+            {
+                "stamina": {
+                    "id": "stamina",
+                    "displayName": "Stamina",
+                    "description": "Test stamina config.",
+                    "category": "physiological",
+                    "tags": ["sleep"],
+                    "effectCurves": {
+                        "3": { "effects": {} },
+                        "4": { "effects": { "sleep_need_decay_multiplier": 0.33, "sleep_recovery_multiplier": 1.77 } }
+                    }
+                }
+            }
+            """);
 
-                Assert.Equal(0.33f, SleepSystem.GetSleepDecayMultiplier(dwarf, dataManager), precision: 4);
-                Assert.Equal(1.77f, SleepSystem.GetSleepRecoveryMultiplier(dwarf, dataManager), precision: 4);
-        }
+        Assert.Equal(0.33f, SleepSystem.GetSleepDecayMultiplier(dwarf, dataManager), precision: 4);
+        Assert.Equal(1.77f, SleepSystem.GetSleepRecoveryMultiplier(dwarf, dataManager), precision: 4);
+        Assert.Equal(0.009833f, SleepSystem.GetDwarfSleepNetRecoveryPerSecond(dwarf, inBed: true, dataManager), precision: 6);
+    }
 
-        private static DataManager CreateAttributeDataManager(string dwarfAttributesJson)
-        {
-                var (ctx, _, ds) = TestFixtures.CreateContext();
-                TestFixtures.AddFullData(ds);
-                ds.AddFile("data/ConfigBundle/dwarf_attributes.json", dwarfAttributesJson);
+    private static DataManager CreateAttributeDataManager(string dwarfAttributesJson)
+    {
+        var (ctx, _, ds) = TestFixtures.CreateContext();
+        TestFixtures.AddFullData(ds);
+        ds.AddFile("data/ConfigBundle/dwarf_attributes.json", dwarfAttributesJson);
 
-                var dataManager = new DataManager();
-                dataManager.Initialize(ctx);
-                return dataManager;
-        }
+        var dataManager = new DataManager();
+        dataManager.Initialize(ctx);
+        return dataManager;
+    }
 
     private static void CarveDeepWaterPatch(WorldMap map, Vec3i center, int radius)
     {

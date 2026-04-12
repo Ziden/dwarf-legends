@@ -33,9 +33,22 @@ public sealed class FortressBootstrapTests
         Assert.Contains(er.GetAlive<Creature>(), c => c.IsHostile && c.Position.Position.Z == 0);
         Assert.True(items.GetAllItems().Count() >= 20);
         Assert.NotEmpty(sim.Context.Get<StockpileManager>().GetAll());
-        Assert.Contains(sim.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
+        Assert.DoesNotContain(sim.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
         Assert.DoesNotContain(sim.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.Kitchen);
         Assert.DoesNotContain(sim.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.Still);
+    }
+
+    [Fact]
+    public void StartFortressCommand_Places_Starter_Stockpile_Away_From_Embark_Stairs()
+    {
+        var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
+
+        sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 42, Width: 48, Height: 48, Depth: 8));
+
+        var embark = new Vec3i(24, 24, 0);
+        var stockpile = sim.Context.Get<StockpileManager>().GetAll().First();
+
+        Assert.DoesNotContain(stockpile.AllSlots(), slot => slot == embark);
     }
 
     [Fact]
@@ -256,7 +269,7 @@ public sealed class FortressBootstrapTests
         Assert.Equal(3, registry.CountAlive<Dwarf>());
         Assert.True(registry.CountAlive<Creature>() >= 2);
         Assert.True(items.GetAllItems().Count() >= 20);
-        Assert.NotEmpty(buildings.GetAll());
+        Assert.DoesNotContain(buildings.GetAll(), building => building.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
         Assert.NotEmpty(stockpiles.GetAll());
         Assert.True(CountNonEmptyTiles(map) > 0);
 
@@ -313,7 +326,7 @@ public sealed class FortressBootstrapTests
         Assert.Contains(er2.GetAlive<Creature>(), c => c.DefId == DefIds.Cat);
         Assert.Contains(er2.GetAlive<Creature>(), c => c.DefId == DefIds.Dog);
         Assert.Contains(er2.GetAlive<Creature>(), c => c.IsHostile && c.Position.Position.Z == 0);
-        Assert.Contains(sim2.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
+        Assert.DoesNotContain(sim2.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
         Assert.DoesNotContain(sim2.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.Kitchen);
         Assert.DoesNotContain(sim2.Context.Get<BuildingSystem>().GetAll(), b => b.BuildingDefId == BuildingDefIds.Still);
         Assert.NotEmpty(sim2.Context.Get<StockpileManager>().GetAll());

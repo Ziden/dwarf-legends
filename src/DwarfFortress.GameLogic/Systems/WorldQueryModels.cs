@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Entities;
@@ -107,6 +108,7 @@ public sealed record CreatureView(
     ItemView? HauledItem = null);
 public sealed record StoredItemsView(int StoredItemCount, ItemView[] Contents, int? Capacity = null);
 public sealed record CorpseView(int FormerEntityId, string FormerDefId, string DisplayName, string DeathCause, float RotProgress, string RotStage);
+public sealed record ItemJobBindingView(int JobId, string JobDefId, JobStatus Status, int AssignedDwarfId, string? AssignedDwarfName);
 public sealed record ItemView(
     int Id,
     string DefId,
@@ -121,7 +123,10 @@ public sealed record ItemView(
     StoredItemsView? Storage,
     string DisplayName,
     float Weight = 0f,
-    ItemCarryMode CarryMode = ItemCarryMode.None);
+    ItemCarryMode CarryMode = ItemCarryMode.None)
+{
+    public ItemJobBindingView[] JobBindings { get; init; } = Array.Empty<ItemJobBindingView>();
+}
 public sealed record ContainerEntityView(int Id, string DefId, Vec3i Position, StoredItemsView Storage);
 public sealed record BuildingView(int Id, string BuildingDefId, Vec3i Origin, bool IsWorkshop, int StoredItemCount, string? MaterialId);
 public sealed record StockpileView(int Id, Vec3i From, Vec3i To, string[] AcceptedTags);

@@ -104,7 +104,7 @@ public static class ItemLikeSceneResolver
         }
 
         if (registry.TryGetById(itemLikeId) is not Entity entity ||
-            !ItemLikeVisualResolver.TryResolveContainerEntity(entity, items, out var containerDescriptor, includeStoragePreview: false))
+            !ItemLikeVisualResolver.TryResolveContainerEntity(entity, items, out var containerDescriptor, includeStoragePreview: true))
         {
             entry = default;
             return false;

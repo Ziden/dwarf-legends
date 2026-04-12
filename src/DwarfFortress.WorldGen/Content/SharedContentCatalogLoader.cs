@@ -482,6 +482,7 @@ public static class SharedContentCatalogLoader
                 HarvestItemDefId: node["harvestItemDefId"]?.GetValue<string>(),
                 SeedItemDefId: node["seedItemDefId"]?.GetValue<string>(),
                 FruitItemDefId: node["fruitItemDefId"]?.GetValue<string>(),
+                DropYieldOnHostRemoval: node["dropYieldOnHostRemoval"]?.GetValue<bool>() ?? false,
                 SourceRoot: ContentRoots.Legacy,
                 SourcePath: path);
         }
@@ -571,6 +572,7 @@ public static class SharedContentCatalogLoader
             HarvestItemDefId: ResolveItemId(parsed.HarvestItemDefId, harvestItem),
             SeedItemDefId: ResolveItemId(parsed.SeedItemDefId, seedItem),
             FruitItemDefId: ResolveItemId(parsed.FruitItemDefId, fruitItem),
+            DropYieldOnHostRemoval: parsed.DropYieldOnHostRemoval ?? false,
             HarvestItem: harvestItem,
             SeedItem: seedItem,
             FruitItem: fruitItem,
@@ -1187,6 +1189,7 @@ public static class SharedContentCatalogLoader
         public string? HarvestItemDefId { get; init; }
         public string? SeedItemDefId { get; init; }
         public string? FruitItemDefId { get; init; }
+        public bool? DropYieldOnHostRemoval { get; init; }
         public ItemFileModel? HarvestItem { get; init; }
         public ItemFileModel? SeedItem { get; init; }
         public ItemFileModel? FruitItem { get; init; }

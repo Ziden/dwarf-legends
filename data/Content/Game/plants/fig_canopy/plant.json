@@ -31,5 +31,6 @@
     "tags": ["plant", "seed"],
     "weight": 0.05
   },
-  "fruitItemDefId": "fig"
+  "fruitItemDefId": "fig",
+  "dropYieldOnHostRemoval": true
 }

@@ -281,6 +281,33 @@ public sealed class WorldQuerySystemTests
     }
 
     [Fact]
+    public void WorldQuerySystem_ItemView_Exposes_Active_Job_Bindings()
+    {
+        var (sim, _, er, js, items) = TestFixtures.BuildFullSim();
+        var queries = sim.Context.Get<WorldQuerySystem>();
+
+        var dwarf = new Dwarf(er.NextId(), "Urist", new Vec3i(8, 8, 0));
+        er.Register(dwarf);
+
+        var drink = items.CreateItem(ItemDefIds.Drink, MaterialIds.Drink, dwarf.Position.Position);
+        drink.IsClaimed = true;
+
+        var job = js.CreateJob(JobDefIds.Drink, drink.Position.Position, priority: 102, entityId: drink.Id);
+        job.AssignedDwarfId = dwarf.Id;
+        job.ReservedItemIds.Add(drink.Id);
+
+        var itemView = queries.GetItemView(drink.Id);
+
+        Assert.NotNull(itemView);
+        var binding = Assert.Single(itemView!.JobBindings);
+        Assert.Equal(job.Id, binding.JobId);
+        Assert.Equal(JobDefIds.Drink, binding.JobDefId);
+        Assert.Equal(JobStatus.Pending, binding.Status);
+        Assert.Equal(dwarf.Id, binding.AssignedDwarfId);
+        Assert.Equal(dwarf.FirstName, binding.AssignedDwarfName);
+    }
+
+    [Fact]
     public void WorldQuerySystem_QueryTile_Exposes_Stockpile_Box_Entities_And_Their_Contents()
     {
         var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
@@ -407,15 +434,18 @@ public sealed class WorldQuerySystemTests
     [Fact]
     public void WorldQuerySystem_Resolves_Building_By_Id_And_Tile()
     {
-        var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
+        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
         var queries = sim.Context.Get<WorldQuerySystem>();
 
-        sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 1, Width: 48, Height: 48, Depth: 8));
+        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(2, 2, 0));
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
+            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
+            Origin: new Vec3i(8, 5, 0)));
 
-        var building = sim.Context.Get<BuildingSystem>().GetAll()
-            .First(b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
+        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(8, 5, 0));
+        Assert.NotNull(building);
 
-        var byId = queries.GetBuildingView(building.Id);
+        var byId = queries.GetBuildingView(building!.Id);
         var byTile = queries.QueryTile(building.Origin + new Vec3i(1, 1, 0));
 
         Assert.NotNull(byId);

@@ -191,7 +191,8 @@ public sealed class DataManager : IGameSystem
                 Minerals: plant.Minerals,
                 HarvestItemDefId: plant.HarvestItemDefId,
                 SeedItemDefId: plant.SeedItemDefId,
-                FruitItemDefId: plant.FruitItemDefId));
+                FruitItemDefId: plant.FruitItemDefId,
+                DropYieldOnHostRemoval: plant.DropYieldOnHostRemoval));
         }
     }
 
@@ -339,7 +340,8 @@ public sealed class DataManager : IGameSystem
         Minerals:              n["nutrition"]?["minerals"]?.GetValue<float>() ?? 0f,
         HarvestItemDefId:      n["harvestItemDefId"]?.GetValue<string>(),
         SeedItemDefId:         n["seedItemDefId"]?.GetValue<string>(),
-        FruitItemDefId:        n["fruitItemDefId"]?.GetValue<string>());
+        FruitItemDefId:        n["fruitItemDefId"]?.GetValue<string>(),
+        DropYieldOnHostRemoval: n["dropYieldOnHostRemoval"]?.GetValue<bool>() ?? false);
 
     private static RecipeDef ParseRecipe(JsonNode n)
     {

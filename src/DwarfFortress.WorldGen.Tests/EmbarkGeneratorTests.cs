@@ -298,6 +298,53 @@ public sealed class EmbarkGeneratorTests
             $"Expected conifer maps to form sizeable connected forest stands, median largest patch={medianPatch}.");
     }
 
+    [Fact]
+    public void Generate_ConiferForest_KeepsWalkableForestOpenings_WithUnderstoryPlants()
+    {
+        const int width = 48;
+        const int height = 48;
+        var openingSamples = new List<int>(8);
+        var understorySamples = new List<int>(8);
+
+        for (var seed = 520; seed < 528; seed++)
+        {
+            var map = EmbarkGenerator.Generate(width: width, height: height, depth: 8, seed: seed, biomeId: MacroBiomeIds.ConiferForest);
+            var openings = 0;
+            var understory = 0;
+
+            for (var x = 1; x < map.Width - 1; x++)
+            for (var y = 1; y < map.Height - 1; y++)
+            {
+                if (IsInEmbarkCenter(width, height, x, y))
+                    continue;
+
+                var tile = map.GetTile(x, y, 0);
+                if (!tile.IsPassable || tile.TileDefId == GeneratedTileDefIds.Water || tile.TileDefId == GeneratedTileDefIds.Tree)
+                    continue;
+
+                var adjacentTrees = CountAdjacentSurfaceTrees(map, x, y);
+                if (adjacentTrees < 3)
+                    continue;
+
+                openings++;
+                if (!string.IsNullOrWhiteSpace(tile.PlantDefId))
+                    understory++;
+            }
+
+            openingSamples.Add(openings);
+            understorySamples.Add(understory);
+        }
+
+        openingSamples.Sort();
+        understorySamples.Sort();
+
+        var medianOpenings = openingSamples[openingSamples.Count / 2];
+        var medianUnderstory = understorySamples[understorySamples.Count / 2];
+
+        Assert.True(medianOpenings >= 24, $"Expected conifer forests to keep walkable internal openings, median={medianOpenings}.");
+        Assert.True(medianUnderstory >= 6, $"Expected conifer forest openings to pick up understory plants, median={medianUnderstory}.");
+    }
+
     [Theory]
     [InlineData(MacroBiomeIds.TemperatePlains)]
     [InlineData(MacroBiomeIds.ConiferForest)]
@@ -1115,6 +1162,26 @@ public sealed class EmbarkGeneratorTests
         for (var y = 0; y < map.Height; y++)
         {
             if (map.GetTile(x, y, 0).TileDefId == tileDefId)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountAdjacentSurfaceTrees(GeneratedEmbarkMap map, int x, int y)
+    {
+        var count = 0;
+        for (var dx = -1; dx <= 1; dx++)
+        for (var dy = -1; dy <= 1; dy++)
+        {
+            if (dx == 0 && dy == 0)
+                continue;
+
+            var nx = x + dx;
+            var ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
+                continue;
+            if (map.GetTile(nx, ny, 0).TileDefId == GeneratedTileDefIds.Tree)
                 count++;
         }
 

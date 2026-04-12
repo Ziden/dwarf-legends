@@ -225,6 +225,13 @@ public static class PixelArtFactory
             return true;
         }
 
+        if (ShouldUseSpeciesSpecificTreeTexture(tileDefId, normalizedMaterialId))
+        {
+            texture = Cache[key] = MakeTree(normalizedMaterialId);
+            StrictResolvedKeys.Add(key);
+            return true;
+        }
+
         if (UseSprites && SpriteRegistry.TryGetTile(tileDefId, out var sprite) && sprite is not null)
         {
             texture = Cache[key] = sprite;
@@ -295,6 +302,27 @@ public static class PixelArtFactory
         return true;
     }
 
+    public static Texture2D GetTreeWithOverlay(string? treeSpeciesId, string? plantDefId, byte growthStage, byte yieldLevel = 0, byte seedLevel = 0)
+    {
+        var treeTexture = GetTile(TileDefIds.Tree, treeSpeciesId);
+        if (string.IsNullOrWhiteSpace(plantDefId)
+            || !TryGetPlantOverlay(plantDefId, growthStage, yieldLevel, seedLevel, out var overlayTexture)
+            || overlayTexture is null)
+        {
+            return treeTexture;
+        }
+
+        var normalizedTreeSpeciesId = NormalizeMaterialId(treeSpeciesId);
+        var key = normalizedTreeSpeciesId is null
+            ? $"tree-overlay:{plantDefId}:g{growthStage}:y{yieldLevel}:s{seedLevel}"
+            : $"tree-overlay:{normalizedTreeSpeciesId}:{plantDefId}:g{growthStage}:y{yieldLevel}:s{seedLevel}";
+
+        if (Cache.TryGetValue(key, out var cached))
+            return cached;
+
+        return Cache[key] = ComposeTextureLayers(treeTexture, overlayTexture);
+    }
+
     public static Color GetRepresentativeTileColor(string tileDefId, string? materialId = null)
     {
         var normalizedMaterialId = NormalizeMaterialId(materialId);
@@ -319,6 +347,22 @@ public static class PixelArtFactory
 
     private static string? NormalizeMaterialId(string? materialId)
         => string.IsNullOrWhiteSpace(materialId) ? null : materialId.Trim().ToLowerInvariant();
+
+    private static Texture2D ComposeTextureLayers(Texture2D baseTexture, Texture2D overlayTexture)
+    {
+        var image = baseTexture.GetImage();
+        image.Convert(Image.Format.Rgba8);
+
+        var overlay = overlayTexture.GetImage();
+        overlay.Convert(Image.Format.Rgba8);
+        image.BlendRect(overlay, new Rect2I(0, 0, overlay.GetWidth(), overlay.GetHeight()), Vector2I.Zero);
+
+        return ImageTexture.CreateFromImage(image);
+    }
+
+    private static bool ShouldUseSpeciesSpecificTreeTexture(string tileDefId, string? normalizedMaterialId)
+        => string.Equals(tileDefId, TileDefIds.Tree, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(normalizedMaterialId);
 
     private static Texture2D MakePlantOverlay(PlantPalette palette, byte growthStage, byte yieldLevel, byte seedLevel)
     {
@@ -2271,7 +2315,7 @@ public static class PixelArtFactory
 
     private static Texture2D MakeTree(string? materialId)
     {
-        if (!TryResolveTreePalette(materialId, out var palette))
+        if (string.IsNullOrWhiteSpace(materialId) || !TryResolveTreePalette(materialId, out var palette))
             return MakeTree();
 
         var image = NewImage();

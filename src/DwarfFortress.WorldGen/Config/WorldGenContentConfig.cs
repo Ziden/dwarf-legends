@@ -73,6 +73,7 @@ public sealed class BiomeGenerationContentConfig
     public float? BaseMoisture { get; init; }
     public float? TreeCoverageBoost { get; init; }
     public float? TreeSuitabilityFloor { get; init; }
+    public float? ForestTreeFillRatio { get; init; }
     public bool? DenseForest { get; init; }
     public int? SurfaceCreatureGroupBias { get; init; }
     public float TreeCoverMin { get; init; }
@@ -108,6 +109,7 @@ public readonly record struct BiomeGenerationProfile(
     float BaseMoisture,
     float TreeCoverageBoost,
     float TreeSuitabilityFloor,
+    float ForestTreeFillRatio,
     bool DenseForest,
     int SurfaceCreatureGroupBias,
     float TreeCoverMin,

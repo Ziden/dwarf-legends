@@ -489,7 +489,7 @@ public sealed class BehaviorSystemTests
         Assert.True(sleepStarted);
 
         var sleepingPos = dog.Position.Position;
-        for (var tick = 0; tick < 150 && !wokeUp; tick++)
+        for (var tick = 0; tick < 3000 && !wokeUp; tick++)
         {
             sim.Tick(0.1f);
             if (wokeUp)

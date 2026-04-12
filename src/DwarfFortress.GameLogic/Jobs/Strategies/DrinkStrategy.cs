@@ -38,11 +38,12 @@ public sealed class DrinkStrategy : IJobStrategy
         if (dwarf.Components.TryGet<StatusEffectComponent>()?.Has(StatusEffectIds.Nausea) == true)
             return false;
 
+        var map = ctx.Get<WorldMap>();
         var itemSystem = ctx.TryGet<ItemSystem>();
-        if (itemSystem?.FindDrinkItem() is not null)
+        var reservedDrink = ResolveReservedDrink(job, itemSystem);
+        if (DrinkItemLocator.FindReachableDrinkItem(ctx, map, dwarf.Position.Position, reservedDrink) is not null)
             return true;
 
-        var map = ctx.Get<WorldMap>();
         return DrinkSourceLocator.CanDrinkAt(map, dwarf.Position.Position)
             || TryResolveDrinkTileTarget(ctx, map, dwarf.Position.Position, out _);
     }
@@ -53,11 +54,15 @@ public sealed class DrinkStrategy : IJobStrategy
             return Array.Empty<ActionStep>();
 
         var itemSystem = ctx.TryGet<ItemSystem>();
-        var drink = itemSystem?.FindDrinkItem();
+        var origin = dwarf.Position.Position;
+        var reservedDrink = ResolveReservedDrink(job, itemSystem);
+        var drink = DrinkItemLocator.FindReachableDrinkItem(ctx, map, origin, reservedDrink);
+        if (reservedDrink is not null && (drink is null || drink.Id != reservedDrink.Id))
+            ReleaseReserved(job, ctx);
+
         if (drink is not null)
         {
-            drink.IsClaimed = true;
-            job.ReservedItemIds.Add(drink.Id);
+            ReserveDrink(job, drink);
 
             return new ActionStep[]
             {
@@ -67,7 +72,6 @@ public sealed class DrinkStrategy : IJobStrategy
             };
         }
 
-        var origin = dwarf.Position.Position;
         if (DrinkSourceLocator.CanDrinkAt(map, origin))
         {
             return new ActionStep[]
@@ -159,19 +163,38 @@ public sealed class DrinkStrategy : IJobStrategy
         job.ReservedItemIds.Clear();
     }
 
+    private static Item? ResolveReservedDrink(Job job, ItemSystem? itemSystem)
+    {
+        if (itemSystem is null)
+            return null;
+
+        foreach (var itemId in job.ReservedItemIds)
+            if (itemSystem.TryGetItem(itemId, out var reservedItem) && reservedItem is not null)
+                return reservedItem;
+
+        if (job.EntityId >= 0 && itemSystem.TryGetItem(job.EntityId, out var entityItem) && entityItem is not null)
+            return entityItem;
+
+        return null;
+    }
+
+    private static void ReserveDrink(Job job, Item drink)
+    {
+        drink.IsClaimed = true;
+        if (!job.ReservedItemIds.Contains(drink.Id))
+            job.ReservedItemIds.Add(drink.Id);
+    }
+
     private static string ResolveConsumedItemName(Job job, ItemSystem? itemSystem, GameContext ctx)
     {
-        if (itemSystem is not null)
-        {
-            foreach (var itemId in job.ReservedItemIds)
-                if (itemSystem.TryGetItem(itemId, out var item) && item is not null)
-                    return ctx.TryGet<DataManager>()?.Items.GetOrNull(item.DefId)?.DisplayName
-                           ?? item.DefId.Replace('_', ' ');
-        }
+        var reservedDrink = ResolveReservedDrink(job, itemSystem);
+        if (reservedDrink is not null)
+            return ctx.TryGet<DataManager>()?.Items.GetOrNull(reservedDrink.DefId)?.DisplayName
+                   ?? reservedDrink.DefId.Replace('_', ' ');
 
         return CanJobUseNaturalWater(job) ? "water" : "drink";
     }
 
     private static bool CanJobUseNaturalWater(Job job)
-        => job.ReservedItemIds.Count == 0;
+        => job.ReservedItemIds.Count == 0 && job.EntityId < 0;
 }

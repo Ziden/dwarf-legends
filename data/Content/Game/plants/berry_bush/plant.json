@@ -2,7 +2,7 @@
   "id": "berry_bush",
   "displayName": "Berry Bush",
   "hostKind": "ground",
-  "allowedBiomes": ["temperate_plains", "misty_marsh", "boreal_forest"],
+  "allowedBiomes": ["temperate_plains", "misty_marsh", "conifer_forest", "boreal_forest"],
   "allowedGroundTiles": ["grass", "soil", "mud"],
   "minMoisture": 0.42,
   "maxMoisture": 0.95,

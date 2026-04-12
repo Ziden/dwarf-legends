@@ -332,6 +332,7 @@ public sealed class CraftingTests
         var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
 
         var dwarf = new Dwarf(er.NextId(), "Sleeper", new Vec3i(10, 10, 0));
+        dwarf.Needs.Sleep.SetLevel(0.05f);
         er.Register(dwarf);
 
         items.CreateItem(ItemDefIds.Bed, "wood", new Vec3i(11, 10, 0));
@@ -345,7 +346,44 @@ public sealed class CraftingTests
         var move = Assert.IsType<MoveToStep>(steps[0]);
         var work = Assert.IsType<WorkAtStep>(steps[1]);
         Assert.Equal(new Vec3i(12, 10, 0), move.Target);
-        Assert.Equal(5f, work.Duration);
+        Assert.Equal(171f, work.Duration, precision: 3);
+    }
+
+    [Fact]
+    public void SleepStrategy_Ignores_Unreachable_Bed_When_Selecting_Target()
+    {
+        var (sim, map, er, _, items) = TestFixtures.BuildFullSim();
+
+        var dwarf = new Dwarf(er.NextId(), "Sleeper", new Vec3i(10, 10, 0));
+        dwarf.Needs.Sleep.SetLevel(0.05f);
+        er.Register(dwarf);
+
+        items.CreateItem(ItemDefIds.Bed, "wood", new Vec3i(13, 10, 0));
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
+            BuildingDefId: BuildingDefIds.Bed,
+            Origin: new Vec3i(14, 10, 0)));
+
+        foreach (var pos in new[]
+                 {
+                     new Vec3i(13, 10, 0),
+                     new Vec3i(15, 10, 0),
+                     new Vec3i(14, 9, 0),
+                     new Vec3i(14, 11, 0),
+                 })
+        {
+            map.SetTile(pos, new TileData
+            {
+                TileDefId = TileDefIds.Tree,
+                MaterialId = MaterialIds.Granite,
+                IsPassable = false,
+            });
+        }
+
+        var job = new Job(1, JobDefIds.Sleep, dwarf.Position.Position, priority: 100);
+        var steps = new SleepStrategy().GetSteps(job, dwarf.Id, sim.Context);
+
+        var move = Assert.IsType<MoveToStep>(steps[0]);
+        Assert.NotEqual(new Vec3i(14, 10, 0), move.Target);
     }
 
     [Fact]

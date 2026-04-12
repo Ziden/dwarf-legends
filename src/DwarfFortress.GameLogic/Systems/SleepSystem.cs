@@ -28,7 +28,9 @@ public record struct EntityWakeEvent(int EntityId, Vec3i Position);
 /// </summary>
 public sealed class SleepSystem : IGameSystem
 {
-    private const float CreatureSleepRecoveryPerSecond = 0.18f;
+    private const float CreatureSleepNetRecoveryPerSecond = 0.004f;
+    private const float DwarfBedSleepNetRecoveryPerSecond = 1f / 180f;
+    private const float DwarfGroundSleepNetRecoveryPerSecond = 1f / 240f;
     public string SystemId    => SystemIds.SleepSystem;
     public int    UpdateOrder => 5;
     public bool   IsEnabled   { get; set; } = true;
@@ -110,21 +112,19 @@ public sealed class SleepSystem : IGameSystem
 
         if (isSleeping)
         {
+            var inBed = IsNearBed(dwarf);
             if (!_sleepingDwarves.Contains(dwarf.Id))
             {
                 _sleepingDwarves.Add(dwarf.Id);
-                _ctx!.EventBus.Emit(new EntitySleepEvent(dwarf.Id, dwarf.Position.Position, IsNearBed(dwarf)));
+                _ctx!.EventBus.Emit(new EntitySleepEvent(dwarf.Id, dwarf.Position.Position, inBed));
             }
 
             EnsureSleepEmote(dwarf.Emotes);
 
-            // Apply energetic attribute: sleep recovers faster (stamina >= 4)
-            var staminaLevel = dwarf.Attributes.GetLevel(AttributeIds.Stamina);
-            if (staminaLevel >= 4)
-            {
-                var sleepNeed = dwarf.Needs.Get(NeedIds.Sleep);
-                sleepNeed.Satisfy(0.02f * delta);
-            }
+            var sleepNeed = dwarf.Needs.Get(NeedIds.Sleep);
+            var dataManager = _ctx!.TryGet<DataManager>();
+            var recoveryPerSecond = GetDwarfSleepGrossRecoveryPerSecond(dwarf, inBed, dataManager);
+            sleepNeed.Satisfy(recoveryPerSecond * delta);
 
             // Check low stamina: may wake up hungry (appetite >= 4)
             var appetiteLevel = dwarf.Attributes.GetLevel(AttributeIds.Appetite);
@@ -246,9 +246,10 @@ public sealed class SleepSystem : IGameSystem
 
             if (_sleepingCreatures.Contains(creature.Id))
             {
-                sleepNeed.Satisfy(CreatureSleepRecoveryPerSecond * CreatureSleepCheckInterval);
+                var recoveryPerSecond = CreatureSleepNetRecoveryPerSecond + sleepNeed.BaseDecayPerTick;
+                sleepNeed.Satisfy(recoveryPerSecond * CreatureSleepCheckInterval);
 
-                if (!sleepNeed.IsCritical)
+                if (sleepNeed.IsSatisfied)
                 {
                     _sleepingCreatures.Remove(creature.Id);
                     ClearSleepEmoteIfActive(creature.Emotes);
@@ -530,4 +531,27 @@ public sealed class SleepSystem : IGameSystem
             AttributeIds.Stamina,
             "sleep_recovery_multiplier",
             1.0f);
+
+    /// <summary>
+    /// Returns the net sleep recovery rate per second for a sleeping dwarf after normal need decay.
+    /// </summary>
+    public static float GetDwarfSleepNetRecoveryPerSecond(Dwarf dwarf, bool inBed, DataManager? dataManager = null)
+    {
+        var baseRecovery = inBed
+            ? DwarfBedSleepNetRecoveryPerSecond
+            : DwarfGroundSleepNetRecoveryPerSecond;
+
+        return baseRecovery * GetSleepRecoveryMultiplier(dwarf, dataManager);
+    }
+
+    /// <summary>
+    /// Returns the gross sleep recovery rate per second applied during sleep ticks.
+    /// Combined with NeedsSystem decay this yields the net recovery returned by GetDwarfSleepNetRecoveryPerSecond.
+    /// </summary>
+    public static float GetDwarfSleepGrossRecoveryPerSecond(Dwarf dwarf, bool inBed, DataManager? dataManager = null)
+    {
+        var sleepNeed = dwarf.Needs.Get(NeedIds.Sleep);
+        var sleepDecayPerSecond = sleepNeed.BaseDecayPerTick * GetSleepDecayMultiplier(dwarf, dataManager);
+        return GetDwarfSleepNetRecoveryPerSecond(dwarf, inBed, dataManager) + sleepDecayPerSecond;
+    }
 }

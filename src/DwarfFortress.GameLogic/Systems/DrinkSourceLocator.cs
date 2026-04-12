@@ -22,6 +22,7 @@ internal static class DrinkSourceLocator
 
         var visited = new HashSet<Vec3i> { origin };
         var queue = new Queue<Vec3i>();
+        var neighbors = new List<Vec3i>(6);
         queue.Enqueue(origin);
 
         while (queue.Count > 0)
@@ -32,13 +33,13 @@ internal static class DrinkSourceLocator
             if (dx > searchRadius || dy > searchRadius)
                 continue;
 
-            foreach (var direction in CardinalDirections)
+            map.CollectTraversableNeighbors(current, canSwim: false, requiresSwimming: false, neighbors);
+            foreach (var next in neighbors)
             {
-                var next = current + direction;
-                if (!map.IsInBounds(next) || !visited.Add(next))
+                if (!visited.Add(next))
                     continue;
 
-                if (!map.IsWalkable(next))
+                if (Math.Abs(next.X - origin.X) > searchRadius || Math.Abs(next.Y - origin.Y) > searchRadius)
                     continue;
 
                 if (CanDrinkAt(map, next))
@@ -66,6 +67,7 @@ internal static class DrinkSourceLocator
 
         var visited = new HashSet<Vec3i> { origin };
         var queue = new Queue<Vec3i>();
+        var neighbors = new List<Vec3i>(6);
         queue.Enqueue(origin);
 
         while (queue.Count > 0)
@@ -76,13 +78,13 @@ internal static class DrinkSourceLocator
             if (dx > searchRadius || dy > searchRadius)
                 continue;
 
-            foreach (var direction in CardinalDirections)
+            map.CollectTraversableNeighbors(current, canSwim: false, requiresSwimming: false, neighbors);
+            foreach (var next in neighbors)
             {
-                var next = current + direction;
-                if (!map.IsInBounds(next) || !visited.Add(next))
+                if (!visited.Add(next))
                     continue;
 
-                if (!map.IsWalkable(next))
+                if (Math.Abs(next.X - origin.X) > searchRadius || Math.Abs(next.Y - origin.Y) > searchRadius)
                     continue;
 
                 if (TryResolveDrinkTile(map, next, out drinkTile))

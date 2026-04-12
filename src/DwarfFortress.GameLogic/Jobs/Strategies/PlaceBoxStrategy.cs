@@ -36,7 +36,7 @@ public sealed class PlaceBoxStrategy : IJobStrategy
         return new ActionStep[]
         {
             ItemPickupHelper.CreatePickupMoveStep(item),
-            new PickUpItemStep(item.Id),
+            new PickUpItemStep(item.Id, ItemCarryMode.Hauling),
             new MoveToStep(job.TargetPos),
             new PlaceItemStep(item.Id, job.TargetPos),
         };

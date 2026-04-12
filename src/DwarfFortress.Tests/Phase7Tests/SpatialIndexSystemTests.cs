@@ -51,15 +51,18 @@ public sealed class SpatialIndexSystemTests
     [Fact]
     public void SpatialIndexSystem_Indexes_Building_Footprints_By_Tile()
     {
-        var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
+        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
         var spatial = sim.Context.Get<SpatialIndexSystem>();
 
-        sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 1, Width: 48, Height: 48, Depth: 8));
+        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(2, 2, 0));
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
+            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
+            Origin: new Vec3i(8, 5, 0)));
 
-        var building = sim.Context.Get<BuildingSystem>().GetAll()
-            .First(b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop);
+        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(8, 5, 0));
+        Assert.NotNull(building);
 
-        Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin));
+        Assert.Equal(building!.Id, spatial.GetBuildingAt(building.Origin));
         Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin + new Vec3i(1, 0, 0)));
         Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin + new Vec3i(0, 1, 0)));
         Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin + new Vec3i(1, 1, 0)));

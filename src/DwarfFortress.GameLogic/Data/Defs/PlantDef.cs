@@ -37,4 +37,5 @@ public sealed record PlantDef(
     float Minerals,
     string? HarvestItemDefId = null,
     string? SeedItemDefId = null,
-    string? FruitItemDefId = null);
+    string? FruitItemDefId = null,
+    bool DropYieldOnHostRemoval = false);

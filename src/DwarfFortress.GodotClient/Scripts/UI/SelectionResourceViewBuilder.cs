@@ -53,24 +53,23 @@ internal static class SelectionResourceViewBuilder
         if (tileResult.Tile is null)
             return SelectionResourceView.Empty;
 
-        var descriptor = DescribeTile(map, data, tileResult.Position, tileResult.Tile);
-        if (descriptor.ActionKind == SelectionResourceActionKind.None)
+        var groups = DescribeTileResources(map, data, tileResult.Position, tileResult.Tile)
+            .Where(descriptor => descriptor.ActionKind != SelectionResourceActionKind.None)
+            .Select(descriptor => new SelectionResourceGroup(
+                descriptor.Id,
+                descriptor.CategoryLabel,
+                descriptor.Title,
+                descriptor.Details,
+                TileCount: 1,
+                descriptor.Icon,
+                descriptor.ActionKind,
+                [tileResult.Position]))
+            .ToArray();
+
+        if (groups.Length == 0)
             return SelectionResourceView.Empty;
 
-        return new SelectionResourceView(
-            TotalTileCount: 1,
-            Groups:
-            [
-                new SelectionResourceGroup(
-                    descriptor.Id,
-                    descriptor.CategoryLabel,
-                    descriptor.Title,
-                    descriptor.Details,
-                    TileCount: 1,
-                    descriptor.Icon,
-                    descriptor.ActionKind,
-                    [tileResult.Position]),
-            ]);
+        return new SelectionResourceView(TotalTileCount: 1, Groups: groups);
     }
 
     public static SelectionResourceView BuildAreaView(WorldQuerySystem query, WorldMap map, DataManager data, Vector2I from, Vector2I to, int z)
@@ -87,20 +86,22 @@ internal static class SelectionResourceViewBuilder
                 continue;
 
             totalTileCount++;
-            var descriptor = DescribeTile(map, data, pos, tile);
-            if (!groups.TryGetValue(descriptor.Id, out var group))
+            foreach (var descriptor in DescribeTileResources(map, data, pos, tile))
             {
-                group = new MutableSelectionResourceGroup(
-                    descriptor.Id,
-                    descriptor.CategoryLabel,
-                    descriptor.Title,
-                    descriptor.Details,
-                    descriptor.Icon,
-                    descriptor.ActionKind);
-                groups.Add(descriptor.Id, group);
-            }
+                if (!groups.TryGetValue(descriptor.Id, out var group))
+                {
+                    group = new MutableSelectionResourceGroup(
+                        descriptor.Id,
+                        descriptor.CategoryLabel,
+                        descriptor.Title,
+                        descriptor.Details,
+                        descriptor.Icon,
+                        descriptor.ActionKind);
+                    groups.Add(descriptor.Id, group);
+                }
 
-            group.Positions.Add(pos);
+                group.Positions.Add(pos);
+            }
         }
 
         if (totalTileCount == 0)
@@ -159,40 +160,45 @@ internal static class SelectionResourceViewBuilder
         _ => string.Empty,
     };
 
-    private static SelectionResourceDescriptor DescribeTile(WorldMap map, DataManager data, Vec3i position, TileView tile)
+    private static SelectionResourceDescriptor[] DescribeTileResources(WorldMap map, DataManager data, Vec3i position, TileView tile)
     {
         if (!tile.IsVisible)
         {
-            return new SelectionResourceDescriptor(
+            return
+            [
+                new SelectionResourceDescriptor(
                 Id: "unknown",
                 CategoryLabel: "Unknown",
                 Title: "Unknown Tile",
                 Details: "Unrevealed terrain.",
                 Icon: null,
-                ActionKind: SelectionResourceActionKind.None);
+                ActionKind: SelectionResourceActionKind.None),
+            ];
         }
+
+        var descriptors = new List<SelectionResourceDescriptor>(capacity: 2);
 
         if (PlantHarvesting.TryGetHarvestablePlant(map, data, position, out var harvestablePlant))
         {
-            return new SelectionResourceDescriptor(
+            descriptors.Add(new SelectionResourceDescriptor(
                 Id: $"plant:{harvestablePlant.Id}:ready",
                 CategoryLabel: "Plants",
                 Title: harvestablePlant.DisplayName,
                 Details: "Mature plant ready for harvesting.",
                 Icon: PixelArtFactory.GetPlantOverlay(harvestablePlant.Id, tile.PlantGrowthStage, tile.PlantYieldLevel, tile.PlantSeedLevel),
-                ActionKind: SelectionResourceActionKind.HarvestPlant);
+                ActionKind: SelectionResourceActionKind.HarvestPlant));
         }
 
-        if (!string.IsNullOrWhiteSpace(tile.PlantDefId))
+        else if (!string.IsNullOrWhiteSpace(tile.PlantDefId))
         {
             var plantDef = data.Plants.GetOrNull(tile.PlantDefId);
-            return new SelectionResourceDescriptor(
+            descriptors.Add(new SelectionResourceDescriptor(
                 Id: $"plant:{tile.PlantDefId}:growing",
                 CategoryLabel: "Plants",
                 Title: plantDef?.DisplayName ?? ItemTextFormatter.FormatToken(tile.PlantDefId!),
                 Details: tile.PlantYieldLevel > 0 ? "Plant growth is progressing." : "Plant is not ready to harvest.",
                 Icon: PixelArtFactory.GetPlantOverlay(tile.PlantDefId!, tile.PlantGrowthStage, tile.PlantYieldLevel, tile.PlantSeedLevel),
-                ActionKind: SelectionResourceActionKind.None);
+                ActionKind: SelectionResourceActionKind.None));
         }
 
         if (string.Equals(tile.TileDefId, DwarfFortress.GameLogic.World.TileDefIds.Tree, StringComparison.OrdinalIgnoreCase))
@@ -200,27 +206,30 @@ internal static class SelectionResourceViewBuilder
             var speciesName = !string.IsNullOrWhiteSpace(tile.TreeSpeciesId)
                 ? $"{ItemTextFormatter.FormatToken(tile.TreeSpeciesId!)} Tree"
                 : "Tree";
-            return new SelectionResourceDescriptor(
+            descriptors.Add(new SelectionResourceDescriptor(
                 Id: $"tree:{tile.TreeSpeciesId ?? tile.TileDefId}",
                 CategoryLabel: "Trees",
                 Title: speciesName,
                 Details: "Tree resource can be designated for clearing.",
-                Icon: PixelArtFactory.GetTile(tile.TileDefId, tile.MaterialId),
-                ActionKind: SelectionResourceActionKind.CutTree);
+                Icon: PixelArtFactory.GetTile(tile.TileDefId, tile.TreeSpeciesId ?? tile.MaterialId),
+                ActionKind: SelectionResourceActionKind.CutTree));
         }
 
         if (!string.IsNullOrWhiteSpace(tile.OreItemDefId))
         {
             var oreDef = data.Items.GetOrNull(tile.OreItemDefId);
             var oreTitle = oreDef?.DisplayName ?? ItemTextFormatter.FormatToken(tile.OreItemDefId!);
-            return new SelectionResourceDescriptor(
+            descriptors.Add(new SelectionResourceDescriptor(
                 Id: $"ore:{tile.OreItemDefId}",
                 CategoryLabel: "Ore",
                 Title: oreTitle,
                 Details: "Ore-bearing wall can be designated for mining.",
                 Icon: PixelArtFactory.GetItem(tile.OreItemDefId!, tile.MaterialId),
-                ActionKind: SelectionResourceActionKind.Mine);
+                ActionKind: SelectionResourceActionKind.Mine));
         }
+
+        if (descriptors.Count > 0)
+            return descriptors.ToArray();
 
         var tileDef = data.Tiles.GetOrNull(tile.TileDefId);
         var title = BuildTileTitle(tile, tileDef);
@@ -230,13 +239,16 @@ internal static class SelectionResourceViewBuilder
             ? SelectionResourceActionKind.Mine
             : SelectionResourceActionKind.None;
 
-        return new SelectionResourceDescriptor(
-            Id: $"tile:{tile.TileDefId}:{tile.MaterialId ?? string.Empty}",
-            CategoryLabel: category,
-            Title: title,
-            Details: details,
-            Icon: PixelArtFactory.GetTile(tile.TileDefId, tile.MaterialId),
-            ActionKind: actionKind);
+        return
+        [
+            new SelectionResourceDescriptor(
+                Id: $"tile:{tile.TileDefId}:{tile.MaterialId ?? string.Empty}",
+                CategoryLabel: category,
+                Title: title,
+                Details: details,
+                Icon: PixelArtFactory.GetTile(tile.TileDefId, tile.MaterialId),
+                ActionKind: actionKind),
+        ];
     }
 
     private static string BuildTileTitle(TileView tile, TileDef? tileDef)

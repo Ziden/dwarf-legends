@@ -4,6 +4,7 @@ using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
+using DwarfFortress.GameLogic.Jobs.Strategies;
 using DwarfFortress.GameLogic.World;
 
 namespace DwarfFortress.GameLogic.Systems;
@@ -40,6 +41,8 @@ public sealed class NeedsSystem : IGameSystem
     private const int SleepSurvivalPriority = 100;
     private const int EatSurvivalPriority = 101;
     private const int DrinkSurvivalPriority = 102;
+    private const int EatPlantSearchRadius = 24;
+    private const int DrinkSearchRadius = 14;
 
     private float _elapsedTime;
     private GameContext? _ctx;
@@ -145,25 +148,151 @@ public sealed class NeedsSystem : IGameSystem
         var key = (dwarf.Id, jobDefId);
         if (_activeJobIds.ContainsKey(key)) return;  // job already pending or in-progress
 
-        var targetPos = dwarf.Position.Position;
-        if (string.Equals(jobDefId, Jobs.JobDefIds.Eat, System.StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(jobDefId, Jobs.JobDefIds.Eat, StringComparison.OrdinalIgnoreCase))
         {
-            var itemSystem = _ctx!.TryGet<ItemSystem>();
-            if (itemSystem?.FindCarriedFoodItem(dwarf.Id) is null && itemSystem?.FindFoodItem() is null)
+            var eatJob = TryCreateEatJob(dwarf, jobSystem);
+            if (eatJob is not null)
             {
-                var map = _ctx.TryGet<WorldMap>();
-                var data = _ctx.TryGet<DataManager>();
-                if (map is not null && data is not null &&
-                    PlantHarvesting.TryFindNearestHarvestablePlant(map, data, dwarf.Position.Position, searchRadius: 24, out var harvestTarget))
-                {
-                    targetPos = harvestTarget.PlantPos;
-                }
-                // If no world context or no harvestable plant, create Eat job at dwarf's position anyway
+                TrackJob(key, eatJob);
+                return;
             }
+
+            if (_ctx!.TryGet<ItemSystem>() is not null || _ctx.TryGet<WorldMap>() is not null)
+                return;
         }
 
-        var job = jobSystem.CreateJob(jobDefId, targetPos, priority: GetSurvivalPriority(jobDefId));
+        if (string.Equals(jobDefId, Jobs.JobDefIds.Drink, StringComparison.OrdinalIgnoreCase))
+        {
+            var drinkJob = TryCreateDrinkJob(dwarf, jobSystem);
+            if (drinkJob is not null)
+            {
+                TrackJob(key, drinkJob);
+                return;
+            }
+
+            if (_ctx!.TryGet<ItemSystem>() is not null || _ctx.TryGet<WorldMap>() is not null)
+                return;
+        }
+
+        var job = jobSystem.CreateJob(jobDefId, dwarf.Position.Position, priority: GetSurvivalPriority(jobDefId));
         job.AssignedDwarfId = dwarf.Id;
+        TrackJob(key, job);
+    }
+
+    private Jobs.Job? TryCreateEatJob(Dwarf dwarf, Jobs.JobSystem jobSystem)
+    {
+        var itemSystem = _ctx!.TryGet<ItemSystem>();
+        if (itemSystem?.FindCarriedFoodItem(dwarf.Id) is { } carriedFood)
+        {
+            carriedFood.IsClaimed = true;
+            var carriedJob = jobSystem.CreateJob(
+                Jobs.JobDefIds.Eat,
+                dwarf.Position.Position,
+                priority: EatSurvivalPriority,
+                entityId: carriedFood.Id);
+            carriedJob.AssignedDwarfId = dwarf.Id;
+            carriedJob.ReservedItemIds.Add(carriedFood.Id);
+            return carriedJob;
+        }
+
+        var map = _ctx.TryGet<WorldMap>();
+        var data = _ctx.TryGet<DataManager>();
+        Vec3i? forageTarget = null;
+        if (map is not null && data is not null
+            && PlantHarvesting.TryFindNearestHarvestablePlant(map, data, dwarf.Position.Position, EatPlantSearchRadius, out var harvestTarget))
+        {
+            forageTarget = harvestTarget.PlantPos;
+        }
+
+        var inventory = dwarf.Components.TryGet<InventoryComponent>();
+        if (inventory?.IsFull == true)
+        {
+            if (!forageTarget.HasValue)
+                return null;
+
+            var forageJob = jobSystem.CreateJob(Jobs.JobDefIds.Eat, forageTarget.Value, priority: EatSurvivalPriority);
+            forageJob.AssignedDwarfId = dwarf.Id;
+            return forageJob;
+        }
+
+        if (itemSystem?.FindFoodItem() is { } food)
+        {
+            food.IsClaimed = true;
+            var foodJob = jobSystem.CreateJob(
+                Jobs.JobDefIds.Eat,
+                food.Position.Position,
+                priority: EatSurvivalPriority,
+                entityId: food.Id);
+            foodJob.AssignedDwarfId = dwarf.Id;
+            foodJob.ReservedItemIds.Add(food.Id);
+            return foodJob;
+        }
+
+        if (!forageTarget.HasValue)
+            return null;
+
+        var harvestJob = jobSystem.CreateJob(Jobs.JobDefIds.Eat, forageTarget.Value, priority: EatSurvivalPriority);
+        harvestJob.AssignedDwarfId = dwarf.Id;
+        return harvestJob;
+    }
+
+    private Jobs.Job? TryCreateDrinkJob(Dwarf dwarf, Jobs.JobSystem jobSystem)
+    {
+        var itemSystem = _ctx!.TryGet<ItemSystem>();
+        var map = _ctx.TryGet<WorldMap>();
+        var origin = dwarf.Position.Position;
+        var reachableDrink = map is not null
+            ? DrinkItemLocator.FindReachableDrinkItem(_ctx, map, origin)
+            : itemSystem?.FindDrinkItem();
+        if (reachableDrink is { } drink)
+        {
+            drink.IsClaimed = true;
+            var itemJob = jobSystem.CreateJob(
+                Jobs.JobDefIds.Drink,
+                drink.Position.Position,
+                priority: DrinkSurvivalPriority,
+                entityId: drink.Id);
+            itemJob.AssignedDwarfId = dwarf.Id;
+            itemJob.ReservedItemIds.Add(drink.Id);
+            return itemJob;
+        }
+
+        if (map is null)
+            return null;
+
+        Vec3i targetPos;
+        if (DrinkSourceLocator.CanDrinkAt(map, origin))
+        {
+            targetPos = origin;
+        }
+        else if (TryResolveDrinkTileTarget(map, origin, out var drinkTile))
+        {
+            targetPos = drinkTile;
+        }
+        else
+        {
+            return null;
+        }
+
+        var waterJob = jobSystem.CreateJob(Jobs.JobDefIds.Drink, targetPos, priority: DrinkSurvivalPriority);
+        waterJob.AssignedDwarfId = dwarf.Id;
+        return waterJob;
+    }
+
+    private bool TryResolveDrinkTileTarget(WorldMap map, Vec3i origin, out Vec3i drinkTile)
+    {
+        if (DrinkSourceLocator.TryFindNearestDrinkableTile(map, origin, DrinkSearchRadius, out drinkTile))
+            return true;
+
+        var fortressLocations = _ctx!.TryGet<FortressLocationSystem>();
+        if (fortressLocations is null || !fortressLocations.TryGetClosestDrinkLocation(out drinkTile))
+            return false;
+
+        return DrinkSourceLocator.IsDrinkableWaterTile(map, drinkTile);
+    }
+
+    private void TrackJob((int entityId, string jobDefId) key, Jobs.Job job)
+    {
         _activeJobIds[key] = job.Id;
         _jobIdToKey[job.Id] = key;  // O(1) reverse mapping
     }

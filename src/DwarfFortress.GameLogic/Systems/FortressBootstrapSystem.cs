@@ -80,15 +80,18 @@ public sealed class FortressBootstrapSystem : IGameSystem
         InjectStarterHostileSpawn(generatedMap, embark, cmd.Seed);
         SpawnGeneratedWildlife(generatedMap, embark);
 
-        // Single 3×3 all-categories stockpile
-        _ctx.Commands.Dispatch(new CreateStockpileCommand(embark + new Vec3i(-1, -1, 0), embark + new Vec3i(1, 1, 0), []));
+        var stockpile = CreateStarterStockpile(embark);
 
-        // Seed one starter log so the initial workshop can always be constructed.
-        items.CreateItem(ResolveMaterialFormItemDefId(MaterialIds.Wood, WorldGen.Content.ContentFormRoles.Log, ItemDefIds.Log), MaterialIds.Wood, embark + new Vec3i(2, 1, 0));
-        TryPlaceStarterWorkshop(embark);
+        var starterSupplyPos = embark + new Vec3i(2, 1, 0);
+        if (stockpile is not null)
+            starterSupplyPos = stockpile.AllSlots().Skip(2).DefaultIfEmpty(starterSupplyPos).First();
+
+        items.CreateItem(
+            ResolveMaterialFormItemDefId(MaterialIds.Wood, WorldGen.Content.ContentFormRoles.Log, ItemDefIds.Log),
+            MaterialIds.Wood,
+            starterSupplyPos);
 
         // Spawn two pre-filled boxes on distinct stockpile slots
-        var stockpile = _ctx.Get<StockpileManager>().GetAll().FirstOrDefault();
         if (stockpile is not null)
         {
             var slots = stockpile.AllSlots().Take(2).ToArray();
@@ -113,9 +116,8 @@ public sealed class FortressBootstrapSystem : IGameSystem
             }
         }
 
-        int workshopId = buildings.GetAll().FirstOrDefault(b => b.BuildingDefId == BuildingDefIds.CarpenterWorkshop)?.Id ?? -1;
         _ctx.EventBus.Emit(new FortressStartedEvent(cmd.Seed, cmd.Width, cmd.Height, cmd.Depth,
-            _ctx.Get<EntityRegistry>().GetAll<Entities.Dwarf>().Count(), workshopId));
+            _ctx.Get<EntityRegistry>().GetAll<Entities.Dwarf>().Count(), WorkshopBuildingId: -1));
     }
 
     private GeneratedEmbarkMap GenerateEmbarkForCommand(int seed, int width, int height, int depth)
@@ -283,29 +285,70 @@ public sealed class FortressBootstrapSystem : IGameSystem
         return candidates;
     }
 
-    private void TryPlaceStarterWorkshop(Vec3i embark)
+    private StockpileData? CreateStarterStockpile(Vec3i embark)
     {
-        var buildings = _ctx!.Get<BuildingSystem>();
-        var preferredOrigins = new[]
+        var map = _ctx!.Get<WorldMap>();
+        var stockpiles = _ctx.Get<StockpileManager>();
+        var preferredZones = new[]
         {
-            embark + new Vec3i(3, 1, 0),
-            embark + new Vec3i(3, -1, 0),
-            embark + new Vec3i(-4, 1, 0),
-            embark + new Vec3i(-4, -1, 0),
-            embark + new Vec3i(1, 3, 0),
-            embark + new Vec3i(-1, 3, 0),
-            embark + new Vec3i(1, -4, 0),
-            embark + new Vec3i(-1, -4, 0),
+            (From: embark + new Vec3i(2, -1, 0), To: embark + new Vec3i(4, 1, 0)),
+            (From: embark + new Vec3i(-4, -1, 0), To: embark + new Vec3i(-2, 1, 0)),
+            (From: embark + new Vec3i(-1, 2, 0), To: embark + new Vec3i(1, 4, 0)),
+            (From: embark + new Vec3i(-1, -4, 0), To: embark + new Vec3i(1, -2, 0)),
+            (From: embark + new Vec3i(2, 2, 0), To: embark + new Vec3i(4, 4, 0)),
+            (From: embark + new Vec3i(-4, 2, 0), To: embark + new Vec3i(-2, 4, 0)),
+            (From: embark + new Vec3i(2, -4, 0), To: embark + new Vec3i(4, -2, 0)),
+            (From: embark + new Vec3i(-4, -4, 0), To: embark + new Vec3i(-2, -2, 0)),
         };
 
-        foreach (var origin in preferredOrigins)
+        foreach (var zone in preferredZones)
         {
-            _ctx.Commands.Dispatch(new PlaceBuildingCommand(BuildingDefIds.CarpenterWorkshop, origin));
-            if (buildings.GetAll().Any(building => building.BuildingDefId == BuildingDefIds.CarpenterWorkshop))
-                return;
+            if (!IsStarterStockpileAreaValid(map, embark, zone.From, zone.To))
+                continue;
+
+            return DispatchStarterStockpile(zone.From, zone.To, stockpiles);
         }
 
-        _ctx.Logger?.Warn("FortressBootstrapSystem: failed to place starter carpenter workshop.");
+        var fallbackZone = preferredZones[0];
+        _ctx.Logger?.Warn("FortressBootstrapSystem: failed to find a clean starter stockpile area; using east-side fallback.");
+        return DispatchStarterStockpile(fallbackZone.From, fallbackZone.To, stockpiles);
+    }
+
+    private StockpileData? DispatchStarterStockpile(Vec3i from, Vec3i to, StockpileManager stockpiles)
+    {
+        var previousIds = stockpiles.GetAll().Select(stockpile => stockpile.Id).ToHashSet();
+        _ctx!.Commands.Dispatch(new CreateStockpileCommand(from, to, []));
+
+        return stockpiles.GetAll()
+            .OrderByDescending(stockpile => stockpile.Id)
+            .FirstOrDefault(stockpile => !previousIds.Contains(stockpile.Id))
+            ?? stockpiles.GetAll().OrderByDescending(stockpile => stockpile.Id).FirstOrDefault();
+    }
+
+    private static bool IsStarterStockpileAreaValid(WorldMap map, Vec3i embark, Vec3i from, Vec3i to)
+    {
+        var minX = Math.Min(from.X, to.X);
+        var maxX = Math.Max(from.X, to.X);
+        var minY = Math.Min(from.Y, to.Y);
+        var maxY = Math.Max(from.Y, to.Y);
+
+        for (var x = minX; x <= maxX; x++)
+        for (var y = minY; y <= maxY; y++)
+        {
+            var pos = new Vec3i(x, y, from.Z);
+            if (pos == embark || !map.IsInBounds(pos))
+                return false;
+
+            var tile = map.GetTile(pos);
+            if (tile.TileDefId == TileDefIds.Empty || tile.TileDefId == TileDefIds.Staircase)
+                return false;
+            if (!map.IsWalkable(pos))
+                return false;
+            if (tile.FluidType != FluidType.None || tile.FluidLevel > 0)
+                return false;
+        }
+
+        return true;
     }
 
     private static void ApplyProvenance(Dwarf dwarf, DwarfProvenanceComponent? provenance)

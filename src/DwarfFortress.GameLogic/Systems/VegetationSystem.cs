@@ -61,7 +61,7 @@ public sealed class VegetationSystem : IGameSystem
             var plantDef = data.Plants.GetOrNull(tile.PlantDefId);
             if (plantDef is null)
             {
-                ClearPlantState(ref tile);
+                PlantHarvesting.ClearPlantState(ref tile);
                 tileChanged = true;
                 map.SetTile(pos, tile);
                 continue;
@@ -69,7 +69,7 @@ public sealed class VegetationSystem : IGameSystem
 
             if (!IsHostStillValid(tile, plantDef))
             {
-                ClearPlantState(ref tile);
+                PlantHarvesting.ClearPlantState(ref tile);
                 tileChanged = true;
                 map.SetTile(pos, tile);
                 continue;
@@ -334,14 +334,5 @@ public sealed class VegetationSystem : IGameSystem
         }
 
         return false;
-    }
-
-    private static void ClearPlantState(ref TileData tile)
-    {
-        tile.PlantDefId = null;
-        tile.PlantGrowthStage = 0;
-        tile.PlantGrowthProgressSeconds = 0f;
-        tile.PlantYieldLevel = 0;
-        tile.PlantSeedLevel = 0;
     }
 }

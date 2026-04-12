@@ -20,7 +20,7 @@ public readonly record struct ItemLikeVisualDescriptor(
 
 public static class ItemLikeVisualResolver
 {
-    private static readonly Vector2 ContainerEntityPixelSize = new(36f, 36f);
+    private static readonly Vector2 ContainerEntityPixelSize = new(40f, 40f);
 
     public static ItemLikeVisualDescriptor ResolveLooseItem(Item item, ItemSystem? items, bool includeStoragePreview = true)
     {

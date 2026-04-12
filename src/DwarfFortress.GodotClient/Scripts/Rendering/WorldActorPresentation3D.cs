@@ -19,7 +19,11 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private const float ItemFeetHeight = 0.12f;
     private const float CarriedItemFeetHeight = 0.70f;
     private const float CarriedItemScale = 0.78f;
+    private const float ContainerPreviewScale = 0.54f;
+    private const float ContainerPreviewDepthOffset = 0.016f;
     private const float WaterSurfaceOffset = 0.012f;
+    private const int BillboardRenderPriority = 1;
+    private const int BillboardOutlineRenderPriority = 2;
     private const float HoverOutlineScale = 1.14f;
     private const float HoverOutlineDepthOffset = -0.0025f;
     private const int MaxVisibleCreatureBillboards = 96;
@@ -37,6 +41,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private readonly Dictionary<int, BillboardState> _dwarfBillboards = new();
     private readonly Dictionary<int, BillboardState> _creatureBillboards = new();
     private readonly Dictionary<int, BillboardState> _itemBillboards = new();
+    private readonly Dictionary<int, BillboardState> _inventoryPickupCueBillboards = new();
     private readonly Dictionary<int, MovementInterpolationState> _movementInterpolations = new();
     private readonly Dictionary<int, EmoteBubbleState> _emoteBubbles = new();
     private readonly Dictionary<int, Label3D> _worldFxLabels = new();
@@ -50,6 +55,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private readonly HashSet<int> _visibleDwarfIdSet = new();
     private readonly HashSet<int> _visibleCreatureIdSet = new();
     private readonly HashSet<int> _visibleItemIdSet = new();
+    private readonly HashSet<int> _visibleInventoryPickupCueIds = new();
     private readonly HashSet<int> _visibleInterpolatedIds = new();
     private readonly HashSet<int> _visibleEmoteBubbleIds = new();
 
@@ -69,6 +75,29 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
     public bool HasDebugHoveredBillboardOutline()
         => _hoveredBillboard?.Outline.Visible == true;
+
+    public int GetDebugItemBillboardRenderPriority()
+        => _itemBillboards.Values
+            .Select(state => state.Mesh.MaterialOverride as StandardMaterial3D)
+            .FirstOrDefault(material => material is not null)
+            ?.RenderPriority ?? 0;
+
+    public int GetDebugItemPreviewCount(int itemLikeId)
+    {
+        if (!_itemBillboards.TryGetValue(itemLikeId, out var state))
+            return 0;
+
+        return state.PreviewMeshes.Count(mesh => mesh.Visible);
+    }
+
+    public int GetDebugVisibleInventoryPickupCueCount()
+        => _inventoryPickupCueBillboards.Count;
+
+    public int GetDebugMaxVisibleInventoryPickupCueId()
+        => _inventoryPickupCueBillboards.Count > 0 ? _inventoryPickupCueBillboards.Keys.Max() : 0;
+
+    public bool HasDebugInventoryPickupCue(int cueId)
+        => _inventoryPickupCueBillboards.ContainsKey(cueId);
 
     public bool TryResolveHoveredBillboardTile(Camera3D? camera, Viewport viewport, Vector2 screenPosition, out Vector2I tile)
     {
@@ -134,6 +163,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         ClearBillboards(_dwarfBillboards);
         ClearBillboards(_creatureBillboards);
         ClearBillboards(_itemBillboards);
+        ClearBillboards(_inventoryPickupCueBillboards);
         _movementInterpolations.Clear();
         ClearEmoteBubbles(_emoteBubbles);
         ClearLabels(_worldFxLabels);
@@ -165,6 +195,12 @@ public sealed partial class WorldActorPresentation3D : Node3D
         {
             state.Root.Visible = active;
             state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
+        }
+
+        foreach (var state in _inventoryPickupCueBillboards.Values)
+        {
+            state.Root.Visible = active;
+            state.Outline.Visible = false;
         }
 
         foreach (var bubble in _emoteBubbles.Values)
@@ -210,6 +246,9 @@ public sealed partial class WorldActorPresentation3D : Node3D
         using (profiler?.Measure("billboards") ?? default)
             SyncBillboards(registry, items, spatial, movementPresentation, feedback, currentZ, minX, minY, maxX, maxY, nowSeconds);
 
+        using (profiler?.Measure("item_pickup_cues") ?? default)
+            SyncInventoryPickupCueBillboards(feedback, currentZ);
+
         using (profiler?.Measure("water_effects") ?? default)
             SyncWaterEffects(map, data, registry, renderCache, currentZ);
 
@@ -237,6 +276,41 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         SyncItemBillboards(registry, items, spatial, movementPresentation, currentZ, minX, minY, maxX, maxY, nowSeconds);
         RemoveStaleInterpolations();
+    }
+
+    private void SyncInventoryPickupCueBillboards(GameFeedbackController? feedback, int currentZ)
+    {
+        _visibleInventoryPickupCueIds.Clear();
+        if (feedback is null)
+        {
+            ClearBillboards(_inventoryPickupCueBillboards);
+            return;
+        }
+
+        foreach (var cue in feedback.GetInventoryPickupCueViews(currentZ))
+        {
+            _visibleInventoryPickupCueIds.Add(cue.Id);
+            var visual = WorldSpriteVisuals.Item(cue.ItemDefId);
+            var progress = cue.Duration <= 0f
+                ? 1f
+                : Mathf.Clamp(1f - (cue.TimeLeft / cue.Duration), 0f, 1f);
+            var start = ResolveBillboardPosition(cue.SourcePosition, ItemFeetHeight);
+            var end = TryResolveCarrierAnchorPosition(cue.CarrierEntityId, out var carrierPosition)
+                ? carrierPosition
+                : ResolveBillboardPosition(cue.TargetPosition, CarriedItemFeetHeight);
+            var position = start.Lerp(end, progress);
+            position.Y += Mathf.Sin(progress * Mathf.Pi) * 0.34f;
+
+            SyncBillboard(
+                _inventoryPickupCueBillboards,
+                cue.Id,
+                $"InventoryPickupCue_{cue.Id}",
+                visual.Texture,
+                position,
+                visual.WorldSize * CarriedItemScale);
+        }
+
+        RemoveStaleBillboards(_inventoryPickupCueBillboards, _visibleInventoryPickupCueIds);
     }
 
     private void SyncDwarfBillboards(EntityRegistry registry, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, GameFeedbackController? feedback, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
@@ -357,9 +431,56 @@ public sealed partial class WorldActorPresentation3D : Node3D
                 entry.Descriptor.Visual.Texture,
                 ResolveItemBillboardPosition(entry, nowSeconds),
                 billboardSize);
+            ApplyItemLikeDecorators(_itemBillboards[entry.RuntimeId], entry.Descriptor);
         }
 
         RemoveStaleBillboards(_itemBillboards, _visibleItemIdSet);
+    }
+
+    private void ApplyItemLikeDecorators(BillboardState state, ItemLikeVisualDescriptor descriptor)
+    {
+        var visiblePreviewCount = Math.Min(descriptor.PreviewItems.Length, state.PreviewMeshes.Length);
+        for (var index = 0; index < state.PreviewMeshes.Length; index++)
+        {
+            var previewMesh = state.PreviewMeshes[index];
+            if (index >= visiblePreviewCount)
+            {
+                ReplaceOwnedMesh(previewMesh, null);
+                previewMesh.MaterialOverride = null;
+                previewMesh.Visible = false;
+                continue;
+            }
+
+            var previewVisual = descriptor.PreviewItems[index];
+            var previewSize = previewVisual.WorldSize * ContainerPreviewScale;
+            var quadMesh = previewMesh.Mesh as QuadMesh ?? new QuadMesh();
+            quadMesh.Size = previewSize;
+            previewMesh.Mesh = quadMesh;
+            previewMesh.MaterialOverride = GetBillboardMaterial(previewVisual.Texture);
+            previewMesh.Position = ResolveContainerPreviewPosition(state.Size, visiblePreviewCount, index);
+            previewMesh.Visible = _isActive;
+        }
+    }
+
+    private static Vector3 ResolveContainerPreviewPosition(Vector2 containerSize, int previewCount, int index)
+    {
+        float[] xOffsets = previewCount switch
+        {
+            1 => new[] { 0f },
+            2 => new[] { -0.18f, 0.18f },
+            _ => new[] { -0.24f, 0f, 0.24f },
+        };
+        float[] yOffsets = previewCount switch
+        {
+            1 => new[] { 0.84f },
+            2 => new[] { 0.78f, 0.88f },
+            _ => new[] { 0.76f, 0.90f, 0.80f },
+        };
+
+        return new Vector3(
+            containerSize.X * xOffsets[index],
+            containerSize.Y * yOffsets[index],
+            ContainerPreviewDepthOffset + (index * 0.0025f));
     }
 
     private Vector3 ResolveItemBillboardPosition(ItemLikeSceneEntry entry, double nowSeconds)
@@ -861,6 +982,13 @@ public sealed partial class WorldActorPresentation3D : Node3D
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             Visible = false,
         };
+        var previewMeshes = Enumerable.Range(0, 3)
+            .Select(_ => new MeshInstance3D
+            {
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Visible = false,
+            })
+            .ToArray();
         var waterTint = new MeshInstance3D
         {
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
@@ -879,11 +1007,13 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         root.AddChild(outline);
         root.AddChild(mesh);
+        foreach (var previewMesh in previewMeshes)
+            root.AddChild(previewMesh);
         root.AddChild(waterTint);
         root.AddChild(waterLine);
         AddChild(root);
 
-        var state = new BillboardState(root, mesh, outline, waterTint, waterTintMaterial, waterLine, waterLineMaterial, texture, size);
+        var state = new BillboardState(root, mesh, outline, previewMeshes, waterTint, waterTintMaterial, waterLine, waterLineMaterial, texture, size);
         ApplyBillboardVisual(state, texture, size);
         return state;
     }
@@ -918,6 +1048,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
             AlbedoTexture = texture,
+            RenderPriority = BillboardRenderPriority,
         };
 
         _billboardMaterials[texture] = material;
@@ -937,6 +1068,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
             AlbedoTexture = texture,
             AlbedoColor = HoverOutlineTint,
+            RenderPriority = BillboardOutlineRenderPriority,
         };
 
         _outlineBillboardMaterials[texture] = material;
@@ -954,6 +1086,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
             VertexColorUseAsAlbedo = true,
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+            RenderPriority = BillboardRenderPriority,
         };
     }
 
@@ -1064,6 +1197,11 @@ public sealed partial class WorldActorPresentation3D : Node3D
         state.Mesh.MaterialOverride = null;
         ReplaceOwnedMesh(state.Outline, null);
         state.Outline.MaterialOverride = null;
+        foreach (var previewMesh in state.PreviewMeshes)
+        {
+            ReplaceOwnedMesh(previewMesh, null);
+            previewMesh.MaterialOverride = null;
+        }
         ReplaceOwnedMesh(state.WaterTint, null);
         state.WaterTint.MaterialOverride = null;
         ReplaceOwnedMesh(state.WaterLine, null);
@@ -1316,6 +1454,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
+            RenderPriority = BillboardRenderPriority,
         };
     }
 
@@ -1428,6 +1567,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
             Node3D root,
             MeshInstance3D mesh,
             MeshInstance3D outline,
+            MeshInstance3D[] previewMeshes,
             MeshInstance3D waterTint,
             StandardMaterial3D waterTintMaterial,
             MeshInstance3D waterLine,
@@ -1438,6 +1578,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
             Root = root;
             Mesh = mesh;
             Outline = outline;
+            PreviewMeshes = previewMeshes;
             WaterTint = waterTint;
             WaterTintMaterial = waterTintMaterial;
             WaterLine = waterLine;
@@ -1450,7 +1591,9 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         public MeshInstance3D Mesh { get; }
 
-    public MeshInstance3D Outline { get; }
+        public MeshInstance3D Outline { get; }
+
+        public MeshInstance3D[] PreviewMeshes { get; }
 
         public MeshInstance3D WaterTint { get; }
 

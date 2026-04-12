@@ -234,11 +234,8 @@ public sealed class JobSystem : IGameSystem
     {
         if (!_jobs.TryGetValue(jobId, out var job)) return;
 
-        if (job.IsAssigned && _ctx is not null)
-        {
-            if (_strategies.TryGetValue(job.JobDefId, out var strat))
-                strat.OnInterrupt(job, job.AssignedDwarfId, _ctx);
-        }
+        if (_ctx is not null && _strategies.TryGetValue(job.JobDefId, out var strat))
+            strat.OnInterrupt(job, job.AssignedDwarfId, _ctx);
 
         StopWorkAnimation(job);
         SetJobStatus(job, JobStatus.Cancelled);
@@ -254,6 +251,30 @@ public sealed class JobSystem : IGameSystem
     }
 
     public IEnumerable<Job> GetAllJobs() => _jobs.Values;
+
+    public IEnumerable<Job> GetOpenJobsReferencingItem(int itemId)
+    {
+        foreach (var job in _jobs.Values)
+        {
+            if (job.Status != JobStatus.Pending && job.Status != JobStatus.InProgress)
+                continue;
+
+            if (job.EntityId == itemId)
+            {
+                yield return job;
+                continue;
+            }
+
+            foreach (var reservedItemId in job.ReservedItemIds)
+            {
+                if (reservedItemId != itemId)
+                    continue;
+
+                yield return job;
+                break;
+            }
+        }
+    }
 
     private static string DescribeStep(ActionStep step) => step switch
     {

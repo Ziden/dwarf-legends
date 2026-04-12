@@ -149,6 +149,7 @@ public sealed record PlantContentDefinition(
     string? HarvestItemDefId = null,
     string? SeedItemDefId = null,
     string? FruitItemDefId = null,
+    bool DropYieldOnHostRemoval = false,
     ContentItemDefinition? HarvestItem = null,
     ContentItemDefinition? SeedItem = null,
     ContentItemDefinition? FruitItem = null,

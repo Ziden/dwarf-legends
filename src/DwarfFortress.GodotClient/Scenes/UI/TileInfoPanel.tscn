@@ -4,7 +4,8 @@
 [ext_resource type="Script" path="res://Scripts/UI/ItemSelectionList.cs" id="2"]
 
 [node name="TileInfoPanel" type="PanelContainer"]
-custom_minimum_size = Vector2(272, 0)
+custom_minimum_size = Vector2(348, 0)
+size_flags_horizontal = 3
 script = ExtResource("1")
 
 [node name="Margin" type="MarginContainer" parent="."]
@@ -13,57 +14,98 @@ theme_override_constants/margin_right = 6
 theme_override_constants/margin_top = 6
 theme_override_constants/margin_bottom = 6
 
-[node name="VBox" type="VBoxContainer" parent="Margin"]
-theme_override_constants/separation = 4
+[node name="HBox" type="HBoxContainer" parent="Margin"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
 
-[node name="SelectedItemIconContainer" type="CenterContainer" parent="Margin/VBox"]
+[node name="TargetTabsScroll" type="ScrollContainer" parent="Margin/HBox"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(56, 0)
+size_flags_vertical = 3
+
+[node name="TargetTabs" type="VBoxContainer" parent="Margin/HBox/TargetTabsScroll"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TargetTabsSeparator" type="VSeparator" parent="Margin/HBox"]
 unique_name_in_owner = true
 visible = false
 
-[node name="SelectedItemIcon" type="TextureRect" parent="Margin/VBox/SelectedItemIconContainer"]
+[node name="VBox" type="VBoxContainer" parent="Margin/HBox"]
+custom_minimum_size = Vector2(260, 0)
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="SelectedItemIconContainer" type="CenterContainer" parent="Margin/HBox/VBox"]
+unique_name_in_owner = true
+visible = false
+
+[node name="SelectedItemIcon" type="TextureRect" parent="Margin/HBox/VBox/SelectedItemIconContainer"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(40, 40)
 
-[node name="ContentLabel" type="Label" parent="Margin/VBox"]
+[node name="ContentLabel" type="Label" parent="Margin/HBox/VBox"]
 unique_name_in_owner = true
 autowrap_mode = 3
 
-[node name="ResourceActionsSeparator" type="HSeparator" parent="Margin/VBox"]
+[node name="OccupantsSeparator" type="HSeparator" parent="Margin/HBox/VBox"]
 unique_name_in_owner = true
 visible = false
 
-[node name="ResourceActionsHeading" type="Label" parent="Margin/VBox"]
+[node name="OccupantsHeading" type="Label" parent="Margin/HBox/VBox"]
+unique_name_in_owner = true
+visible = false
+text = "Tile Targets"
+theme_override_font_sizes/font_size = 14
+
+[node name="OccupantsList" type="ScrollContainer" parent="Margin/HBox/VBox"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(0, 132)
+size_flags_vertical = 3
+script = ExtResource("2")
+
+[node name="Content" type="VBoxContainer" parent="Margin/HBox/VBox/OccupantsList"]
+theme_override_constants/separation = 4
+
+[node name="ResourceActionsSeparator" type="HSeparator" parent="Margin/HBox/VBox"]
+unique_name_in_owner = true
+visible = false
+
+[node name="ResourceActionsHeading" type="Label" parent="Margin/HBox/VBox"]
 unique_name_in_owner = true
 visible = false
 text = "Resource Actions"
 theme_override_font_sizes/font_size = 14
 
-[node name="ResourceActionsList" type="ScrollContainer" parent="Margin/VBox"]
+[node name="ResourceActionsList" type="ScrollContainer" parent="Margin/HBox/VBox"]
 unique_name_in_owner = true
 visible = false
 custom_minimum_size = Vector2(0, 144)
 size_flags_vertical = 3
 script = ExtResource("2")
 
-[node name="Content" type="VBoxContainer" parent="Margin/VBox/ResourceActionsList"]
+[node name="Content" type="VBoxContainer" parent="Margin/HBox/VBox/ResourceActionsList"]
 theme_override_constants/separation = 4
 
-[node name="ContainerContentsSeparator" type="HSeparator" parent="Margin/VBox"]
+[node name="ContainerContentsSeparator" type="HSeparator" parent="Margin/HBox/VBox"]
 unique_name_in_owner = true
 visible = false
 
-[node name="ContainerContentsHeading" type="Label" parent="Margin/VBox"]
+[node name="ContainerContentsHeading" type="Label" parent="Margin/HBox/VBox"]
 unique_name_in_owner = true
 visible = false
 text = "Contents"
 theme_override_font_sizes/font_size = 14
 
-[node name="ContainerContentsList" type="ScrollContainer" parent="Margin/VBox"]
+[node name="ContainerContentsList" type="ScrollContainer" parent="Margin/HBox/VBox"]
 unique_name_in_owner = true
 visible = false
 custom_minimum_size = Vector2(0, 160)
 size_flags_vertical = 3
 script = ExtResource("2")
 
-[node name="Content" type="VBoxContainer" parent="Margin/VBox/ContainerContentsList"]
+[node name="Content" type="VBoxContainer" parent="Margin/HBox/VBox/ContainerContentsList"]
 theme_override_constants/separation = 4

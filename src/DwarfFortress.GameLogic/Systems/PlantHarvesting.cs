@@ -149,6 +149,54 @@ public static class PlantHarvesting
         return true;
     }
 
+    public static bool TryDropYieldOnHostRemoval(GameContext ctx, Vec3i pos, bool dropHarvestItem, out PlantHarvestResult result)
+    {
+        var map = ctx.Get<WorldMap>();
+        var data = ctx.Get<DataManager>();
+        if (!TryGetHarvestablePlant(map, data, pos, out var plantDef)
+            || plantDef.HostKind != PlantHostKind.Tree
+            || !plantDef.DropYieldOnHostRemoval)
+        {
+            result = default;
+            return false;
+        }
+
+        var harvestItemDefId = ResolveHarvestItemDefId(data, plantDef);
+        if (string.IsNullOrWhiteSpace(harvestItemDefId))
+        {
+            result = default;
+            return false;
+        }
+
+        var itemSystem = ctx.TryGet<ItemSystem>();
+        var harvestItemEntityId = default(int?);
+        var droppedHarvestItem = dropHarvestItem && itemSystem is not null;
+        if (droppedHarvestItem)
+            harvestItemEntityId = itemSystem!.CreateItem(harvestItemDefId, MaterialIds.Food, pos).Id;
+
+        var harvestDisplayName = data.Items.GetOrNull(harvestItemDefId)?.DisplayName ?? plantDef.DisplayName;
+        result = new PlantHarvestResult(
+            plantDef.Id,
+            plantDef.DisplayName,
+            harvestItemDefId,
+            harvestDisplayName,
+            SeedItemDefId: null,
+            HarvestItemEntityId: harvestItemEntityId,
+            SeedItemEntityId: null,
+            DroppedHarvestItem: droppedHarvestItem,
+            DroppedSeedItem: false);
+        return true;
+    }
+
+    public static void ClearPlantState(ref TileData tile)
+    {
+        tile.PlantDefId = null;
+        tile.PlantGrowthStage = 0;
+        tile.PlantGrowthProgressSeconds = 0f;
+        tile.PlantYieldLevel = 0;
+        tile.PlantSeedLevel = 0;
+    }
+
     private static void ResetAfterHarvest(ref TileData tile, PlantDef plantDef)
     {
         tile.IsDesignated = false;

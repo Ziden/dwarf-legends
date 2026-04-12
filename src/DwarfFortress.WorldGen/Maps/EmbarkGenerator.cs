@@ -47,6 +47,7 @@ public static class EmbarkGenerator
             float[,] moisture,
             float[,] canopyMask,
             float[,] forestPatchMask,
+            float[,] forestOpeningMask,
             IReadOnlyList<int> caveLayers,
             GeneratedTile surface)
         {
@@ -70,6 +71,7 @@ public static class EmbarkGenerator
             Moisture = moisture;
             CanopyMask = canopyMask;
             ForestPatchMask = forestPatchMask;
+            ForestOpeningMask = forestOpeningMask;
             CaveLayers = caveLayers;
             Surface = surface;
         }
@@ -94,6 +96,7 @@ public static class EmbarkGenerator
         public float[,] Moisture { get; }
         public float[,] CanopyMask { get; }
         public float[,] ForestPatchMask { get; }
+        public float[,] ForestOpeningMask { get; }
         public IReadOnlyList<int> CaveLayers { get; }
         public GeneratedTile Surface { get; }
         public List<EmbarkGenerationStageSnapshot> StageSnapshots { get; } = [];
@@ -178,6 +181,7 @@ public static class EmbarkGenerator
             settings.NoiseOriginY);
         var canopyMask = BuildCanopyMaskMap(settings.Width, settings.Height, seed, settings.NoiseOriginX, settings.NoiseOriginY);
         var forestPatchMask = BuildForestPatchMaskMap(settings.Width, settings.Height, seed, forestPatchBias, settings.NoiseOriginX, settings.NoiseOriginY);
+        var forestOpeningMask = BuildForestOpeningMaskMap(settings.Width, settings.Height, seed, settings.NoiseOriginX, settings.NoiseOriginY);
         var caveLayers = ResolveCaveLayerDepths(map.Depth);
         var surface = ResolveSurfaceTile(biome.Id, useStoneSurface, settings.SurfaceTileOverrideId);
 
@@ -202,6 +206,7 @@ public static class EmbarkGenerator
             moisture,
             canopyMask,
             forestPatchMask,
+            forestOpeningMask,
             caveLayers,
             surface);
     }
@@ -256,6 +261,7 @@ public static class EmbarkGenerator
             context.Moisture,
             context.CanopyMask,
             context.ForestPatchMask,
+            context.ForestOpeningMask,
             context.BiomeId,
             context.ForestPatchBias);
         AddOutcrops(context.Map, context.Rng, context.OutcropMin, context.OutcropMax, context.Terrain);
@@ -287,7 +293,15 @@ public static class EmbarkGenerator
         EnsureBorderPassable(context.Map, context.Surface);
         EnsureCentralEmbarkZone(context.Map, context.Surface);
         PlaceCentralStaircase(context.Map);
-            AddPlants(context.Map, context.Seed, context.Rng, context.Terrain, context.Moisture, context.BiomeId);
+        AddPlants(
+            context.Map,
+            context.Seed,
+            context.Rng,
+            context.Terrain,
+            context.Moisture,
+            context.ForestPatchMask,
+            context.ForestOpeningMask,
+            context.BiomeId);
     }
 
     private static void RunPopulationStage(LocalGenerationContext context)
@@ -1409,6 +1423,30 @@ public static class EmbarkGenerator
         return map;
     }
 
+    private static float[,] BuildForestOpeningMaskMap(int width, int height, int seed, int noiseOriginX, int noiseOriginY)
+    {
+        var map = new float[width, height];
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
+        {
+            var fx = ResolveNoiseSampleCoord(noiseOriginX, x, width);
+            var fy = ResolveNoiseSampleCoord(noiseOriginY, y, height);
+
+            var coarse = CoherentNoise.DomainWarpedFractal2D(
+                seed, fx * 1.85f, fy * 1.85f, octaves: 3, lacunarity: 2f, gain: 0.54f, warpStrength: 0.28f, salt: 991);
+            var laneSource = CoherentNoise.DomainWarpedFractal2D(
+                seed, fx * 1.10f, fy * 1.10f, octaves: 2, lacunarity: 2f, gain: 0.50f, warpStrength: 0.18f, salt: 1021);
+            var lanes = 1f - MathF.Abs((laneSource * 2f) - 1f);
+            var detail = CoherentNoise.Fractal2D(
+                seed, fx * 4.6f, fy * 4.6f, octaves: 2, lacunarity: 2f, gain: 0.50f, salt: 1039);
+
+            map[x, y] = Math.Clamp((coarse * 0.54f) + (lanes * 0.34f) + (detail * 0.12f), 0f, 1f);
+        }
+
+        SmoothPlantNoise(map, width, height, passes: 2);
+        return map;
+    }
+
     private static void SmoothScalarMask(float[,] map, int width, int height, int passes, float blend)
     {
         if (passes <= 0 || blend <= 0f)
@@ -2282,6 +2320,7 @@ public static class EmbarkGenerator
         float[,] moisture,
         float[,] canopyMask,
         float[,] forestPatchMask,
+        float[,] forestOpeningMask,
         string biomeId,
         float forestPatchBias)
     {
@@ -2296,6 +2335,7 @@ public static class EmbarkGenerator
         var clampedPatchBias = Math.Clamp(forestPatchBias, -1f, 1f);
         var biomeCoverageBoost = biomeProfile.TreeCoverageBoost;
         var suitabilityFloor = biomeProfile.TreeSuitabilityFloor;
+        var forestTreeFillRatio = Math.Clamp(biomeProfile.ForestTreeFillRatio, 0.50f, 0.98f);
         var denseForestBiome = biomeProfile.DenseForest;
         var canopyWeight = 0.14f - (Math.Max(0f, clampedPatchBias) * 0.03f);
         var patchWeight = 0.28f + (Math.Max(0f, clampedPatchBias) * 0.14f);
@@ -2316,6 +2356,10 @@ public static class EmbarkGenerator
             eligibleLandTiles++;
             var riparianBoost = EstimateRiparianBoost(map, x, y);
             var ruggedness = EstimateRuggedness(terrain, x, y, map.Width, map.Height);
+            var forestCore = Math.Clamp((forestPatchMask[x, y] * 0.72f) + (canopyMask[x, y] * 0.28f), 0f, 1f);
+            if (ShouldReserveForestOpening(forestCore, forestOpeningMask[x, y], forestTreeFillRatio))
+                continue;
+
             var suitability = Math.Clamp(
                 (moisture[x, y] * moistureWeight) +
                 ((1f - terrain[x, y]) * 0.14f) +
@@ -2490,6 +2534,14 @@ public static class EmbarkGenerator
         return true;
     }
 
+    private static bool ShouldReserveForestOpening(float forestCore, float openingMask, float forestTreeFillRatio)
+    {
+        if (forestCore < 0.58f)
+            return false;
+
+        return openingMask >= forestTreeFillRatio;
+    }
+
     private static bool IsSurfaceSuitableForTree(GeneratedTile tile)
         => tile.TileDefId is GeneratedTileDefIds.Grass or GeneratedTileDefIds.Soil or GeneratedTileDefIds.Mud &&
            tile.IsPassable &&
@@ -2585,9 +2637,12 @@ public static class EmbarkGenerator
         Random rng,
         float[,] terrain,
         float[,] moisture,
+        float[,] forestPatchMask,
+        float[,] forestOpeningMask,
         string biomeId)
     {
         var plantCatalog = WorldGenPlantRegistry.Current;
+        var biomeProfile = WorldGenContentRegistry.Current.ResolveBiomePreset(biomeId, seed: 0);
         SeedFruitCanopies(map, rng, terrain, moisture, biomeId, plantCatalog);
 
         var density = WorldGenContentRegistry.Current.ResolveGroundPlantDensity(biomeId);
@@ -2641,14 +2696,21 @@ public static class EmbarkGenerator
             // Unlike hard exclusion, this allows some plants to be close together naturally.
             var nearbyCount = CountNearbyPlacedPlants(plantPlaced, x, y, radius: 3, map.Width, map.Height);
             var crowdingPenalty = nearbyCount * 0.08f; // Each nearby plant reduces score by 8%
+            var nearbyTrees = CountNearbySurfaceTrees(map, x, y, radius: 1);
+            var understoryBoost = ResolveForestUnderstoryBoost(
+                forestPatchMask[x, y],
+                forestOpeningMask[x, y],
+                nearbyTrees,
+                biomeProfile.ForestTreeFillRatio);
+            var effectiveDensity = Math.Clamp(density + understoryBoost, 0f, 1f);
 
             // Threshold scales with biome density: dense biomes accept lower scores.
-            var threshold = 0.72f - (density * 0.20f);
+            var threshold = 0.72f - (effectiveDensity * 0.20f);
             if (tile.TileDefId == GeneratedTileDefIds.Mud)
                 threshold -= 0.04f;
 
             var jitter = ((float)rng.NextDouble() - 0.5f) * 0.14f;
-            var finalScore = adjustedScore - crowdingPenalty + jitter;
+            var finalScore = adjustedScore + understoryBoost - crowdingPenalty + jitter;
             if (finalScore < threshold)
                 continue;
 
@@ -2734,6 +2796,47 @@ public static class EmbarkGenerator
             if (plantPlaced[nx, ny]) count++;
         }
         return count;
+    }
+
+    private static int CountNearbySurfaceTrees(GeneratedEmbarkMap map, int x, int y, int radius)
+    {
+        var count = 0;
+        for (var dy = -radius; dy <= radius; dy++)
+        for (var dx = -radius; dx <= radius; dx++)
+        {
+            if (dx == 0 && dy == 0)
+                continue;
+
+            var nx = x + dx;
+            var ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
+                continue;
+            if (map.GetTile(nx, ny, 0).TileDefId == GeneratedTileDefIds.Tree)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static float ResolveForestUnderstoryBoost(
+        float forestPatchValue,
+        float forestOpeningValue,
+        int nearbyTrees,
+        float forestTreeFillRatio)
+    {
+        if (nearbyTrees <= 0)
+            return 0f;
+
+        var openingSignal = Math.Clamp((forestOpeningValue - forestTreeFillRatio) / Math.Max(0.02f, 1f - forestTreeFillRatio), 0f, 1f);
+        if (openingSignal <= 0f)
+            return 0f;
+
+        var forestSignal = Math.Clamp((forestPatchValue - 0.42f) / 0.58f, 0f, 1f);
+        if (forestSignal <= 0f)
+            return 0f;
+
+        var treeSignal = Math.Clamp(nearbyTrees / 6f, 0f, 1f);
+        return openingSignal * forestSignal * treeSignal * 0.40f;
     }
 
     private static void SeedFruitCanopies(

@@ -156,6 +156,7 @@ public sealed class WorldGenContentCatalog
                 BaseMoisture: Math.Clamp(biomeProfileConfig.BaseMoisture ?? ResolveLegacyBaseMoisture(biomeProfileConfig.Id), 0f, 1f),
                 TreeCoverageBoost: Math.Clamp(biomeProfileConfig.TreeCoverageBoost ?? ResolveLegacyTreeCoverageBoost(biomeProfileConfig.Id), -1f, 1f),
                 TreeSuitabilityFloor: Math.Clamp(biomeProfileConfig.TreeSuitabilityFloor ?? ResolveLegacyTreeSuitabilityFloor(biomeProfileConfig.Id), 0f, 1f),
+                ForestTreeFillRatio: Math.Clamp(biomeProfileConfig.ForestTreeFillRatio ?? ResolveLegacyForestTreeFillRatio(biomeProfileConfig.Id), 0.50f, 0.98f),
                 DenseForest: biomeProfileConfig.DenseForest ?? ResolveLegacyDenseForest(biomeProfileConfig.Id),
                 SurfaceCreatureGroupBias: biomeProfileConfig.SurfaceCreatureGroupBias ?? ResolveLegacySurfaceCreatureGroupBias(biomeProfileConfig.Id),
                 TreeCoverMin: Math.Clamp(biomeProfileConfig.TreeCoverMin, 0f, 0.95f),
@@ -681,19 +682,19 @@ public sealed class WorldGenContentCatalog
     {
         return
         [
-            new(MacroBiomeIds.TemperatePlains, 0.20f, 0.48f, 0.56f, 0.04f, 0.21f, false, 0, 0.09f, 0.19f, 0, 2, 1, 0, false),
-            new(MacroBiomeIds.ConiferForest, 0.12f, 0.54f, 0.70f, 0.12f, 0.13f, true, 2, 0.22f, 0.38f, 0, 2, 1, 0, false),
-            new(MacroBiomeIds.Highland, 0.16f, 1.00f, 0.44f, 0.00f, 0.32f, false, -1, 0.02f, 0.08f, 10, 20, 1, 0, true),
-            new(MacroBiomeIds.MistyMarsh, 0.24f, 0.42f, 0.90f, 0.08f, 0.16f, false, 1, 0.06f, 0.14f, 0, 1, 2, 10, false),
-            new(MacroBiomeIds.WindsweptSteppe, 0.16f, 0.66f, 0.20f, 0.00f, 0.28f, false, 0, 0.01f, 0.05f, 1, 4, 0, 0, false),
-            new(MacroBiomeIds.TropicalRainforest, 0.28f, 0.48f, 0.82f, 0.16f, 0.08f, true, 3, 0.32f, 0.52f, 0, 2, 2, 4, false),
-            new(MacroBiomeIds.Savanna, 0.16f, 0.56f, 0.34f, 0.00f, 0.24f, false, 1, 0.03f, 0.09f, 1, 5, 1, 0, false),
-            new(MacroBiomeIds.Desert, 0.08f, 0.74f, 0.08f, 0.00f, 0.40f, false, -2, 0.00f, 0.01f, 3, 9, 0, 0, false),
-            new(MacroBiomeIds.Tundra, 0.12f, 0.78f, 0.24f, 0.00f, 0.32f, false, -2, 0.00f, 0.02f, 2, 8, 0, 0, false),
-            new(MacroBiomeIds.BorealForest, 0.20f, 0.58f, 0.66f, 0.14f, 0.11f, true, 2, 0.25f, 0.42f, 1, 4, 1, 1, false),
-            new(MacroBiomeIds.IcePlains, 0.08f, 0.72f, 0.16f, 0.00f, 0.40f, false, -3, 0.00f, 0.00f, 2, 7, 0, 0, false),
-            new(MacroBiomeIds.OceanShallow, 0.00f, 0.22f, 0.98f, 0.00f, 1.00f, false, 3, 0.00f, 0.00f, 0, 1, 0, 0, false),
-            new(MacroBiomeIds.OceanDeep, 0.00f, 0.18f, 1.00f, 0.00f, 1.00f, false, 4, 0.00f, 0.00f, 0, 0, 0, 0, false),
+            new(MacroBiomeIds.TemperatePlains, 0.20f, 0.48f, 0.56f, 0.04f, 0.21f, 0.80f, false, 0, 0.09f, 0.19f, 0, 2, 1, 0, false),
+            new(MacroBiomeIds.ConiferForest, 0.12f, 0.54f, 0.70f, 0.12f, 0.13f, 0.70f, true, 2, 0.22f, 0.38f, 0, 2, 1, 0, false),
+            new(MacroBiomeIds.Highland, 0.16f, 1.00f, 0.44f, 0.00f, 0.32f, 0.88f, false, -1, 0.02f, 0.08f, 10, 20, 1, 0, true),
+            new(MacroBiomeIds.MistyMarsh, 0.24f, 0.42f, 0.90f, 0.08f, 0.16f, 0.76f, false, 1, 0.06f, 0.14f, 0, 1, 2, 10, false),
+            new(MacroBiomeIds.WindsweptSteppe, 0.16f, 0.66f, 0.20f, 0.00f, 0.28f, 0.90f, false, 0, 0.01f, 0.05f, 1, 4, 0, 0, false),
+            new(MacroBiomeIds.TropicalRainforest, 0.28f, 0.48f, 0.82f, 0.16f, 0.08f, 0.70f, true, 3, 0.32f, 0.52f, 0, 2, 2, 4, false),
+            new(MacroBiomeIds.Savanna, 0.16f, 0.56f, 0.34f, 0.00f, 0.24f, 0.84f, false, 1, 0.03f, 0.09f, 1, 5, 1, 0, false),
+            new(MacroBiomeIds.Desert, 0.08f, 0.74f, 0.08f, 0.00f, 0.40f, 0.94f, false, -2, 0.00f, 0.01f, 3, 9, 0, 0, false),
+            new(MacroBiomeIds.Tundra, 0.12f, 0.78f, 0.24f, 0.00f, 0.32f, 0.90f, false, -2, 0.00f, 0.02f, 2, 8, 0, 0, false),
+            new(MacroBiomeIds.BorealForest, 0.20f, 0.58f, 0.66f, 0.14f, 0.11f, 0.70f, true, 2, 0.25f, 0.42f, 1, 4, 1, 1, false),
+            new(MacroBiomeIds.IcePlains, 0.08f, 0.72f, 0.16f, 0.00f, 0.40f, 0.95f, false, -3, 0.00f, 0.00f, 2, 7, 0, 0, false),
+            new(MacroBiomeIds.OceanShallow, 0.00f, 0.22f, 0.98f, 0.00f, 1.00f, 0.95f, false, 3, 0.00f, 0.00f, 0, 1, 0, 0, false),
+            new(MacroBiomeIds.OceanDeep, 0.00f, 0.18f, 1.00f, 0.00f, 1.00f, 0.95f, false, 4, 0.00f, 0.00f, 0, 0, 0, 0, false),
         ];
     }
 
@@ -815,6 +816,27 @@ public sealed class WorldGenContentCatalog
         return string.Equals(biomeId, MacroBiomeIds.ConiferForest, StringComparison.OrdinalIgnoreCase) ||
                string.Equals(biomeId, MacroBiomeIds.BorealForest, StringComparison.OrdinalIgnoreCase) ||
                string.Equals(biomeId, MacroBiomeIds.TropicalRainforest, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static float ResolveLegacyForestTreeFillRatio(string biomeId)
+    {
+        if (ResolveLegacyDenseForest(biomeId))
+            return 0.70f;
+
+        return biomeId switch
+        {
+            MacroBiomeIds.MistyMarsh => 0.76f,
+            MacroBiomeIds.TemperatePlains => 0.80f,
+            MacroBiomeIds.Savanna => 0.84f,
+            MacroBiomeIds.Highland => 0.88f,
+            MacroBiomeIds.WindsweptSteppe => 0.90f,
+            MacroBiomeIds.Tundra => 0.90f,
+            MacroBiomeIds.Desert => 0.94f,
+            MacroBiomeIds.IcePlains => 0.95f,
+            MacroBiomeIds.OceanShallow => 0.95f,
+            MacroBiomeIds.OceanDeep => 0.95f,
+            _ => 0.82f,
+        };
     }
 
     private static int ResolveLegacySurfaceCreatureGroupBias(string biomeId)

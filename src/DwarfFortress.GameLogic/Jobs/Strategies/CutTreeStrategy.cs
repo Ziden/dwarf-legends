@@ -4,6 +4,7 @@ using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
+using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.World;
 
 namespace DwarfFortress.GameLogic.Jobs.Strategies;
@@ -49,26 +50,40 @@ public sealed class CutTreeStrategy : IJobStrategy
     {
         var map  = ctx.Get<WorldMap>();
         var tile = map.GetTile(job.TargetPos);
+        PlantHarvesting.TryDropYieldOnHostRemoval(ctx, job.TargetPos, dropHarvestItem: true, out var fruitDrop);
         var logMaterialId = ResolveLogMaterialId(ctx, tile.TreeSpeciesId);
         var logItemDefId = ResolveLogItemDefId(ctx, logMaterialId);
         var clearedTerrain = TerrainClearanceHelper.ResolveClearedTerrain(ctx, map, job.TargetPos, tile.MaterialId);
         tile.TileDefId  = clearedTerrain.TileDefId;
         tile.MaterialId = clearedTerrain.MaterialId;
         tile.TreeSpeciesId = null;
+        PlantHarvesting.ClearPlantState(ref tile);
         tile.IsDesignated = false;
         tile.IsPassable = true;
         map.SetTile(job.TargetPos, tile);
+
+        var movementPresentation = ctx.TryGet<MovementPresentationSystem>();
+        if (fruitDrop.HarvestItemEntityId.HasValue)
+        {
+            movementPresentation?.RecordItemMovement(
+                fruitDrop.HarvestItemEntityId.Value,
+                job.TargetPos + Vec3i.Up,
+                job.TargetPos,
+                0.24f,
+                MovementPresentationMotionKind.Jump,
+                arcHeight: 0.18f);
+        }
 
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
         var log = itemSystem?.CreateItem(logItemDefId, logMaterialId, job.TargetPos);
         if (log is not null)
         {
-            ctx.TryGet<Systems.MovementPresentationSystem>()?.RecordItemMovement(
+            movementPresentation?.RecordItemMovement(
                 log.Id,
                 job.TargetPos + Vec3i.Up,
                 job.TargetPos,
                 0.45f,
-                Systems.MovementPresentationMotionKind.Linear);
+                MovementPresentationMotionKind.Linear);
         }
     }
 

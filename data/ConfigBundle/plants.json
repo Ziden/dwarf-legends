@@ -3,7 +3,7 @@
     "id": "berry_bush",
     "displayName": "Berry Bush",
     "hostKind": "ground",
-    "allowedBiomes": ["temperate_plains", "misty_marsh", "boreal_forest"],
+    "allowedBiomes": ["temperate_plains", "misty_marsh", "conifer_forest", "boreal_forest"],
     "allowedGroundTiles": ["grass", "soil", "mud"],
     "minMoisture": 0.42,
     "maxMoisture": 0.95,
@@ -103,7 +103,8 @@
     "nutrition": { "energy": 0.34, "protein": 0.02, "vitamins": 0.44, "minerals": 0.10 },
     "harvestItemDefId": "apple",
     "seedItemDefId": "apple_seed",
-    "fruitItemDefId": "apple"
+    "fruitItemDefId": "apple",
+    "dropYieldOnHostRemoval": true
   },
   {
     "id": "fig_canopy",
@@ -125,6 +126,7 @@
     "nutrition": { "energy": 0.42, "protein": 0.04, "vitamins": 0.30, "minerals": 0.18 },
     "harvestItemDefId": "fig",
     "seedItemDefId": "fig_seed",
-    "fruitItemDefId": "fig"
+    "fruitItemDefId": "fig",
+    "dropYieldOnHostRemoval": true
   }
 ]

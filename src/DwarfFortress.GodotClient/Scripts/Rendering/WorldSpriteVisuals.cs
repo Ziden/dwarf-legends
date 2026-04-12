@@ -32,6 +32,22 @@ public static class WorldSpriteVisuals
     public static WorldSpriteVisual Tree()
         => new(PixelArtFactory.GetTile(TileDefIds.Tree), TreePixelSize);
 
+    public static bool TryTreeWithPlantOverlay(string? speciesId, string? plantDefId, byte growthStage, byte yieldLevel, byte seedLevel, out WorldSpriteVisual visual)
+    {
+        if (string.IsNullOrWhiteSpace(plantDefId)
+            || !PixelArtFactory.TryGetPlantOverlay(plantDefId, growthStage, yieldLevel, seedLevel, out var overlayTexture)
+            || overlayTexture is null)
+        {
+            visual = default;
+            return false;
+        }
+
+        visual = new WorldSpriteVisual(
+            PixelArtFactory.GetTreeWithOverlay(speciesId, plantDefId, growthStage, yieldLevel, seedLevel),
+            TreePixelSize);
+        return true;
+    }
+
     public static bool TryPlantOverlay(string? plantDefId, byte growthStage, byte yieldLevel, byte seedLevel, out WorldSpriteVisual visual)
     {
         if (string.IsNullOrWhiteSpace(plantDefId))

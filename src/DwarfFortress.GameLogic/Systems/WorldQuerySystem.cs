@@ -426,7 +426,36 @@ public sealed class WorldQuerySystem : IGameSystem
             storage,
             displayName,
             weight,
-            item.CarryMode);
+            item.CarryMode)
+        {
+            JobBindings = BuildItemJobBindings(item.Id),
+        };
+    }
+
+    private ItemJobBindingView[] BuildItemJobBindings(int itemId)
+    {
+        var jobSystem = _ctx!.TryGet<JobSystem>();
+        if (jobSystem is null)
+            return Array.Empty<ItemJobBindingView>();
+
+        var registry = _ctx.TryGet<EntityRegistry>();
+        var bindings = new List<ItemJobBindingView>();
+        foreach (var job in jobSystem.GetOpenJobsReferencingItem(itemId))
+        {
+            string? assignedDwarfName = null;
+            if (job.AssignedDwarfId >= 0 && registry?.TryGetById<Dwarf>(job.AssignedDwarfId, out var dwarf) == true && dwarf is not null)
+                assignedDwarfName = dwarf.FirstName;
+
+            bindings.Add(new ItemJobBindingView(
+                job.Id,
+                job.JobDefId,
+                job.Status,
+                job.AssignedDwarfId,
+                assignedDwarfName));
+        }
+
+        bindings.Sort(static (left, right) => left.JobId.CompareTo(right.JobId));
+        return bindings.ToArray();
     }
 
     private StoredItemsView? BuildItemStorageView(Item item, bool supportsStorage)

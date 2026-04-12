@@ -34,13 +34,28 @@ public sealed class EatStrategy : IJobStrategy
     {
         // Refuse if nauseous
         var registry = ctx.Get<Entities.EntityRegistry>();
-        if (registry.TryGetById<Entities.Dwarf>(dwarfId, out var d) && d is not null)
-            if (d.Components.TryGet<StatusEffectComponent>()?.Has(StatusEffectIds.Nausea) == true)
+        if (!registry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) || dwarf is null)
+            return false;
+
+        if (dwarf.Components.TryGet<StatusEffectComponent>()?.Has(StatusEffectIds.Nausea) == true)
                 return false;
+
+        var itemSystem = ctx.TryGet<Systems.ItemSystem>();
+        var reservedFood = ResolveReservedFood(job, itemSystem);
+        if (reservedFood is not null)
+        {
+            if (reservedFood.CarriedByEntityId == dwarfId)
+                return true;
+
+            if (reservedFood.CarriedByEntityId >= 0)
+                return false;
+
+            var reservedInventory = dwarf.Components.TryGet<InventoryComponent>();
+            return reservedInventory is null || !reservedInventory.IsFull;
+        }
 
         var harvestTarget = ResolveHarvestTarget(job, dwarfId, ctx);
 
-        var itemSystem = ctx.TryGet<Systems.ItemSystem>();
         if (itemSystem?.FindCarriedFoodItem(dwarfId) is not null)
             return true;
 
@@ -49,12 +64,9 @@ public sealed class EatStrategy : IJobStrategy
             return harvestTarget is not null;
 
         // Pickup path — check inventory capacity
-        if (registry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) && dwarf is not null)
-        {
-            var inventory = dwarf.Components.TryGet<InventoryComponent>();
-            if (inventory is not null && inventory.IsFull)
-                return harvestTarget is not null;
-        }
+        var inventory = dwarf.Components.TryGet<InventoryComponent>();
+        if (inventory is not null && inventory.IsFull)
+            return harvestTarget is not null;
 
         return true;
     }
@@ -62,25 +74,24 @@ public sealed class EatStrategy : IJobStrategy
     public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
     {
         var itemSystem = ctx.TryGet<Systems.ItemSystem>();
+        var reservedFood = ResolveReservedFood(job, itemSystem);
+        if (reservedFood is not null)
+        {
+            ReserveFood(job, reservedFood);
+            if (reservedFood.CarriedByEntityId == dwarfId)
+                return BuildCarriedFoodSteps(dwarfId, ctx);
+
+            if (reservedFood.CarriedByEntityId >= 0)
+                return Array.Empty<ActionStep>();
+
+            return BuildPickupFoodSteps(dwarfId, ctx, reservedFood);
+        }
+
         var carriedFood = itemSystem?.FindCarriedFoodItem(dwarfId);
         if (carriedFood is not null)
         {
-            carriedFood.IsClaimed = true;
-            job.ReservedItemIds.Add(carriedFood.Id);
-
-            var registry = ctx.Get<Entities.EntityRegistry>();
-            if (!registry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) || dwarf is null)
-                return Array.Empty<ActionStep>();
-
-            var carriedDiningSpot = FindDiningSpot(dwarfId, ctx);
-            var carriedSteps = new List<ActionStep>();
-            if (carriedDiningSpot is not null)
-                carriedSteps.Add(new MoveToStep(carriedDiningSpot.Target));
-
-            carriedSteps.Add(new WorkAtStep(
-                Duration: carriedDiningSpot?.Duration ?? FloorMealDuration,
-                RequiredPosition: carriedDiningSpot?.Target ?? dwarf.Position.Position));
-            return carriedSteps;
+            ReserveFood(job, carriedFood);
+            return BuildCarriedFoodSteps(dwarfId, ctx);
         }
 
         var entityRegistry = ctx.Get<Entities.EntityRegistry>();
@@ -101,24 +112,8 @@ public sealed class EatStrategy : IJobStrategy
             ];
         }
 
-        food.IsClaimed = true;
-        job.ReservedItemIds.Add(food.Id);
-
-        var steps = new List<ActionStep>
-        {
-            ItemPickupHelper.CreatePickupMoveStep(food),
-            new PickUpItemStep(food.Id),
-        };
-
-        var diningSpot = FindDiningSpot(dwarfId, ctx);
-        if (diningSpot is not null)
-            steps.Add(new MoveToStep(diningSpot.Target));
-
-        steps.Add(new WorkAtStep(
-            Duration: diningSpot?.Duration ?? FloorMealDuration,
-            RequiredPosition: diningSpot?.Target ?? ItemPickupHelper.ResolveConsumeWorkPosition(food)));
-
-        return steps;
+        ReserveFood(job, food);
+        return BuildPickupFoodSteps(dwarfId, ctx, food);
     }
 
     public void OnInterrupt(Job job, int dwarfId, GameContext ctx)
@@ -290,25 +285,77 @@ public sealed class EatStrategy : IJobStrategy
 
     private sealed record DiningSpot(Vec3i Target, float Duration);
 
+    private static IReadOnlyList<ActionStep> BuildCarriedFoodSteps(int dwarfId, GameContext ctx)
+    {
+        var registry = ctx.Get<Entities.EntityRegistry>();
+        if (!registry.TryGetById<Entities.Dwarf>(dwarfId, out var dwarf) || dwarf is null)
+            return Array.Empty<ActionStep>();
+
+        var carriedDiningSpot = FindDiningSpot(dwarfId, ctx);
+        var carriedSteps = new List<ActionStep>();
+        if (carriedDiningSpot is not null)
+            carriedSteps.Add(new MoveToStep(carriedDiningSpot.Target));
+
+        carriedSteps.Add(new WorkAtStep(
+            Duration: carriedDiningSpot?.Duration ?? FloorMealDuration,
+            RequiredPosition: carriedDiningSpot?.Target ?? dwarf.Position.Position));
+        return carriedSteps;
+    }
+
+    private static IReadOnlyList<ActionStep> BuildPickupFoodSteps(int dwarfId, GameContext ctx, Item food)
+    {
+        var steps = new List<ActionStep>
+        {
+            ItemPickupHelper.CreatePickupMoveStep(food),
+            new PickUpItemStep(food.Id),
+        };
+
+        var diningSpot = FindDiningSpot(dwarfId, ctx);
+        if (diningSpot is not null)
+            steps.Add(new MoveToStep(diningSpot.Target));
+
+        steps.Add(new WorkAtStep(
+            Duration: diningSpot?.Duration ?? FloorMealDuration,
+            RequiredPosition: diningSpot?.Target ?? ItemPickupHelper.ResolveConsumeWorkPosition(food)));
+
+        return steps;
+    }
+
+    private static Item? ResolveReservedFood(Job job, Systems.ItemSystem? itemSystem)
+    {
+        if (itemSystem is null)
+            return null;
+
+        foreach (var itemId in job.ReservedItemIds)
+            if (itemSystem.TryGetItem(itemId, out var reservedItem) && reservedItem is not null)
+                return reservedItem;
+
+        if (job.EntityId >= 0 && itemSystem.TryGetItem(job.EntityId, out var entityItem) && entityItem is not null)
+            return entityItem;
+
+        return null;
+    }
+
+    private static void ReserveFood(Job job, Item food)
+    {
+        food.IsClaimed = true;
+        if (!job.ReservedItemIds.Contains(food.Id))
+            job.ReservedItemIds.Add(food.Id);
+    }
+
     private static string ResolveConsumedItemName(Job job, Systems.ItemSystem? itemSystem, GameContext ctx)
     {
-        if (itemSystem is not null)
-        {
-            foreach (var itemId in job.ReservedItemIds)
-                if (itemSystem.TryGetItem(itemId, out var item) && item is not null)
-                    return ctx.TryGet<DataManager>()?.Items.GetOrNull(item.DefId)?.DisplayName
-                           ?? item.DefId.Replace('_', ' ');
-        }
+        var reservedFood = ResolveReservedFood(job, itemSystem);
+        if (reservedFood is not null)
+            return ctx.TryGet<DataManager>()?.Items.GetOrNull(reservedFood.DefId)?.DisplayName
+                   ?? reservedFood.DefId.Replace('_', ' ');
 
         return "food";
     }
 
     private static ItemDef? ResolveConsumedItemDef(Job job, Systems.ItemSystem? itemSystem, GameContext ctx)
     {
-        if (itemSystem is null) return null;
-        foreach (var itemId in job.ReservedItemIds)
-            if (itemSystem.TryGetItem(itemId, out var item) && item is not null)
-                return ctx.TryGet<DataManager>()?.Items.GetOrNull(item.DefId);
-        return null;
+        var reservedFood = ResolveReservedFood(job, itemSystem);
+        return reservedFood is null ? null : ctx.TryGet<DataManager>()?.Items.GetOrNull(reservedFood.DefId);
     }
 }
