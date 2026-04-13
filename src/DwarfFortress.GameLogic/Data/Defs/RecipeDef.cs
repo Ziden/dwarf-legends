@@ -28,6 +28,7 @@ public sealed record RecipeDef(
     string                      WorkshopDefId,
     string                      RequiredLaborId,
     IReadOnlyList<RecipeInput>  Inputs,
+    IReadOnlyList<RecipeInput>? DiscoveryInputs,
     IReadOnlyList<RecipeOutput> Outputs,
     float                       WorkTime = 100f,   // ticks to complete
     int                         SkillXp  = 10);

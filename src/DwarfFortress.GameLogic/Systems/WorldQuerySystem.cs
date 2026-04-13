@@ -322,7 +322,23 @@ public sealed class WorldQuerySystem : IGameSystem
     public BuildingView? GetBuildingView(int id)
     {
         var building = _ctx!.TryGet<BuildingSystem>()?.GetById(id);
+        var dataManager = _ctx.TryGet<DataManager>();
+        var housingSystem = _ctx.TryGet<HousingSystem>();
         var itemSystem = _ctx!.TryGet<ItemSystem>();
+        var stockpileManager = _ctx.TryGet<StockpileManager>();
+        if (building is null)
+            return null;
+
+        var definition = dataManager?.Buildings.GetOrNull(building.BuildingDefId);
+        var residents = housingSystem?.GetResidents(building.Id) ?? [];
+        var linkedStockpileId = building.LinkedStockpileId >= 0
+            ? building.LinkedStockpileId
+            : stockpileManager?.GetByOwnerBuilding(building.Id)?.Id ?? -1;
+        var storedItemCount = itemSystem?.GetItemsInBuilding(building.Id).Count() ?? 0;
+        var stockpileItemCount = linkedStockpileId >= 0 && itemSystem is not null
+            ? itemSystem.GetAllItems().Count(item => item.StockpileId == linkedStockpileId)
+            : 0;
+
         return building is null
             ? null
             : new BuildingView(
@@ -330,8 +346,14 @@ public sealed class WorldQuerySystem : IGameSystem
                 building.BuildingDefId,
                 building.Origin,
                 building.IsWorkshop,
-                itemSystem?.GetItemsInBuilding(building.Id).Count() ?? 0,
-                building.MaterialId);
+                storedItemCount,
+                building.MaterialId,
+                building.Rotation,
+                definition?.ResidenceCapacity ?? 0,
+                residents.Select(dwarf => dwarf.Id).ToArray(),
+                residents.Select(dwarf => dwarf.FirstName).ToArray(),
+                linkedStockpileId,
+                storedItemCount + stockpileItemCount);
     }
 
     public ContainerEntityView? GetContainerEntityView(int id)
@@ -365,11 +387,7 @@ public sealed class WorldQuerySystem : IGameSystem
     {
         var spatial = _ctx!.Get<SpatialIndexSystem>();
         var itemSystem = _ctx.TryGet<ItemSystem>();
-        var stockpile = _ctx.TryGet<StockpileManager>()?.GetAll()
-            .FirstOrDefault(s =>
-                pos.X >= Math.Min(s.From.X, s.To.X) && pos.X <= Math.Max(s.From.X, s.To.X) &&
-                pos.Y >= Math.Min(s.From.Y, s.To.Y) && pos.Y <= Math.Max(s.From.Y, s.To.Y) &&
-                pos.Z >= Math.Min(s.From.Z, s.To.Z) && pos.Z <= Math.Max(s.From.Z, s.To.Z));
+        var stockpile = _ctx.TryGet<StockpileManager>()?.GetContaining(pos);
 
         return new TileQueryResult(
             pos,

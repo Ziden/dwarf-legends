@@ -192,7 +192,7 @@ public sealed class SleepSystemTests
 
         Assert.Equal(0.33f, SleepSystem.GetSleepDecayMultiplier(dwarf, dataManager), precision: 4);
         Assert.Equal(1.77f, SleepSystem.GetSleepRecoveryMultiplier(dwarf, dataManager), precision: 4);
-        Assert.Equal(0.009833f, SleepSystem.GetDwarfSleepNetRecoveryPerSecond(dwarf, inBed: true, dataManager), precision: 6);
+        Assert.Equal(0.007375f, SleepSystem.GetDwarfSleepNetRecoveryPerSecond(dwarf, inBed: true, dataManager), precision: 6);
     }
 
     private static DataManager CreateAttributeDataManager(string dwarfAttributesJson)

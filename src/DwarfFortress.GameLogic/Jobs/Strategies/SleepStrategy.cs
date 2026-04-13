@@ -12,7 +12,7 @@ namespace DwarfFortress.GameLogic.Jobs.Strategies;
 
 /// <summary>
 /// Dwarf walks to an owned bed (or floor) and sleeps long enough to recover the current rest deficit.
-/// Enhanced with sleep location scoring: beds > near trees/plants > quiet workshops.
+/// Enhanced with sleep location scoring: beds > assigned house > near trees/plants > quiet workshops.
 /// </summary>
 public sealed class SleepStrategy : IJobStrategy
 {
@@ -99,6 +99,17 @@ public sealed class SleepStrategy : IJobStrategy
                     bestScore = score;
                     bestPos = bed.Origin;
                 }
+            }
+        }
+
+        var assignedHouseTarget = FindAssignedHouseSleepTarget(dwarf, ctx, map, buildingSystem);
+        if (assignedHouseTarget.HasValue && IsReachableSleepTarget(map, dwarfPos, assignedHouseTarget.Value))
+        {
+            const int houseScore = 80;
+            if (houseScore > bestScore)
+            {
+                bestScore = houseScore;
+                bestPos = assignedHouseTarget.Value;
             }
         }
 
@@ -205,4 +216,50 @@ public sealed class SleepStrategy : IJobStrategy
 
     private static bool IsReachableSleepTarget(WorldMap map, Vec3i origin, Vec3i target)
         => Pathfinder.FindPath(map, origin, target).Count > 0;
+
+    private static Vec3i? FindAssignedHouseSleepTarget(Dwarf dwarf, GameContext ctx, WorldMap map, BuildingSystem? buildingSystem)
+    {
+        if (buildingSystem is null || dwarf.Residence.HomeBuildingId < 0)
+            return null;
+
+        var assignedHouse = buildingSystem.GetById(dwarf.Residence.HomeBuildingId);
+        if (assignedHouse is null)
+            return null;
+
+        var dataManager = ctx.TryGet<DataManager>();
+        var definition = dataManager?.Buildings.GetOrNull(assignedHouse.BuildingDefId);
+        if (definition is null || definition.ResidenceCapacity <= 0)
+            return null;
+
+        var spatial = ctx.TryGet<SpatialIndexSystem>();
+        foreach (var candidate in BuildingPlacementGeometry.GetPreferredSleepCells(definition, assignedHouse.Origin, assignedHouse.Rotation))
+        {
+            if (!map.IsWalkable(candidate))
+                continue;
+
+            if (IsOccupiedByOtherEntity(spatial, candidate, dwarf.Id))
+                continue;
+
+            if (IsReachableSleepTarget(map, dwarf.Position.Position, candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static bool IsOccupiedByOtherEntity(SpatialIndexSystem? spatial, Vec3i position, int dwarfId)
+    {
+        if (spatial is null)
+            return false;
+
+        foreach (var otherDwarfId in spatial.GetDwarvesAt(position))
+            if (otherDwarfId != dwarfId)
+                return true;
+
+        foreach (var creatureId in spatial.GetCreaturesAt(position))
+            if (creatureId != dwarfId)
+                return true;
+
+        return false;
+    }
 }

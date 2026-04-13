@@ -218,6 +218,7 @@ public partial class ClientSmokeTests : Node
         AssertDistinctTreeTextures("oak", "pine", "birch", "willow");
         AssertDistinctFruitingTreeTextures("apple", PlantSpeciesIds.AppleCanopy);
         AssertDistinctFruitingTreeTextures("fig", PlantSpeciesIds.FigCanopy);
+        AssertAnimatedCreatureWalkFrames("cat", "dog", "elk", "giant_carp", "goblin", "troll");
 
         var grassTile = new TileRenderData(TileDefIds.Grass, null);
         TileRenderData? ResolveSurfaceTile(int sx, int sy, int sz)
@@ -296,6 +297,27 @@ public partial class ClientSmokeTests : Node
 
         Assert(!string.Equals(bareSignature, ripeSignature, StringComparison.Ordinal),
             $"Expected fruiting tree visuals for '{treeSpeciesId}' and '{plantDefId}' to differ between ripe and non-ripe states.");
+    }
+
+    private static void AssertAnimatedCreatureWalkFrames(params string[] creatureDefIds)
+    {
+        foreach (var creatureDefId in creatureDefIds)
+        {
+            var uiIdle = GetAlphaMaskSignature(PixelArtFactory.GetEntity(creatureDefId));
+            var idle = GetAlphaMaskSignature(PixelArtFactory.GetEntity(creatureDefId, CreatureSpritePose.Idle(CreatureSpriteFacing.Right)));
+            var walkA = GetAlphaMaskSignature(PixelArtFactory.GetEntity(creatureDefId, new CreatureSpritePose(CreatureSpriteFacing.Right, CreatureSpriteActionKind.Walk, 0)));
+            var walkB = GetAlphaMaskSignature(PixelArtFactory.GetEntity(creatureDefId, new CreatureSpritePose(CreatureSpriteFacing.Right, CreatureSpriteActionKind.Walk, 1)));
+            var mirrored = GetAlphaMaskSignature(PixelArtFactory.GetEntity(creatureDefId, new CreatureSpritePose(CreatureSpriteFacing.Left, CreatureSpriteActionKind.Walk, 0)));
+
+            Assert(string.Equals(uiIdle, idle, StringComparison.Ordinal),
+                $"Expected creature '{creatureDefId}' UI icons and world idle sprites to share the same source texture path.");
+            Assert(!string.Equals(idle, walkA, StringComparison.Ordinal),
+                $"Expected creature '{creatureDefId}' to have a distinct walking silhouette from its idle pose.");
+            Assert(!string.Equals(walkA, walkB, StringComparison.Ordinal),
+                $"Expected creature '{creatureDefId}' to animate between at least two walk frames.");
+            Assert(!string.Equals(walkA, mirrored, StringComparison.Ordinal),
+                $"Expected creature '{creatureDefId}' walk sprites to mirror when facing changes.");
+        }
     }
 
     private static string GetAlphaMaskSignature(Texture2D texture)
@@ -784,6 +806,7 @@ public partial class ClientSmokeTests : Node
         try
         {
             var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var mainCamera3D = gameRoot.GetNode<Camera3D>("%MainCamera3D");
             var simulation = ResolveSimulation(gameRoot);
             var registry = simulation.Context.Get<EntityRegistry>();
             var items = simulation.Context.Get<ItemSystem>();
@@ -793,6 +816,7 @@ public partial class ClientSmokeTests : Node
             JumpCameraToTile(gameRoot, dwarfTile);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
+            var looseLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarfTile + new Vec3i(1, 0, 0));
             var hauledLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, dwarfTile);
             Assert(items.PickUpItem(hauledLog.Id, dwarf.Id, dwarfTile, ItemCarryMode.Hauling),
                 "Hauled item billboard render smoke test expected the dwarf to pick up the test log.");
@@ -802,10 +826,29 @@ public partial class ClientSmokeTests : Node
 
             Assert(world3DRoot.TryGetDebugBillboardWorldPosition(dwarf.Id, out var dwarfPosition),
                 "Hauled item billboard render smoke test should render the carrier billboard.");
+            Assert(world3DRoot.TryGetDebugBillboardWorldPosition(looseLog.Id, out _),
+                "Hauled item billboard render smoke test should also keep a nearby loose item visible for layer comparison.");
             Assert(world3DRoot.TryGetDebugBillboardWorldPosition(hauledLog.Id, out var hauledItemPosition),
                 "Hauled item billboard render smoke test should render the carried item billboard.");
+            Assert(world3DRoot.TryGetDebugBillboardRenderPriority(looseLog.Id, out var looseRenderPriority),
+                "Hauled item billboard render smoke test should expose the loose item billboard material priority.");
+            Assert(world3DRoot.TryGetDebugBillboardRenderPriority(hauledLog.Id, out var carriedRenderPriority),
+                "Hauled item billboard render smoke test should expose the carried item billboard material priority.");
             Assert(hauledItemPosition.Y > dwarfPosition.Y + 0.2f,
                 "A hauled item billboard should render above its carrier instead of staying on the ground.");
+            var cameraOrigin = mainCamera3D.GlobalTransform.Origin;
+            var cameraForward = -mainCamera3D.GlobalTransform.Basis.Z.Normalized();
+            var dwarfDepth = (dwarfPosition - cameraOrigin).Dot(cameraForward);
+            var hauledDepth = (hauledItemPosition - cameraOrigin).Dot(cameraForward);
+            Assert(hauledDepth < dwarfDepth - 0.01f,
+                "A hauled item billboard should sit on the viewer-facing side of its carrier instead of deeper into the scene.");
+            var horizontalSeparation = new Vector2(hauledItemPosition.X - dwarfPosition.X, hauledItemPosition.Z - dwarfPosition.Z).Length();
+            Assert(horizontalSeparation > 0.02f,
+                "A hauled item billboard should be offset toward the carrier hands instead of staying centered on the dwarf root.");
+            Assert(carriedRenderPriority > looseRenderPriority,
+                "A hauled item billboard should render on a higher-priority layer than loose item billboards so attached props stay visible without hover-dependent depth luck.");
+            Assert(carriedRenderPriority > world3DRoot.GetDebugOverlayRenderPriority(),
+                "A hauled item billboard should still render after transparent tile overlays.");
         }
         finally
         {

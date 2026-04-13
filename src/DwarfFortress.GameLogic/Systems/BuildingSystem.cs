@@ -9,9 +9,15 @@ using DwarfFortress.GameLogic.World;
 
 namespace DwarfFortress.GameLogic.Systems;
 
-public record struct BuildingPlacedEvent(int BuildingId, string BuildingDefId, Vec3i Origin, bool IsWorkshop);
-public record struct BuildingRemovedEvent(int BuildingId, string BuildingDefId, Vec3i Origin);
+public record struct BuildingPlacedEvent(int BuildingId, string BuildingDefId, Vec3i Origin, bool IsWorkshop, BuildingRotation Rotation);
+public record struct BuildingRemovedEvent(int BuildingId, string BuildingDefId, Vec3i Origin, BuildingRotation Rotation);
 public record struct BuildingPlacementRejectedEvent(string BuildingDefId, Vec3i Origin, string Reason);
+
+public sealed class CapturedFootprintTileData
+{
+    public Vec3i Position { get; init; }
+    public TileData Tile { get; init; }
+}
 
 public sealed class PlacedBuildingData
 {
@@ -19,7 +25,10 @@ public sealed class PlacedBuildingData
     public string BuildingDefId { get; init; } = "";
     public Vec3i Origin { get; init; }
     public bool IsWorkshop { get; init; }
-    public string? MaterialId { get; init; }
+    public BuildingRotation Rotation { get; set; }
+    public string? MaterialId { get; set; }
+    public int LinkedStockpileId { get; set; } = -1;
+    public List<CapturedFootprintTileData> UnderlyingTiles { get; init; } = new();
 }
 
 /// <summary>
@@ -34,6 +43,7 @@ public sealed class BuildingSystem : IGameSystem
 
     private readonly Dictionary<int, PlacedBuildingData>  _buildings   = new();
     private readonly Dictionary<Vec3i, int>               _byOrigin    = new();
+    private readonly Dictionary<Vec3i, int>               _byFootprintTile = new();
     private int _nextBuildingId = 1;
     private GameContext? _ctx;
 
@@ -42,6 +52,7 @@ public sealed class BuildingSystem : IGameSystem
         _ctx = ctx;
         ctx.Commands.Register<PlaceBuildingCommand>(OnPlaceBuilding);
         ctx.Commands.Register<DeconstructBuildingCommand>(OnRemoveBuilding);
+        ctx.Get<WorldMap>().RegisterTraversalConstraint(CanTraverseBuildingBoundary);
     }
 
     public void Tick(float delta) { }
@@ -58,6 +69,32 @@ public sealed class BuildingSystem : IGameSystem
             Z = b.Origin.Z,
             IsWorkshop = b.IsWorkshop,
             MaterialId = b.MaterialId,
+            Rotation = (int)b.Rotation,
+            LinkedStockpileId = b.LinkedStockpileId,
+            UnderlyingTiles = b.UnderlyingTiles.Select(tile => new FootprintTileDto
+            {
+                X = tile.Position.X,
+                Y = tile.Position.Y,
+                Z = tile.Position.Z,
+                TileDefId = tile.Tile.TileDefId,
+                MaterialId = tile.Tile.MaterialId,
+                TreeSpeciesId = tile.Tile.TreeSpeciesId,
+                PlantDefId = tile.Tile.PlantDefId,
+                PlantGrowthStage = tile.Tile.PlantGrowthStage,
+                PlantGrowthProgressSeconds = tile.Tile.PlantGrowthProgressSeconds,
+                PlantYieldLevel = tile.Tile.PlantYieldLevel,
+                PlantSeedLevel = tile.Tile.PlantSeedLevel,
+                OreItemDefId = tile.Tile.OreItemDefId,
+                IsAquifer = tile.Tile.IsAquifer,
+                FluidType = (byte)tile.Tile.FluidType,
+                FluidLevel = tile.Tile.FluidLevel,
+                FluidMaterialId = tile.Tile.FluidMaterialId,
+                CoatingMaterialId = tile.Tile.CoatingMaterialId,
+                CoatingAmount = tile.Tile.CoatingAmount,
+                IsDesignated = tile.Tile.IsDesignated,
+                IsUnderConstruction = tile.Tile.IsUnderConstruction,
+                IsPassable = tile.Tile.IsPassable,
+            }).ToList(),
         }).ToList());
     }
 
@@ -68,6 +105,7 @@ public sealed class BuildingSystem : IGameSystem
 
         _buildings.Clear();
         _byOrigin.Clear();
+        _byFootprintTile.Clear();
 
         var saved = r.TryRead<List<BuildingDto>>("buildings");
         if (saved is null) return;
@@ -81,24 +119,19 @@ public sealed class BuildingSystem : IGameSystem
                 Origin = new Vec3i(dto.X, dto.Y, dto.Z),
                 IsWorkshop = dto.IsWorkshop,
                 MaterialId = dto.MaterialId,
+                Rotation = Enum.IsDefined(typeof(BuildingRotation), dto.Rotation)
+                    ? (BuildingRotation)dto.Rotation
+                    : BuildingRotation.None,
+                LinkedStockpileId = dto.LinkedStockpileId,
+                UnderlyingTiles = dto.UnderlyingTiles?.Select(ToCapturedFootprintTileData).ToList() ?? new List<CapturedFootprintTileData>(),
             };
-
-            ApplyFootprint(building);
-
-            if (string.IsNullOrWhiteSpace(building.MaterialId))
-            {
-                building = new PlacedBuildingData
-                {
-                    Id = building.Id,
-                    BuildingDefId = building.BuildingDefId,
-                    Origin = building.Origin,
-                    IsWorkshop = building.IsWorkshop,
-                    MaterialId = ResolveAppliedFootprintMaterialId(building),
-                };
-            }
 
             _buildings[building.Id] = building;
             _byOrigin[building.Origin] = building.Id;
+            IndexFootprint(building);
+
+            if (string.IsNullOrWhiteSpace(building.MaterialId))
+                building.MaterialId = ResolveAppliedFootprintMaterialId(building);
         }
     }
 
@@ -109,6 +142,9 @@ public sealed class BuildingSystem : IGameSystem
 
     public PlacedBuildingData? GetByOrigin(Vec3i origin)
         => _byOrigin.TryGetValue(origin, out var id) ? _buildings.GetValueOrDefault(id) : null;
+
+    public PlacedBuildingData? GetByFootprintTile(Vec3i position)
+        => _byFootprintTile.TryGetValue(position, out var id) ? _buildings.GetValueOrDefault(id) : null;
 
     private void OnPlaceBuilding(PlaceBuildingCommand cmd)
     {
@@ -121,10 +157,18 @@ public sealed class BuildingSystem : IGameSystem
             return;
         }
 
-        if (FootprintConflicts(cmd.Origin, def))
+        var discovery = _ctx.TryGet<DiscoverySystem>();
+        if (discovery is not null && discovery.GetBuildingState(def.Id) < DiscoveryKnowledgeState.Unlocked)
         {
-            _ctx.Logger?.Warn($"BuildingSystem: footprint for '{cmd.BuildingDefId}' conflicts with an existing building.");
-            _ctx.EventBus.Emit(new BuildingPlacementRejectedEvent(cmd.BuildingDefId, cmd.Origin, "Footprint is blocked."));
+            _ctx.Logger?.Warn($"BuildingSystem: placement for '{cmd.BuildingDefId}' rejected: building is not discovered.");
+            _ctx.EventBus.Emit(new BuildingPlacementRejectedEvent(cmd.BuildingDefId, cmd.Origin, "Building not discovered yet."));
+            return;
+        }
+
+        if (!TryValidateFootprint(cmd.Origin, def, cmd.Rotation, out var rejectionReason))
+        {
+            _ctx.Logger?.Warn($"BuildingSystem: placement for '{cmd.BuildingDefId}' rejected: {rejectionReason}");
+            _ctx.EventBus.Emit(new BuildingPlacementRejectedEvent(cmd.BuildingDefId, cmd.Origin, rejectionReason));
             return;
         }
 
@@ -142,40 +186,67 @@ public sealed class BuildingSystem : IGameSystem
             BuildingDefId = def.Id,
             Origin = cmd.Origin,
             IsWorkshop = def.IsWorkshop,
+            Rotation = cmd.Rotation,
             MaterialId = ResolveConstructionMaterialId(dm, def, consumedInputs),
+            UnderlyingTiles = CaptureUnderlyingTiles(cmd.Origin, def, cmd.Rotation),
         };
 
         _buildings[building.Id] = building;
         _byOrigin[building.Origin] = building.Id;
         ApplyFootprint(building);
-        _ctx.EventBus.Emit(new BuildingPlacedEvent(building.Id, building.BuildingDefId, building.Origin, building.IsWorkshop));
+        IndexFootprint(building);
+        CreateOwnedStockpileIfNeeded(building, def);
+        _ctx.EventBus.Emit(new BuildingPlacedEvent(building.Id, building.BuildingDefId, building.Origin, building.IsWorkshop, building.Rotation));
     }
 
     private void OnRemoveBuilding(DeconstructBuildingCommand cmd)
     {
-        var building = _buildings.Values.FirstOrDefault(b => FootprintCells(b).Contains(cmd.Origin));
+        var building = GetByFootprintTile(cmd.Origin);
         if (building is null) return;
 
-        ClearFootprint(building);
+        RemoveOwnedStockpile(building);
+        RestoreUnderlyingTiles(building);
+        RemoveFootprintIndex(building);
         _byOrigin.Remove(building.Origin);
         _buildings.Remove(building.Id);
-        _ctx!.EventBus.Emit(new BuildingRemovedEvent(building.Id, building.BuildingDefId, building.Origin));
+        _ctx!.EventBus.Emit(new BuildingRemovedEvent(building.Id, building.BuildingDefId, building.Origin, building.Rotation));
     }
 
-    private bool FootprintConflicts(Vec3i origin, BuildingDef def)
+    private bool TryValidateFootprint(Vec3i origin, BuildingDef def, BuildingRotation rotation, out string reason)
     {
-        var wanted = def.Footprint
-            .Select(t => new Vec3i(origin.X + t.Offset.X, origin.Y + t.Offset.Y, origin.Z))
-            .ToHashSet();
-        return _buildings.Values.SelectMany(FootprintCells).Any(wanted.Contains);
+        var map = _ctx!.Get<WorldMap>();
+        foreach (var position in BuildingPlacementGeometry.EnumerateWorldFootprint(def, origin, rotation))
+        {
+            if (!map.IsInBounds(position))
+            {
+                reason = "Footprint is out of bounds.";
+                return false;
+            }
+
+            if (_byFootprintTile.ContainsKey(position))
+            {
+                reason = "Footprint is blocked.";
+                return false;
+            }
+
+            var tile = map.GetTile(position);
+            if (tile.TileDefId == TileDefIds.Empty || !tile.IsPassable || tile.FluidLevel > 0)
+            {
+                reason = "Footprint is blocked.";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
     }
 
     private IEnumerable<Vec3i> FootprintCells(PlacedBuildingData building)
     {
         var dm = _ctx!.Get<DataManager>();
         var def = dm.Buildings.Get(building.BuildingDefId);
-        foreach (var tile in def.Footprint)
-            yield return new Vec3i(building.Origin.X + tile.Offset.X, building.Origin.Y + tile.Offset.Y, building.Origin.Z);
+        foreach (var position in BuildingPlacementGeometry.EnumerateWorldFootprint(def, building.Origin, building.Rotation))
+            yield return position;
     }
 
     private void ApplyFootprint(PlacedBuildingData building)
@@ -184,11 +255,11 @@ public sealed class BuildingSystem : IGameSystem
         var map = _ctx.Get<WorldMap>();
         var def = dm.Buildings.Get(building.BuildingDefId);
 
-        foreach (var footprintTile in def.Footprint)
+        foreach (var footprintTile in BuildingPlacementGeometry.EnumerateRotatedTiles(def, building.Rotation))
         {
             var pos = new Vec3i(building.Origin.X + footprintTile.Offset.X, building.Origin.Y + footprintTile.Offset.Y, building.Origin.Z);
             var existing = map.GetTile(pos);
-            var tileDef = dm.Tiles.Get(footprintTile.TileDefId);
+            var tileDef = dm.Tiles.Get(footprintTile.Tile.TileDefId);
 
             map.SetTile(pos, new TileData
             {
@@ -204,18 +275,26 @@ public sealed class BuildingSystem : IGameSystem
         }
     }
 
-    private void ClearFootprint(PlacedBuildingData building)
+    private void RestoreUnderlyingTiles(PlacedBuildingData building)
     {
         var map = _ctx!.Get<WorldMap>();
-        foreach (var pos in FootprintCells(building))
+        if (building.UnderlyingTiles.Count == 0)
         {
-            map.SetTile(pos, new TileData
+            foreach (var pos in FootprintCells(building))
             {
-                TileDefId = TileDefIds.StoneFloor,
-                MaterialId = MaterialIds.Granite,
-                IsPassable = true,
-            });
+                map.SetTile(pos, new TileData
+                {
+                    TileDefId = TileDefIds.StoneFloor,
+                    MaterialId = MaterialIds.Granite,
+                    IsPassable = true,
+                });
+            }
+
+            return;
         }
+
+        foreach (var tile in building.UnderlyingTiles)
+            map.SetTile(tile.Position, tile.Tile);
     }
 
     private string? ResolveAppliedFootprintMaterialId(PlacedBuildingData building)
@@ -324,6 +403,131 @@ public sealed class BuildingSystem : IGameSystem
                !string.IsNullOrWhiteSpace(data.ContentQueries?.ResolveLogItemDefId(materialId));
     }
 
+    private List<CapturedFootprintTileData> CaptureUnderlyingTiles(Vec3i origin, BuildingDef def, BuildingRotation rotation)
+    {
+        var map = _ctx!.Get<WorldMap>();
+        var captured = new List<CapturedFootprintTileData>();
+        foreach (var position in BuildingPlacementGeometry.EnumerateWorldFootprint(def, origin, rotation))
+        {
+            captured.Add(new CapturedFootprintTileData
+            {
+                Position = position,
+                Tile = map.GetTile(position),
+            });
+        }
+
+        return captured;
+    }
+
+    private void IndexFootprint(PlacedBuildingData building)
+    {
+        foreach (var position in FootprintCells(building))
+            _byFootprintTile[position] = building.Id;
+    }
+
+    private void RemoveFootprintIndex(PlacedBuildingData building)
+    {
+        foreach (var position in FootprintCells(building))
+        {
+            if (_byFootprintTile.TryGetValue(position, out var buildingId) && buildingId == building.Id)
+                _byFootprintTile.Remove(position);
+        }
+    }
+
+    private void CreateOwnedStockpileIfNeeded(PlacedBuildingData building, BuildingDef def)
+    {
+        if (def.AutoStockpileAcceptedTags.Count == 0)
+            return;
+
+        var stockpileManager = _ctx!.TryGet<StockpileManager>();
+        if (stockpileManager is null)
+            return;
+
+        var stockpileCells = BuildingPlacementGeometry.GetAutoStockpileCells(def, building.Origin, building.Rotation);
+        if (stockpileCells.Count == 0)
+            return;
+
+        var minX = stockpileCells.Min(cell => cell.X);
+        var maxX = stockpileCells.Max(cell => cell.X);
+        var minY = stockpileCells.Min(cell => cell.Y);
+        var maxY = stockpileCells.Max(cell => cell.Y);
+        var minZ = stockpileCells.Min(cell => cell.Z);
+        var maxZ = stockpileCells.Max(cell => cell.Z);
+
+        building.LinkedStockpileId = stockpileManager.CreateStockpile(
+            new Vec3i(minX, minY, minZ),
+            new Vec3i(maxX, maxY, maxZ),
+            def.AutoStockpileAcceptedTags.ToArray(),
+            building.Id);
+    }
+
+    private void RemoveOwnedStockpile(PlacedBuildingData building)
+    {
+        if (building.LinkedStockpileId < 0)
+            return;
+
+        _ctx!.TryGet<StockpileManager>()?.RemoveStockpile(building.LinkedStockpileId);
+        building.LinkedStockpileId = -1;
+    }
+
+    private bool CanTraverseBuildingBoundary(Vec3i from, Vec3i to)
+    {
+        if (from.Z != to.Z)
+            return true;
+
+        var tested = new HashSet<int>();
+        if (_byFootprintTile.TryGetValue(from, out var fromBuildingId))
+            tested.Add(fromBuildingId);
+        if (_byFootprintTile.TryGetValue(to, out var toBuildingId))
+            tested.Add(toBuildingId);
+
+        if (tested.Count == 0)
+            return true;
+
+        var dataManager = _ctx!.Get<DataManager>();
+        foreach (var buildingId in tested)
+        {
+            if (!_buildings.TryGetValue(buildingId, out var building))
+                continue;
+
+            var definition = dataManager.Buildings.GetOrNull(building.BuildingDefId);
+            if (definition is null || definition.EntryOffsets.Count == 0)
+                continue;
+
+            if (!BuildingPlacementGeometry.CanTraverseBoundary(definition, building.Origin, building.Rotation, from, to))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static CapturedFootprintTileData ToCapturedFootprintTileData(FootprintTileDto dto)
+        => new()
+        {
+            Position = new Vec3i(dto.X, dto.Y, dto.Z),
+            Tile = new TileData
+            {
+                TileDefId = dto.TileDefId,
+                MaterialId = dto.MaterialId,
+                TreeSpeciesId = dto.TreeSpeciesId,
+                PlantDefId = dto.PlantDefId,
+                PlantGrowthStage = dto.PlantGrowthStage,
+                PlantGrowthProgressSeconds = dto.PlantGrowthProgressSeconds,
+                PlantYieldLevel = dto.PlantYieldLevel,
+                PlantSeedLevel = dto.PlantSeedLevel,
+                OreItemDefId = dto.OreItemDefId,
+                IsAquifer = dto.IsAquifer,
+                FluidType = (FluidType)dto.FluidType,
+                FluidLevel = dto.FluidLevel,
+                FluidMaterialId = dto.FluidMaterialId,
+                CoatingMaterialId = dto.CoatingMaterialId,
+                CoatingAmount = dto.CoatingAmount,
+                IsDesignated = dto.IsDesignated,
+                IsUnderConstruction = dto.IsUnderConstruction,
+                IsPassable = dto.IsPassable,
+            },
+        };
+
     private sealed class BuildingDto
     {
         public int Id { get; set; }
@@ -333,5 +537,33 @@ public sealed class BuildingSystem : IGameSystem
         public int Z { get; set; }
         public bool IsWorkshop { get; set; }
         public string? MaterialId { get; set; }
+        public int Rotation { get; set; }
+        public int LinkedStockpileId { get; set; } = -1;
+        public List<FootprintTileDto>? UnderlyingTiles { get; set; }
+    }
+
+    private sealed class FootprintTileDto
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Z { get; set; }
+        public string TileDefId { get; set; } = TileDefIds.Empty;
+        public string? MaterialId { get; set; }
+        public string? TreeSpeciesId { get; set; }
+        public string? PlantDefId { get; set; }
+        public byte PlantGrowthStage { get; set; }
+        public float PlantGrowthProgressSeconds { get; set; }
+        public byte PlantYieldLevel { get; set; }
+        public byte PlantSeedLevel { get; set; }
+        public string? OreItemDefId { get; set; }
+        public bool IsAquifer { get; set; }
+        public byte FluidType { get; set; }
+        public byte FluidLevel { get; set; }
+        public string? FluidMaterialId { get; set; }
+        public string? CoatingMaterialId { get; set; }
+        public float CoatingAmount { get; set; }
+        public bool IsDesignated { get; set; }
+        public bool IsUnderConstruction { get; set; }
+        public bool IsPassable { get; set; }
     }
 }

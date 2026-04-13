@@ -292,12 +292,15 @@ public sealed class JobSystem : IGameSystem
 
     private void AssignJobs(EntityRegistry registry)
     {
-        // Collect idle dwarves without LINQ allocations
+        // Collect dwarves that can take new work. Active idle jobs are interruptible.
         _idleDwarfBuffer.Clear();
         foreach (var dwarf in registry.GetAlive<Dwarf>())
         {
             if (!dwarf.Health.IsConscious) continue;
-            if (IsDwarfWorking(dwarf.Id)) continue;
+            var activeJob = GetAssignedJob(dwarf.Id);
+            if (activeJob is not null &&
+                !string.Equals(activeJob.JobDefId, JobDefIds.Idle, StringComparison.OrdinalIgnoreCase))
+                continue;
             _idleDwarfBuffer.Add(dwarf);
         }
 
@@ -327,6 +330,8 @@ public sealed class JobSystem : IGameSystem
                     $"{candidate.FirstName} is too afraid to work near water."));
                 continue;
             }
+
+            InterruptIdleJobIfNeeded(candidate.Id);
 
             var steps = strat.GetSteps(job, candidate.Id, _ctx!);
             _stepQueues[job.Id] = new Queue<ActionStep>(steps);
@@ -358,9 +363,6 @@ public sealed class JobSystem : IGameSystem
         }
     }
 
-    /// <summary>Check if a dwarf currently has an in-progress job. O(1) via tracked dictionary.</summary>
-    private bool IsDwarfWorking(int dwarfId) => _dwarfActiveJobs.ContainsKey(dwarfId);
-
     /// <summary>Check if a dwarf has a job with the given definition in pending or in-progress state.</summary>
     private bool HasActiveJob(int dwarfId, string jobDefId)
     {
@@ -384,12 +386,12 @@ public sealed class JobSystem : IGameSystem
     {
         // Survival jobs are basic self-preservation and should never be blocked by labor toggles.
         if (IsSurvivalJob(job.JobDefId))
-            return idleDwarves.FirstOrDefault(d => strat.CanExecute(job, d.Id, _ctx!));
+            return FindFirstExecutableCandidate(job, strat, idleDwarves);
 
         var requiredLabor = GetRequiredLabor(job);
-        var skilledCandidate = idleDwarves.FirstOrDefault(d =>
-            d.Labors.IsEnabled(requiredLabor) &&
-            strat.CanExecute(job, d.Id, _ctx!));
+        var skilledCandidate = ShouldPreferNearestCandidate(job)
+            ? FindNearestExecutableCandidate(job, strat, idleDwarves, requiredLabor)
+            : FindFirstExecutableCandidate(job, strat, idleDwarves, requiredLabor);
 
         if (skilledCandidate is not null)
             return skilledCandidate;
@@ -397,7 +399,72 @@ public sealed class JobSystem : IGameSystem
         if (!string.Equals(job.JobDefId, JobDefIds.CutTree, StringComparison.OrdinalIgnoreCase))
             return null;
 
-        return idleDwarves.FirstOrDefault(d => strat.CanExecute(job, d.Id, _ctx!));
+        return ShouldPreferNearestCandidate(job)
+            ? FindNearestExecutableCandidate(job, strat, idleDwarves)
+            : FindFirstExecutableCandidate(job, strat, idleDwarves);
+    }
+
+    private void InterruptIdleJobIfNeeded(int dwarfId)
+    {
+        var activeJob = GetAssignedJob(dwarfId);
+        if (activeJob is null ||
+            !string.Equals(activeJob.JobDefId, JobDefIds.Idle, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        CancelJob(activeJob.Id);
+    }
+
+    private static bool ShouldPreferNearestCandidate(Job job)
+        => string.Equals(job.JobDefId, JobDefIds.HaulItem, StringComparison.OrdinalIgnoreCase);
+
+    private Dwarf? FindFirstExecutableCandidate(
+        Job job,
+        IJobStrategy strat,
+        IReadOnlyList<Dwarf> idleDwarves,
+        string? requiredLabor = null)
+    {
+        for (var i = 0; i < idleDwarves.Count; i++)
+        {
+            var dwarf = idleDwarves[i];
+            if (!string.IsNullOrWhiteSpace(requiredLabor) && !dwarf.Labors.IsEnabled(requiredLabor))
+                continue;
+
+            if (strat.CanExecute(job, dwarf.Id, _ctx!))
+                return dwarf;
+        }
+
+        return null;
+    }
+
+    private Dwarf? FindNearestExecutableCandidate(
+        Job job,
+        IJobStrategy strat,
+        IReadOnlyList<Dwarf> idleDwarves,
+        string? requiredLabor = null)
+    {
+        Dwarf? bestCandidate = null;
+        var bestDistance = int.MaxValue;
+
+        for (var i = 0; i < idleDwarves.Count; i++)
+        {
+            var dwarf = idleDwarves[i];
+            if (!string.IsNullOrWhiteSpace(requiredLabor) && !dwarf.Labors.IsEnabled(requiredLabor))
+                continue;
+
+            if (!strat.CanExecute(job, dwarf.Id, _ctx!))
+                continue;
+
+            var distance = dwarf.Position.Position.ManhattanDistanceTo(job.TargetPos);
+            if (bestCandidate is null ||
+                distance < bestDistance ||
+                (distance == bestDistance && dwarf.Id < bestCandidate.Id))
+            {
+                bestCandidate = dwarf;
+                bestDistance = distance;
+            }
+        }
+
+        return bestCandidate;
     }
 
     private Dwarf? FindPreassignedCandidate(Job job, IJobStrategy strat, IReadOnlyList<Dwarf> idleDwarves)

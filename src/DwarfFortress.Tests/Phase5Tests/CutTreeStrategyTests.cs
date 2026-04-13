@@ -52,8 +52,10 @@ public sealed class CutTreeStrategyTests
         var steps = strategy.GetSteps(new Job(1, JobDefIds.CutTree, pos), dwarfId: 0, sim.Context);
 
         var move = Assert.IsType<MoveToStep>(steps[0]);
+        var work = Assert.IsType<WorkAtStep>(steps[1]);
         Assert.NotEqual(pos + Vec3i.South, move.Target);
         Assert.Contains(move.Target, new[] { pos + Vec3i.North, pos + Vec3i.East, pos + Vec3i.West });
+        Assert.Equal(6f, work.Duration);
     }
 
     [Fact]

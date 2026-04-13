@@ -63,6 +63,41 @@ public sealed class HaulingTests
     }
 
     [Fact]
+    public void HaulItem_Jobs_Interrupt_Idle_And_Prefer_Closest_Eligible_Dwarf()
+    {
+        var (sim, _, er, js, items) = TestFixtures.BuildFullSim();
+
+        var nearDwarf = new Dwarf(er.NextId(), "Near Hauler", new Vec3i(10, 10, 0));
+        nearDwarf.Labors.DisableAll();
+        nearDwarf.Labors.Enable(LaborIds.Hauling);
+        er.Register(nearDwarf);
+
+        var farDwarf = new Dwarf(er.NextId(), "Far Hauler", new Vec3i(2, 2, 0));
+        farDwarf.Labors.DisableAll();
+        farDwarf.Labors.Enable(LaborIds.Hauling);
+        er.Register(farDwarf);
+
+        sim.Context.Commands.Dispatch(new CreateStockpileCommand(
+            new Vec3i(14, 10, 0),
+            new Vec3i(14, 10, 0),
+            []));
+
+        sim.Tick(0.1f);
+        Assert.Contains(js.GetAllJobs(), job => job.JobDefId == JobDefIds.Idle && job.AssignedDwarfId == nearDwarf.Id);
+        Assert.Contains(js.GetAllJobs(), job => job.JobDefId == JobDefIds.Idle && job.AssignedDwarfId == farDwarf.Id);
+
+        var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(11, 10, 0));
+        js.CreateJob(JobDefIds.HaulItem, log.Position.Position, priority: 5, entityId: log.Id);
+
+        sim.Tick(0.1f);
+
+        var haulJob = Assert.Single(js.GetAllJobs().Where(job => job.JobDefId == JobDefIds.HaulItem));
+        Assert.Equal(nearDwarf.Id, haulJob.AssignedDwarfId);
+        Assert.DoesNotContain(js.GetAllJobs(), job => job.JobDefId == JobDefIds.Idle && job.AssignedDwarfId == nearDwarf.Id);
+        Assert.Contains(js.GetAllJobs(), job => job.JobDefId == JobDefIds.Idle && job.AssignedDwarfId == farDwarf.Id);
+    }
+
+    [Fact]
     public void PlaceBoxStrategy_Uses_Hauling_Mode_For_Box_Items()
     {
         var (sim, _, er, _, items) = TestFixtures.BuildFullSim();

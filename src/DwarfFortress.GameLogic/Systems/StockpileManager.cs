@@ -10,7 +10,7 @@ namespace DwarfFortress.GameLogic.Systems;
 
 // ── Events ──────────────────────────────────────────────────────────────────
 
-public record struct StockpileCreatedEvent (int StockpileId, Vec3i From, Vec3i To);
+public record struct StockpileCreatedEvent (int StockpileId, Vec3i From, Vec3i To, int OwnerBuildingId = -1);
 public record struct StockpileRemovedEvent (int StockpileId);
 public record struct ItemStoredEvent       (int ItemId, int StockpileId, Vec3i SlotPos);
 
@@ -23,6 +23,7 @@ public sealed class StockpileData
     public Vec3i      From           { get; init; }
     public Vec3i      To             { get; init; }
     public string[]   AcceptedTags   { get; set; } = System.Array.Empty<string>();
+    public int        OwnerBuildingId { get; set; } = -1;
     public HashSet<Vec3i> OccupiedSlots { get; } = new();
 
     public IEnumerable<Vec3i> AllSlots()
@@ -93,6 +94,7 @@ public sealed class StockpileManager : IGameSystem
             FromX        = sp.From.X, FromY = sp.From.Y, FromZ = sp.From.Z,
             ToX          = sp.To.X,   ToY   = sp.To.Y,   ToZ   = sp.To.Z,
             AcceptedTags = sp.AcceptedTags.ToList(),
+            OwnerBuildingId = sp.OwnerBuildingId,
             OccupiedSlots = sp.OccupiedSlots.Select(s => new SlotDto { X = s.X, Y = s.Y, Z = s.Z }).ToList(),
         }).ToList();
 
@@ -115,6 +117,7 @@ public sealed class StockpileManager : IGameSystem
                 From         = new Vec3i(dto.FromX, dto.FromY, dto.FromZ),
                 To           = new Vec3i(dto.ToX,   dto.ToY,   dto.ToZ),
                 AcceptedTags = dto.AcceptedTags.ToArray(),
+                OwnerBuildingId = dto.OwnerBuildingId,
             };
             foreach (var slot in dto.OccupiedSlots)
                 sp.OccupiedSlots.Add(new Vec3i(slot.X, slot.Y, slot.Z));
@@ -130,6 +133,7 @@ public sealed class StockpileManager : IGameSystem
         public int FromX { get; set; } public int FromY { get; set; } public int FromZ { get; set; }
         public int ToX   { get; set; } public int ToY   { get; set; } public int ToZ   { get; set; }
         public System.Collections.Generic.List<string> AcceptedTags { get; set; } = new();
+        public int OwnerBuildingId { get; set; } = -1;
         public System.Collections.Generic.List<SlotDto> OccupiedSlots { get; set; } = new();
     }
 
@@ -146,6 +150,47 @@ public sealed class StockpileManager : IGameSystem
 
     public StockpileData? GetById(int id) =>
         _stockpiles.TryGetValue(id, out var s) ? s : null;
+
+    public StockpileData? GetByOwnerBuilding(int buildingId)
+        => _stockpiles.Values.FirstOrDefault(stockpile => stockpile.OwnerBuildingId == buildingId);
+
+    public StockpileData? GetContaining(Vec3i position)
+        => _stockpiles.Values.FirstOrDefault(stockpile =>
+            position.X >= System.Math.Min(stockpile.From.X, stockpile.To.X) && position.X <= System.Math.Max(stockpile.From.X, stockpile.To.X) &&
+            position.Y >= System.Math.Min(stockpile.From.Y, stockpile.To.Y) && position.Y <= System.Math.Max(stockpile.From.Y, stockpile.To.Y) &&
+            position.Z >= System.Math.Min(stockpile.From.Z, stockpile.To.Z) && position.Z <= System.Math.Max(stockpile.From.Z, stockpile.To.Z));
+
+    public int CreateStockpile(Vec3i from, Vec3i to, string[] acceptedTags, int ownerBuildingId = -1)
+    {
+        var stockpile = new StockpileData
+        {
+            Id = _nextStockpileId++,
+            From = from,
+            To = to,
+            AcceptedTags = acceptedTags,
+            OwnerBuildingId = ownerBuildingId,
+        };
+
+        _stockpiles[stockpile.Id] = stockpile;
+        _ctx!.EventBus.Emit(new StockpileCreatedEvent(stockpile.Id, stockpile.From, stockpile.To, stockpile.OwnerBuildingId));
+        return stockpile.Id;
+    }
+
+    public bool RemoveStockpile(int stockpileId)
+    {
+        if (!_stockpiles.Remove(stockpileId))
+            return false;
+
+        var itemSystem = _ctx?.TryGet<ItemSystem>();
+        if (itemSystem is not null)
+        {
+            foreach (var item in itemSystem.GetAllItems().Where(i => i.StockpileId == stockpileId))
+                item.StockpileId = -1;
+        }
+
+        _ctx!.EventBus.Emit(new StockpileRemovedEvent(stockpileId));
+        return true;
+    }
 
     /// <summary>Finds a free slot in any stockpile that accepts the item.
     /// Slots occupied by a non-full Box entity are considered open.</summary>
@@ -376,26 +421,11 @@ public sealed class StockpileManager : IGameSystem
 
     private void OnCreateStockpile(CreateStockpileCommand cmd)
     {
-        var sp = new StockpileData
-        {
-            Id           = _nextStockpileId++,
-            From         = cmd.From,
-            To           = cmd.To,
-            AcceptedTags = cmd.AcceptedTags,
-        };
-        _stockpiles[sp.Id] = sp;
-        _ctx!.EventBus.Emit(new StockpileCreatedEvent(sp.Id, sp.From, sp.To));
+        CreateStockpile(cmd.From, cmd.To, cmd.AcceptedTags, cmd.OwnerBuildingId);
     }
 
     private void OnRemoveStockpile(RemoveStockpileCommand cmd)
     {
-        if (!_stockpiles.Remove(cmd.StockpileId)) return;
-
-        var itemSystem = _ctx!.TryGet<ItemSystem>();
-        if (itemSystem is not null)
-            foreach (var item in itemSystem.GetAllItems().Where(i => i.StockpileId == cmd.StockpileId))
-                item.StockpileId = -1;
-
-        _ctx!.EventBus.Emit(new StockpileRemovedEvent(cmd.StockpileId));
+        RemoveStockpile(cmd.StockpileId);
     }
 }

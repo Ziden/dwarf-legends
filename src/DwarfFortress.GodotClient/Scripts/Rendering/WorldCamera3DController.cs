@@ -8,11 +8,11 @@ public sealed class WorldCamera3DController
 {
     private const float DefaultFocusTile = 24f;
     private const float DefaultCameraSize = 24f;
-    private const float MinCameraSize = 18f;
+    private const float MinCameraSize = 10f;
     private const float MaxCameraSize = 64f;
     private const float BasePanSpeedTiles = 18f;
     private const float DefaultYawRadians = -Mathf.Pi * 0.25f;
-    private const float MinOrbitDistance = 16f;
+    private const float MinOrbitDistance = 12f;
     private const float MaxOrbitDistance = 52f;
     private const float RotationSensitivityRadians = 0.01f;
     private static readonly float LockedPitchRadians = Mathf.DegToRad(40f);

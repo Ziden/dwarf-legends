@@ -1,51 +1,63 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://b662c4yoel1ef"]
 
-[ext_resource type="Script" path="res://Scripts/UI/ActionBar.cs" id="1"]
+[ext_resource type="Script" uid="uid://bu74okir3n3kf" path="res://Scripts/UI/ActionBar.cs" id="1"]
 
-[node name="ActionBar" type="PanelContainer"]
+[node name="ActionBar" type="PanelContainer" unique_id=1060681616]
 script = ExtResource("1")
 
-[node name="Margin" type="MarginContainer" parent="."]
+[node name="Margin" type="MarginContainer" parent="." unique_id=1998716255]
+layout_mode = 2
 theme_override_constants/margin_left = 10
-theme_override_constants/margin_right = 10
 theme_override_constants/margin_top = 5
+theme_override_constants/margin_right = 10
 theme_override_constants/margin_bottom = 5
 
-[node name="HBox" type="HBoxContainer" parent="Margin"]
+[node name="HBox" type="HBoxContainer" parent="Margin" unique_id=88532321]
+layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="ClearBtn" type="Button" parent="Margin/HBox"]
+[node name="ClearBtn" type="Button" parent="Margin/HBox" unique_id=1390962601]
 unique_name_in_owner = true
-text = "Clear"
+layout_mode = 2
+text = "Harvest"
 
-[node name="CancelBtn" type="Button" parent="Margin/HBox"]
+[node name="CancelBtn" type="Button" parent="Margin/HBox" unique_id=1157332732]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Cancel"
 
-[node name="ZoneBtn" type="Button" parent="Margin/HBox"]
+[node name="ZoneBtn" type="Button" parent="Margin/HBox" unique_id=1973308160]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Zone"
 
-[node name="BuildBtn" type="Button" parent="Margin/HBox"]
+[node name="BuildBtn" type="Button" parent="Margin/HBox" unique_id=1377625447]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Build"
 
-[node name="KnowledgeBtn" type="Button" parent="Margin/HBox"]
+[node name="KnowledgeBtn" type="Button" parent="Margin/HBox" unique_id=947983285]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Knowledge"
 
-[node name="Sep1" type="VSeparator" parent="Margin/HBox"]
+[node name="Sep1" type="VSeparator" parent="Margin/HBox" unique_id=1450685818]
+layout_mode = 2
 
-[node name="Spacer" type="Control" parent="Margin/HBox"]
+[node name="Spacer" type="Control" parent="Margin/HBox" unique_id=507724059]
+layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="PauseBtn" type="Button" parent="Margin/HBox"]
+[node name="PauseBtn" type="Button" parent="Margin/HBox" unique_id=956182830]
 unique_name_in_owner = true
-text = "Pause"
+layout_mode = 2
 toggle_mode = true
+text = "Pause"
 
-[node name="Sep2" type="VSeparator" parent="Margin/HBox"]
+[node name="Sep2" type="VSeparator" parent="Margin/HBox" unique_id=1799693635]
+layout_mode = 2
 
-[node name="HintsLabel" type="Label" parent="Margin/HBox"]
+[node name="HintsLabel" type="Label" parent="Margin/HBox" unique_id=148988025]
+layout_mode = 2
 text = "Space : pause  |  Q / E : change Z  |  Arrows : pan  |  Scroll : zoom"
 horizontal_alignment = 2

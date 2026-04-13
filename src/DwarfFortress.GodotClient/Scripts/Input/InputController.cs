@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using DwarfFortress.GameLogic;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Systems;
 using Godot;
 
@@ -45,6 +46,7 @@ public partial class InputController : Node
 
     // â”€â”€ Set by BuildMenu/StockpileDialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     public string?   PendingBuildingDefId  { get; set; }
+    public BuildingRotation PendingBuildingRotation { get; set; } = BuildingRotation.None;
     public string[]  PendingStockpileTags  { get; set; } = ["all"];
 
     // â”€â”€ Private â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -192,6 +194,8 @@ public partial class InputController : Node
         DragStart   = null;
         DragCurrent = null;
         IsDragging  = false;
+        if (mode != InputMode.BuildingPreview)
+            PendingBuildingRotation = BuildingRotation.None;
     }
 
     // â”€â”€ Godot Input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -246,6 +250,9 @@ public partial class InputController : Node
             case Key.T:      SetMode(InputMode.DesignateCutTrees); break;
             case Key.X:      SetMode(InputMode.DesignateCancel);   break;
             case Key.B:      SetMode(InputMode.BuildingPreview);   break;
+            case Key.R when CurrentMode == InputMode.BuildingPreview && PendingBuildingDefId is not null:
+                PendingBuildingRotation = (BuildingRotation)(((int)PendingBuildingRotation + 1) % 4);
+                break;
             case Key.Escape: CancelAction(); SetMode(InputMode.Select); break;
         }
     }
@@ -288,7 +295,7 @@ public partial class InputController : Node
                 break;
 
             case InputMode.BuildingPreview when PendingBuildingDefId is not null:
-                _simulation.Context.Commands.Dispatch(new PlaceBuildingCommand(PendingBuildingDefId, from));
+                _simulation.Context.Commands.Dispatch(new PlaceBuildingCommand(PendingBuildingDefId, from, PendingBuildingRotation));
                 SetMode(InputMode.Select);
                 PendingBuildingDefId = null;
                 break;

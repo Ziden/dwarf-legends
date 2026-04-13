@@ -32,6 +32,16 @@ public static class ClientContentQueries
     public static string? ResolveCreatureProceduralProfileId(string? creatureDefId)
         => Queries.Value?.ResolveCreatureVisuals(creatureDefId)?.ProceduralProfileId;
 
+    public static string? ResolveCreatureMovementModeId(string? creatureDefId)
+    {
+        if (string.IsNullOrWhiteSpace(creatureDefId))
+            return null;
+
+        return Catalog.Value?.Creatures.TryGetValue(creatureDefId.Trim(), out var creature) == true
+            ? creature.MovementModeId
+            : null;
+    }
+
     public static string? ResolveCreatureWaterEffectStyleId(string? creatureDefId)
         => Queries.Value?.ResolveCreatureVisuals(creatureDefId)?.WaterEffectStyleId;
 

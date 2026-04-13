@@ -11,17 +11,23 @@ public readonly record struct WorldSpriteVisual(Texture2D Texture, Vector2 Pixel
 
 public static class WorldSpriteVisuals
 {
-    private static readonly Vector2 DwarfPixelSize = new(52f, 52f);
+    private static readonly Vector2 DwarfPixelSize = new(42f, 46f);
     private static readonly Vector2 CreaturePixelSize = new(40f, 40f);
     private static readonly Vector2 ItemPixelSize = new(32f, 32f);
     private static readonly Vector2 PlantPixelSize = new(RenderCache.TileSize, RenderCache.TileSize);
     private static readonly Vector2 TreePixelSize = new(RenderCache.TileSize, RenderCache.TileSize * 2f);
 
     public static WorldSpriteVisual Dwarf(DwarfAppearanceComponent appearance)
-        => new(PixelArtFactory.GetDwarf(appearance), DwarfPixelSize);
+        => Dwarf(appearance, DwarfSpritePose.Idle());
+
+    internal static WorldSpriteVisual Dwarf(DwarfAppearanceComponent appearance, DwarfSpritePose pose)
+        => new(PixelArtFactory.GetDwarf(appearance, pose), DwarfPixelSize);
 
     public static WorldSpriteVisual Creature(string defId)
-        => new(PixelArtFactory.GetEntity(defId), CreaturePixelSize);
+        => Creature(defId, CreatureSpritePose.Idle());
+
+    internal static WorldSpriteVisual Creature(string defId, CreatureSpritePose pose)
+        => new(PixelArtFactory.GetEntity(defId, pose), CreaturePixelSize);
 
     public static WorldSpriteVisual Item(string defId, string? materialId = null)
         => new(PixelArtFactory.GetItem(defId, materialId), ItemPixelSize);

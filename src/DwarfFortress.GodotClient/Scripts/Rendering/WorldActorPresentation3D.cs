@@ -19,11 +19,15 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private const float ItemFeetHeight = 0.12f;
     private const float CarriedItemFeetHeight = 0.70f;
     private const float CarriedItemScale = 0.78f;
+    private const float CarriedItemGripFraction = 0.46f;
+    private const float CarriedItemForwardOffset = 0.05f;
     private const float ContainerPreviewScale = 0.54f;
     private const float ContainerPreviewDepthOffset = 0.016f;
     private const float WaterSurfaceOffset = 0.012f;
     private const int BillboardRenderPriority = 1;
     private const int BillboardOutlineRenderPriority = 2;
+    private const int CarriedBillboardRenderPriority = 3;
+    private const int CarriedBillboardOutlineRenderPriority = 4;
     private const float HoverOutlineScale = 1.14f;
     private const float HoverOutlineDepthOffset = -0.0025f;
     private const int MaxVisibleCreatureBillboards = 96;
@@ -41,12 +45,17 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private readonly Dictionary<int, BillboardState> _dwarfBillboards = new();
     private readonly Dictionary<int, BillboardState> _creatureBillboards = new();
     private readonly Dictionary<int, BillboardState> _itemBillboards = new();
+    private readonly Dictionary<int, BillboardState> _carriedItemBillboards = new();
     private readonly Dictionary<int, BillboardState> _inventoryPickupCueBillboards = new();
     private readonly Dictionary<int, MovementInterpolationState> _movementInterpolations = new();
+    private readonly Dictionary<int, DwarfSpriteFacing> _dwarfFacingById = new();
+    private readonly Dictionary<int, CreatureSpriteFacing> _creatureFacingById = new();
     private readonly Dictionary<int, EmoteBubbleState> _emoteBubbles = new();
     private readonly Dictionary<int, Label3D> _worldFxLabels = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _billboardMaterials = new();
+    private readonly Dictionary<Texture2D, StandardMaterial3D> _carriedBillboardMaterials = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _outlineBillboardMaterials = new();
+    private readonly Dictionary<Texture2D, StandardMaterial3D> _carriedOutlineBillboardMaterials = new();
     private readonly List<int> _visibleDwarfIds = new();
     private readonly List<int> _visibleCreatureIds = new();
     private readonly List<int> _visibleItemIds = new();
@@ -55,6 +64,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private readonly HashSet<int> _visibleDwarfIdSet = new();
     private readonly HashSet<int> _visibleCreatureIdSet = new();
     private readonly HashSet<int> _visibleItemIdSet = new();
+    private readonly HashSet<int> _visibleCarriedItemIdSet = new();
     private readonly HashSet<int> _visibleInventoryPickupCueIds = new();
     private readonly HashSet<int> _visibleInterpolatedIds = new();
     private readonly HashSet<int> _visibleEmoteBubbleIds = new();
@@ -71,21 +81,30 @@ public sealed partial class WorldActorPresentation3D : Node3D
     }
 
     public (int Dwarves, int Creatures, int Items) GetDebugSpriteCounts()
-        => (_dwarfBillboards.Count, _creatureBillboards.Count, _itemBillboards.Count);
+        => (_dwarfBillboards.Count, _creatureBillboards.Count, _itemBillboards.Count + _carriedItemBillboards.Count);
 
     public bool HasDebugHoveredBillboardOutline()
         => _hoveredBillboard?.Outline.Visible == true;
 
     public int GetDebugItemBillboardRenderPriority()
-        => _itemBillboards.Values
+    {
+        var loosePriority = _itemBillboards.Values
             .Select(state => state.Mesh.MaterialOverride as StandardMaterial3D)
             .FirstOrDefault(material => material is not null)
             ?.RenderPriority ?? 0;
+        var carriedPriority = _carriedItemBillboards.Values
+            .Select(state => state.Mesh.MaterialOverride as StandardMaterial3D)
+            .FirstOrDefault(material => material is not null)
+            ?.RenderPriority ?? 0;
+        return Math.Max(loosePriority, carriedPriority);
+    }
 
     public int GetDebugItemPreviewCount(int itemLikeId)
     {
         if (!_itemBillboards.TryGetValue(itemLikeId, out var state))
-            return 0;
+            return _carriedItemBillboards.TryGetValue(itemLikeId, out var carriedState)
+                ? carriedState.PreviewMeshes.Count(mesh => mesh.Visible)
+                : 0;
 
         return state.PreviewMeshes.Count(mesh => mesh.Visible);
     }
@@ -112,6 +131,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         TryPickBillboards(camera, viewport, screenPosition, _dwarfBillboards.Values, ref best);
         TryPickBillboards(camera, viewport, screenPosition, _creatureBillboards.Values, ref best);
         TryPickBillboards(camera, viewport, screenPosition, _itemBillboards.Values, ref best);
+        TryPickBillboards(camera, viewport, screenPosition, _carriedItemBillboards.Values, ref best);
 
         SetHoveredBillboard(best?.State);
         if (best is null)
@@ -130,7 +150,8 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         return TryGetDebugBillboardProbe(camera, viewport, _dwarfBillboards.Values, out screenPosition, out tile)
             || TryGetDebugBillboardProbe(camera, viewport, _creatureBillboards.Values, out screenPosition, out tile)
-            || TryGetDebugBillboardProbe(camera, viewport, _itemBillboards.Values, out screenPosition, out tile);
+            || TryGetDebugBillboardProbe(camera, viewport, _itemBillboards.Values, out screenPosition, out tile)
+            || TryGetDebugBillboardProbe(camera, viewport, _carriedItemBillboards.Values, out screenPosition, out tile);
     }
 
     public bool TryGetDebugBillboardWorldPosition(int entityId, out Vector3 worldPosition)
@@ -154,6 +175,25 @@ public sealed partial class WorldActorPresentation3D : Node3D
             return true;
         }
 
+        if (_carriedItemBillboards.TryGetValue(entityId, out var carriedItemBillboard))
+        {
+            worldPosition = carriedItemBillboard.Root.Position;
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool TryGetDebugBillboardRenderPriority(int entityId, out int renderPriority)
+    {
+        renderPriority = default;
+        if (TryGetBillboardState(entityId, out var billboardState)
+            && billboardState.Mesh.MaterialOverride is StandardMaterial3D material)
+        {
+            renderPriority = material.RenderPriority;
+            return true;
+        }
+
         return false;
     }
 
@@ -163,16 +203,53 @@ public sealed partial class WorldActorPresentation3D : Node3D
         ClearBillboards(_dwarfBillboards);
         ClearBillboards(_creatureBillboards);
         ClearBillboards(_itemBillboards);
+        ClearBillboards(_carriedItemBillboards);
         ClearBillboards(_inventoryPickupCueBillboards);
         _movementInterpolations.Clear();
         ClearEmoteBubbles(_emoteBubbles);
         ClearLabels(_worldFxLabels);
         ClearOverlayMesh(ref _waterEffectMesh);
         DisposeMaterials(_billboardMaterials);
+        DisposeMaterials(_carriedBillboardMaterials);
         DisposeMaterials(_outlineBillboardMaterials);
+        DisposeMaterials(_carriedOutlineBillboardMaterials);
         _billboardMaterials.Clear();
+        _carriedBillboardMaterials.Clear();
         _outlineBillboardMaterials.Clear();
+        _carriedOutlineBillboardMaterials.Clear();
+        _dwarfFacingById.Clear();
+        _creatureFacingById.Clear();
         ClearVisibleEntityIds();
+    }
+
+    private bool TryGetBillboardState(int entityId, out BillboardState billboardState)
+    {
+        if (_dwarfBillboards.TryGetValue(entityId, out var dwarfBillboard))
+        {
+            billboardState = dwarfBillboard;
+            return true;
+        }
+
+        if (_creatureBillboards.TryGetValue(entityId, out var creatureBillboard))
+        {
+            billboardState = creatureBillboard;
+            return true;
+        }
+
+        if (_itemBillboards.TryGetValue(entityId, out var itemBillboard))
+        {
+            billboardState = itemBillboard;
+            return true;
+        }
+
+        if (_carriedItemBillboards.TryGetValue(entityId, out var carriedItemBillboard))
+        {
+            billboardState = carriedItemBillboard;
+            return true;
+        }
+
+        billboardState = null!;
+        return false;
     }
 
     public void SetActive(bool active)
@@ -192,6 +269,12 @@ public sealed partial class WorldActorPresentation3D : Node3D
         }
 
         foreach (var state in _itemBillboards.Values)
+        {
+            state.Root.Visible = active;
+            state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
+        }
+
+        foreach (var state in _carriedItemBillboards.Values)
         {
             state.Root.Visible = active;
             state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
@@ -232,9 +315,12 @@ public sealed partial class WorldActorPresentation3D : Node3D
         {
             ClearVisibleEntityIds();
             _movementInterpolations.Clear();
+            _dwarfFacingById.Clear();
+            _creatureFacingById.Clear();
             ClearBillboards(_dwarfBillboards);
             ClearBillboards(_creatureBillboards);
             ClearBillboards(_itemBillboards);
+            ClearBillboards(_carriedItemBillboards);
             ClearEmoteBubbles(_emoteBubbles);
             ClearLabels(_worldFxLabels);
             ClearOverlayMesh(ref _waterEffectMesh);
@@ -244,7 +330,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         var nowSeconds = presentationTimeSeconds;
 
         using (profiler?.Measure("billboards") ?? default)
-            SyncBillboards(registry, items, spatial, movementPresentation, feedback, currentZ, minX, minY, maxX, maxY, nowSeconds);
+            SyncBillboards(camera, registry, items, spatial, movementPresentation, feedback, currentZ, minX, minY, maxX, maxY, nowSeconds);
 
         using (profiler?.Measure("item_pickup_cues") ?? default)
             SyncInventoryPickupCueBillboards(feedback, currentZ);
@@ -259,17 +345,19 @@ public sealed partial class WorldActorPresentation3D : Node3D
             SyncWorldFxLabels(renderCache, feedback, currentZ, visibleTileBounds);
     }
 
-    private void SyncBillboards(EntityRegistry registry, ItemSystem? items, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, GameFeedbackController? feedback, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
+    private void SyncBillboards(Camera3D camera, EntityRegistry registry, ItemSystem? items, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, GameFeedbackController? feedback, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
     {
         _visibleInterpolatedIds.Clear();
-        SyncDwarfBillboards(registry, spatial, movementPresentation, feedback, currentZ, minX, minY, maxX, maxY, nowSeconds);
-        SyncCreatureBillboards(registry, spatial, movementPresentation, currentZ, minX, minY, maxX, maxY, nowSeconds);
+        SyncDwarfBillboards(camera, registry, spatial, movementPresentation, feedback, currentZ, minX, minY, maxX, maxY, nowSeconds);
+        SyncCreatureBillboards(camera, registry, spatial, movementPresentation, currentZ, minX, minY, maxX, maxY, nowSeconds);
 
         if (items is null)
         {
             _visibleItemIds.Clear();
             _visibleItemIdSet.Clear();
+            _visibleCarriedItemIdSet.Clear();
             ClearBillboards(_itemBillboards);
+            ClearBillboards(_carriedItemBillboards);
             RemoveStaleInterpolations();
             return;
         }
@@ -313,7 +401,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         RemoveStaleBillboards(_inventoryPickupCueBillboards, _visibleInventoryPickupCueIds);
     }
 
-    private void SyncDwarfBillboards(EntityRegistry registry, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, GameFeedbackController? feedback, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
+    private void SyncDwarfBillboards(Camera3D camera, EntityRegistry registry, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, GameFeedbackController? feedback, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
     {
         _visibleDwarfIds.Clear();
         _visibleDwarfIdSet.Clear();
@@ -327,9 +415,15 @@ public sealed partial class WorldActorPresentation3D : Node3D
             var position = dwarf.Position.Position;
             _visibleDwarfIdSet.Add(dwarf.Id);
             _visibleInterpolatedIds.Add(dwarf.Id);
-            var visual = WorldSpriteVisuals.Dwarf(dwarf.Appearance);
             var segment = movementPresentation?.TryGetEntitySegment(dwarf.Id, out var movementSegment) == true ? movementSegment : (MovementPresentationSegment?)null;
-            var billboardPosition = ResolveInterpolatedBillboardPosition(dwarf.Id, position, EntityFeetHeight, segment, nowSeconds);
+            var movementView = ResolveInterpolatedMovementView(dwarf.Id, position, segment, nowSeconds);
+            var workAnimation = feedback?.TryGetDwarfWorkAnimation(dwarf.Id, out var activeWorkAnimation) == true
+                ? activeWorkAnimation
+                : (GameFeedbackController.DwarfWorkAnimationView?)null;
+            var facing = ResolveDwarfFacing(camera, dwarf.Id, position, movementView, workAnimation);
+            var pose = ResolveDwarfPose(facing, movementView, workAnimation);
+            var visual = WorldSpriteVisuals.Dwarf(dwarf.Appearance, pose);
+            var billboardPosition = ResolveBillboardPosition(movementView.TilePosition, EntityFeetHeight);
             var billboardSize = visual.WorldSize;
             if (feedback?.TryGetDwarfPulseView(dwarf.Id, out var pulse) == true)
             {
@@ -345,12 +439,116 @@ public sealed partial class WorldActorPresentation3D : Node3D
                 visual.Texture,
                 billboardPosition,
                 billboardSize);
+            _dwarfBillboards[dwarf.Id].Root.RotationDegrees = Vector3.Zero;
+            _dwarfBillboards[dwarf.Id].HasCarryAnchor = true;
+            _dwarfBillboards[dwarf.Id].CarryAnchorOffset = ResolveDwarfCarryAnchorOffset(camera, pose, billboardSize);
         }
 
         RemoveStaleBillboards(_dwarfBillboards, _visibleDwarfIdSet);
+        RemoveStaleDwarfFacingStates();
     }
 
-    private void SyncCreatureBillboards(EntityRegistry registry, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
+    private DwarfSpriteFacing ResolveDwarfFacing(Camera3D camera, int dwarfId, Vec3i logicalPosition, InterpolatedMovementView movementView, GameFeedbackController.DwarfWorkAnimationView? workAnimation)
+    {
+        if (movementView.ActiveSegment is MovementPresentationSegment movementSegment
+            && TryResolveDwarfFacing(camera, movementSegment.OldPos, movementSegment.NewPos, out var movementFacing))
+        {
+            _dwarfFacingById[dwarfId] = movementFacing;
+            return movementFacing;
+        }
+
+        if (workAnimation is GameFeedbackController.DwarfWorkAnimationView activeWorkAnimation
+            && TryResolveDwarfFacing(camera, logicalPosition, activeWorkAnimation.TargetPos, out var workFacing))
+        {
+            _dwarfFacingById[dwarfId] = workFacing;
+            return workFacing;
+        }
+
+        if (_dwarfFacingById.TryGetValue(dwarfId, out var cachedFacing))
+            return cachedFacing;
+
+        _dwarfFacingById[dwarfId] = DwarfSpriteFacing.Right;
+        return DwarfSpriteFacing.Right;
+    }
+
+    private static bool TryResolveDwarfFacing(Camera3D camera, Vec3i from, Vec3i to, out DwarfSpriteFacing facing)
+    {
+        var delta = new Vector2(to.X - from.X, to.Y - from.Y);
+        if (delta.LengthSquared() <= Mathf.Epsilon)
+        {
+            facing = default;
+            return false;
+        }
+
+        var cameraRight = new Vector2(camera.GlobalTransform.Basis.X.X, camera.GlobalTransform.Basis.X.Z);
+        if (cameraRight.LengthSquared() <= Mathf.Epsilon)
+            cameraRight = Vector2.Right;
+
+        facing = delta.Normalized().Dot(cameraRight.Normalized()) >= 0f
+            ? DwarfSpriteFacing.Right
+            : DwarfSpriteFacing.Left;
+        return true;
+    }
+
+    private static DwarfSpritePose ResolveDwarfPose(DwarfSpriteFacing facing, InterpolatedMovementView movementView, GameFeedbackController.DwarfWorkAnimationView? workAnimation)
+    {
+        if (movementView.ActiveSegment is not null && movementView.Progress < 1f)
+        {
+            var walkFrame = movementView.Progress < 0.5f ? 0 : 1;
+            return new DwarfSpritePose(facing, DwarfSpriteActionKind.Walk, walkFrame);
+        }
+
+        if (workAnimation is GameFeedbackController.DwarfWorkAnimationView activeWorkAnimation)
+        {
+            var action = ResolveDwarfWorkAction(activeWorkAnimation.AnimationHint);
+            if (action != DwarfSpriteActionKind.Idle)
+            {
+                var frameCount = DwarfSpriteComposer.GetFrameCount(action);
+                var frameDuration = DwarfSpriteComposer.GetFrameDurationSeconds(action);
+                var frame = frameCount <= 1 || frameDuration <= 0f
+                    ? 0
+                    : (int)Math.Floor(activeWorkAnimation.ElapsedSeconds / frameDuration) % frameCount;
+                return new DwarfSpritePose(facing, action, frame);
+            }
+        }
+
+        return DwarfSpritePose.Idle(facing);
+    }
+
+    private static DwarfSpriteActionKind ResolveDwarfWorkAction(string animationHint)
+        => animationHint switch
+        {
+            "mining" => DwarfSpriteActionKind.Mine,
+            "wood_cutting" => DwarfSpriteActionKind.Chop,
+            "crafting" => DwarfSpriteActionKind.Craft,
+            "gather_plants" => DwarfSpriteActionKind.Gather,
+            "construction" => DwarfSpriteActionKind.Build,
+            "combat" => DwarfSpriteActionKind.Combat,
+            _ => DwarfSpriteActionKind.Idle,
+        };
+
+    private static Vector3 ResolveDwarfCarryAnchorOffset(Camera3D camera, DwarfSpritePose pose, Vector2 spriteWorldSize)
+    {
+        var localOffset = DwarfSpriteComposer.ResolveCarryAnchorOffset(pose, spriteWorldSize);
+        var rightAxis = camera.GlobalTransform.Basis.X.Normalized();
+        var upAxis = camera.GlobalTransform.Basis.Y.Normalized();
+           var viewerAxis = camera.GlobalTransform.Basis.Z.Normalized();
+        return (rightAxis * localOffset.X)
+             + (upAxis * (localOffset.Y - (CarriedItemScale * CarriedItemGripFraction)))
+               + (viewerAxis * CarriedItemForwardOffset);
+    }
+
+    private void RemoveStaleDwarfFacingStates()
+    {
+        if (_dwarfFacingById.Count == 0)
+            return;
+
+        var staleIds = _dwarfFacingById.Keys.Where(id => !_visibleDwarfIdSet.Contains(id)).ToArray();
+        foreach (var staleId in staleIds)
+            _dwarfFacingById.Remove(staleId);
+    }
+
+    private void SyncCreatureBillboards(Camera3D camera, EntityRegistry registry, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
     {
         _visibleCreatureIds.Clear();
         _visibleCreatureIdSet.Clear();
@@ -365,19 +563,79 @@ public sealed partial class WorldActorPresentation3D : Node3D
             var position = creature.Position.Position;
             _visibleCreatureIdSet.Add(creature.Id);
             _visibleInterpolatedIds.Add(creature.Id);
-            var visual = WorldSpriteVisuals.Creature(creature.DefId);
             var segment = movementPresentation?.TryGetEntitySegment(creature.Id, out var movementSegment) == true ? movementSegment : (MovementPresentationSegment?)null;
+            var movementView = ResolveInterpolatedMovementView(creature.Id, position, segment, nowSeconds);
+            var facing = ResolveCreatureFacing(camera, creature.Id, movementView);
+            var pose = ResolveCreaturePose(facing, movementView);
+            var visual = WorldSpriteVisuals.Creature(creature.DefId, pose);
             SyncBillboard(
                 _creatureBillboards,
                 creature.Id,
                 position,
                 $"Creature_{creature.Id}",
                 visual.Texture,
-                ResolveInterpolatedBillboardPosition(creature.Id, position, EntityFeetHeight, segment, nowSeconds),
+                ResolveBillboardPosition(movementView.TilePosition, EntityFeetHeight),
                 visual.WorldSize);
         }
 
         RemoveStaleBillboards(_creatureBillboards, _visibleCreatureIdSet);
+        RemoveStaleCreatureFacingStates();
+    }
+
+    private CreatureSpriteFacing ResolveCreatureFacing(Camera3D camera, int creatureId, InterpolatedMovementView movementView)
+    {
+        if (movementView.ActiveSegment is MovementPresentationSegment movementSegment
+            && TryResolveCreatureFacing(camera, movementSegment.OldPos, movementSegment.NewPos, out var movementFacing))
+        {
+            _creatureFacingById[creatureId] = movementFacing;
+            return movementFacing;
+        }
+
+        if (_creatureFacingById.TryGetValue(creatureId, out var cachedFacing))
+            return cachedFacing;
+
+        _creatureFacingById[creatureId] = CreatureSpriteFacing.Right;
+        return CreatureSpriteFacing.Right;
+    }
+
+    private static bool TryResolveCreatureFacing(Camera3D camera, Vec3i from, Vec3i to, out CreatureSpriteFacing facing)
+    {
+        var delta = new Vector2(to.X - from.X, to.Y - from.Y);
+        if (delta.LengthSquared() <= Mathf.Epsilon)
+        {
+            facing = default;
+            return false;
+        }
+
+        var cameraRight = new Vector2(camera.GlobalTransform.Basis.X.X, camera.GlobalTransform.Basis.X.Z);
+        if (cameraRight.LengthSquared() <= Mathf.Epsilon)
+            cameraRight = Vector2.Right;
+
+        facing = delta.Normalized().Dot(cameraRight.Normalized()) >= 0f
+            ? CreatureSpriteFacing.Right
+            : CreatureSpriteFacing.Left;
+        return true;
+    }
+
+    private static CreatureSpritePose ResolveCreaturePose(CreatureSpriteFacing facing, InterpolatedMovementView movementView)
+    {
+        if (movementView.ActiveSegment is not null && movementView.Progress < 1f)
+        {
+            var walkFrame = movementView.Progress < 0.5f ? 0 : 1;
+            return new CreatureSpritePose(facing, CreatureSpriteActionKind.Walk, walkFrame);
+        }
+
+        return CreatureSpritePose.Idle(facing);
+    }
+
+    private void RemoveStaleCreatureFacingStates()
+    {
+        if (_creatureFacingById.Count == 0)
+            return;
+
+        var staleIds = _creatureFacingById.Keys.Where(id => !_visibleCreatureIdSet.Contains(id)).ToArray();
+        foreach (var staleId in staleIds)
+            _creatureFacingById.Remove(staleId);
     }
 
     private static void TrimVisibleIds(List<int> visibleIds, int maxCount)
@@ -398,6 +656,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private void SyncItemBillboards(EntityRegistry registry, ItemSystem items, SpatialIndexSystem spatial, MovementPresentationSystem? movementPresentation, int currentZ, int minX, int minY, int maxX, int maxY, double nowSeconds)
     {
         _visibleItemIdSet.Clear();
+        _visibleCarriedItemIdSet.Clear();
         ItemLikeSceneResolver.CollectVisibleEntries(
             registry,
             items,
@@ -417,24 +676,33 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         foreach (var entry in _visibleItemEntries)
         {
-            _visibleItemIdSet.Add(entry.RuntimeId);
+            var targetStates = entry.CarryMode == ItemCarryMode.Hauling
+                ? _carriedItemBillboards
+                : _itemBillboards;
+            var targetVisibleIds = entry.CarryMode == ItemCarryMode.Hauling
+                ? _visibleCarriedItemIdSet
+                : _visibleItemIdSet;
+
+            targetVisibleIds.Add(entry.RuntimeId);
             _visibleInterpolatedIds.Add(entry.RuntimeId);
             var billboardSize = entry.Descriptor.Visual.WorldSize;
             if (entry.CarryMode == ItemCarryMode.Hauling)
                 billboardSize *= CarriedItemScale;
 
             SyncBillboard(
-                _itemBillboards,
+                targetStates,
                 entry.RuntimeId,
                 entry.TilePosition,
                 entry.NodeName,
                 entry.Descriptor.Visual.Texture,
                 ResolveItemBillboardPosition(entry, nowSeconds),
-                billboardSize);
-            ApplyItemLikeDecorators(_itemBillboards[entry.RuntimeId], entry.Descriptor);
+                billboardSize,
+                useCarriedMaterial: entry.CarryMode == ItemCarryMode.Hauling);
+            ApplyItemLikeDecorators(targetStates[entry.RuntimeId], entry.Descriptor);
         }
 
         RemoveStaleBillboards(_itemBillboards, _visibleItemIdSet);
+        RemoveStaleBillboards(_carriedItemBillboards, _visibleCarriedItemIdSet);
     }
 
     private void ApplyItemLikeDecorators(BillboardState state, ItemLikeVisualDescriptor descriptor)
@@ -537,7 +805,9 @@ public sealed partial class WorldActorPresentation3D : Node3D
     {
         if (_dwarfBillboards.TryGetValue(carrierEntityId, out var dwarfBillboard))
         {
-            position = dwarfBillboard.Root.Position + new Vector3(0f, CarriedItemFeetHeight - EntityFeetHeight, 0f);
+            position = dwarfBillboard.Root.Position + (dwarfBillboard.HasCarryAnchor
+                ? dwarfBillboard.CarryAnchorOffset
+                : new Vector3(0f, CarriedItemFeetHeight - EntityFeetHeight, 0f));
             return true;
         }
 
@@ -945,17 +1215,17 @@ public sealed partial class WorldActorPresentation3D : Node3D
         label.Visible = _isActive;
     }
 
-    private void SyncBillboard<TKey>(Dictionary<TKey, BillboardState> states, TKey entityId, string name, Texture2D texture, Vector3 position, Vector2 size)
+    private void SyncBillboard<TKey>(Dictionary<TKey, BillboardState> states, TKey entityId, string name, Texture2D texture, Vector3 position, Vector2 size, bool useCarriedMaterial = false)
         where TKey : notnull
     {
         if (!states.TryGetValue(entityId, out var state))
         {
-            state = CreateBillboardState(name, texture, size);
+            state = CreateBillboardState(name, texture, size, useCarriedMaterial);
             states[entityId] = state;
         }
         else if (state.Texture != texture || state.Size != size)
         {
-            ApplyBillboardVisual(state, texture, size);
+            ApplyBillboardVisual(state, texture, size, useCarriedMaterial);
         }
 
         state.Root.Position = position;
@@ -963,14 +1233,14 @@ public sealed partial class WorldActorPresentation3D : Node3D
         state.Outline.Visible = _isActive && ReferenceEquals(state, _hoveredBillboard);
     }
 
-    private void SyncBillboard<TKey>(Dictionary<TKey, BillboardState> states, TKey entityId, Vec3i tilePosition, string name, Texture2D texture, Vector3 position, Vector2 size)
+    private void SyncBillboard<TKey>(Dictionary<TKey, BillboardState> states, TKey entityId, Vec3i tilePosition, string name, Texture2D texture, Vector3 position, Vector2 size, bool useCarriedMaterial = false)
         where TKey : notnull
     {
-        SyncBillboard(states, entityId, name, texture, position, size);
+        SyncBillboard(states, entityId, name, texture, position, size, useCarriedMaterial);
         states[entityId].TilePosition = tilePosition;
     }
 
-    private BillboardState CreateBillboardState(string name, Texture2D texture, Vector2 size)
+    private BillboardState CreateBillboardState(string name, Texture2D texture, Vector2 size, bool useCarriedMaterial)
     {
         var root = new Node3D { Name = name };
         var mesh = new MeshInstance3D
@@ -1014,31 +1284,32 @@ public sealed partial class WorldActorPresentation3D : Node3D
         AddChild(root);
 
         var state = new BillboardState(root, mesh, outline, previewMeshes, waterTint, waterTintMaterial, waterLine, waterLineMaterial, texture, size);
-        ApplyBillboardVisual(state, texture, size);
+        ApplyBillboardVisual(state, texture, size, useCarriedMaterial);
         return state;
     }
 
-    private void ApplyBillboardVisual(BillboardState state, Texture2D texture, Vector2 size)
+    private void ApplyBillboardVisual(BillboardState state, Texture2D texture, Vector2 size, bool useCarriedMaterial)
     {
         state.Texture = texture;
         state.Size = size;
         var quadMesh = state.Mesh.Mesh as QuadMesh ?? new QuadMesh();
         quadMesh.Size = size;
         state.Mesh.Mesh = quadMesh;
-        state.Mesh.MaterialOverride = GetBillboardMaterial(texture);
+        state.Mesh.MaterialOverride = GetBillboardMaterial(texture, useCarriedMaterial);
         state.Mesh.Position = new Vector3(0f, size.Y * 0.5f, 0f);
 
         var outlineMesh = state.Outline.Mesh as QuadMesh ?? new QuadMesh();
         outlineMesh.Size = size * HoverOutlineScale;
         state.Outline.Mesh = outlineMesh;
-        state.Outline.MaterialOverride = GetOutlineBillboardMaterial(texture);
+        state.Outline.MaterialOverride = GetOutlineBillboardMaterial(texture, useCarriedMaterial);
         state.Outline.Position = new Vector3(0f, size.Y * 0.5f, HoverOutlineDepthOffset);
         state.Outline.Visible = _isActive && ReferenceEquals(state, _hoveredBillboard);
     }
 
-    private StandardMaterial3D GetBillboardMaterial(Texture2D texture)
+    private StandardMaterial3D GetBillboardMaterial(Texture2D texture, bool useCarriedMaterial = false)
     {
-        if (_billboardMaterials.TryGetValue(texture, out var material))
+        var materials = useCarriedMaterial ? _carriedBillboardMaterials : _billboardMaterials;
+        if (materials.TryGetValue(texture, out var material))
             return material;
 
         material = new StandardMaterial3D
@@ -1048,16 +1319,17 @@ public sealed partial class WorldActorPresentation3D : Node3D
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
             AlbedoTexture = texture,
-            RenderPriority = BillboardRenderPriority,
+            RenderPriority = useCarriedMaterial ? CarriedBillboardRenderPriority : BillboardRenderPriority,
         };
 
-        _billboardMaterials[texture] = material;
+        materials[texture] = material;
         return material;
     }
 
-    private StandardMaterial3D GetOutlineBillboardMaterial(Texture2D texture)
+    private StandardMaterial3D GetOutlineBillboardMaterial(Texture2D texture, bool useCarriedMaterial = false)
     {
-        if (_outlineBillboardMaterials.TryGetValue(texture, out var material))
+        var materials = useCarriedMaterial ? _carriedOutlineBillboardMaterials : _outlineBillboardMaterials;
+        if (materials.TryGetValue(texture, out var material))
             return material;
 
         material = new StandardMaterial3D
@@ -1068,10 +1340,10 @@ public sealed partial class WorldActorPresentation3D : Node3D
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
             AlbedoTexture = texture,
             AlbedoColor = HoverOutlineTint,
-            RenderPriority = BillboardOutlineRenderPriority,
+            RenderPriority = useCarriedMaterial ? CarriedBillboardOutlineRenderPriority : BillboardOutlineRenderPriority,
         };
 
-        _outlineBillboardMaterials[texture] = material;
+        materials[texture] = material;
         return material;
     }
 
@@ -1298,6 +1570,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         _visibleDwarfIdSet.Clear();
         _visibleCreatureIdSet.Clear();
         _visibleItemIdSet.Clear();
+        _visibleCarriedItemIdSet.Clear();
         _visibleEmoteBubbleIds.Clear();
     }
 
@@ -1353,6 +1626,9 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
             if (_itemBillboards.TryGetValue(entityId, out var itemBillboard))
                 return itemBillboard.Root.Position;
+
+            if (_carriedItemBillboards.TryGetValue(entityId, out var carriedItemBillboard))
+                return carriedItemBillboard.Root.Position;
         }
 
         if (entityId >= 0 && renderCache.DwarfPositions.ContainsKey(entityId))
@@ -1608,6 +1884,10 @@ public sealed partial class WorldActorPresentation3D : Node3D
         public Vector2 Size { get; set; }
 
         public Vec3i TilePosition { get; set; }
+
+        public bool HasCarryAnchor { get; set; }
+
+        public Vector3 CarryAnchorOffset { get; set; }
     }
 
     private sealed class EmoteBubbleState

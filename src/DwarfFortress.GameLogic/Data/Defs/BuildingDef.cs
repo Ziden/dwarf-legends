@@ -17,15 +17,21 @@ public sealed record BuildingDef(
     TagSet                      Tags,
     IReadOnlyList<BuildingTile> Footprint,
     IReadOnlyList<RecipeInput>  ConstructionInputs,
+    IReadOnlyList<RecipeInput>? DiscoveryInputs = null,
     float                       ConstructionTime = 50f,
     bool                        IsWorkshop       = false,
-    string?                     ProducedSmokeId  = null);
+    string?                     ProducedSmokeId  = null,
+    int                         ResidenceCapacity = 0,
+    IReadOnlyList<Vec2i>        EntryOffsets = null!,
+    IReadOnlyList<string>       AutoStockpileAcceptedTags = null!,
+    string?                     StructureVisualId = null);
 
 public static class BuildingDefIds
 {
     public const string Bed = "bed";
     public const string Chair = "chair";
     public const string Table = "table";
+    public const string House = "house";
     public const string CarpenterWorkshop = "carpenter_workshop";
     public const string Smelter = "smelter";
     public const string Kitchen = "kitchen";

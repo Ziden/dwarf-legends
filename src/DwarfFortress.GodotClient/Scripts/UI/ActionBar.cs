@@ -11,7 +11,7 @@ namespace DwarfFortress.GodotClient.UI;
 
 
 /// <summary>
-/// Bottom action bar â€” the primary interaction surface.
+/// Bottom action bar Ã¢â‚¬â€ the primary interaction surface.
 /// Contains designation buttons, a build popup, and pause control.
 /// Replaces the buried BuildMenu and the old time controls that were in TopBar.
 /// </summary>
@@ -20,11 +20,11 @@ public partial class ActionBar : PanelContainer
     private const int ActionButtonSize = 46;
     private const float FixedSpeedMultiplier = 5f;
 
-    // â”€â”€ Exposed to GameRoot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Exposed to GameRoot Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     public bool  IsPaused        => _paused;
     public float SpeedMultiplier => FixedSpeedMultiplier;
 
-    // â”€â”€ Private state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Private state Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     private InputController? _input;
     private PopupPanel?      _buildPopup;
     private ItemSelectionList? _buildList;
@@ -34,7 +34,7 @@ public partial class ActionBar : PanelContainer
     private GameSimulation?  _simulation;
     private DiscoverySystem? _discovery;
 
-    // â”€â”€ Knowledge panel callback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Knowledge panel callback Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     public Action? OnKnowledgePressed { get; set; }
 
     public override void _Ready()
@@ -54,7 +54,7 @@ public partial class ActionBar : PanelContainer
         buildBtn.Pressed    += ToggleBuildPopup;
         _knowledgeBtn.Pressed += () => OnKnowledgePressed?.Invoke();
 
-        ConfigureActionButton(clearBtn, PixelArtFactory.GetUiIcon(UiIconIds.Pickaxe), "Clear", "Clear terrain  [M]\nDrag over walls and trees");
+        ConfigureActionButton(clearBtn, PixelArtFactory.GetUiIcon(UiIconIds.Pickaxe), "Harvest", "Harvest terrain  [M]\nDrag over walls and trees");
         ConfigureActionButton(cancelBtn, PixelArtFactory.GetUiIcon(UiIconIds.Cancel), "Cancel", "Cancel designations  [X]");
         ConfigureActionButton(zoneBtn, PixelArtFactory.GetUiIcon(UiIconIds.Zone), "Zone", "Create stockpile zone  [S]");
         ConfigureActionButton(buildBtn, PixelArtFactory.GetUiIcon(UiIconIds.Build), "Build", "Open build menu  [B]");
@@ -108,14 +108,18 @@ public partial class ActionBar : PanelContainer
 
     public void RefreshBuildList()
     {
-        if (_buildList is null || _simulation is null) return;
+        if (_buildList is null || _simulation is null)
+            return;
 
         var dm = _simulation.Context.Get<DataManager>();
-        var defs = dm.Buildings.All()
-            .Where(b => _discovery is null || _discovery.IsBuildingUnlocked(b.Id))
-            .ToList();
+        var entries = _discovery is null
+            ? dm.Buildings.All().Select(def => BuildEntry(def, null)).ToList()
+            : _discovery.GetBuildingInfos()
+                .Where(info => info.State != DiscoveryKnowledgeState.Hidden)
+                .Select(info => BuildEntry(dm.Buildings.Get(info.Id), info))
+                .ToList();
 
-        if (defs.Count == 0)
+        if (entries.Count == 0)
         {
             _buildList.SetEntries(new[]
             {
@@ -134,13 +138,15 @@ public partial class ActionBar : PanelContainer
             return;
         }
 
-        _buildList.SetEntries(defs.Select(BuildEntry).ToList());
+        _buildList.SetEntries(entries);
     }
 
     private void ToggleBuildPopup()
     {
         if (_buildPopup is null) return;
         if (_buildPopup.Visible) { _buildPopup.Hide(); return; }
+
+        RefreshBuildList();
 
         const int popupW = 640;
         const int popupH = 460;
@@ -163,10 +169,13 @@ public partial class ActionBar : PanelContainer
         _pauseBtn.ButtonPressed = !_pauseBtn.ButtonPressed;
     }
 
-    private ItemSelectionEntry BuildEntry(BuildingDef def)
+    private ItemSelectionEntry BuildEntry(BuildingDef def, BuildingDiscoveryInfo? info)
     {
         var requirements = SelectionRequirementHelper.Analyze(_simulation!, def.ConstructionInputs);
-        bool canPlace = requirements.CanFulfill;
+        var state = info?.State ?? (requirements.CanFulfill
+            ? DiscoveryKnowledgeState.BuildableNow
+            : DiscoveryKnowledgeState.Unlocked);
+        var canPlace = state == DiscoveryKnowledgeState.BuildableNow;
         var typeLabel = def.IsWorkshop ? "Workshop" : "Structure";
         var footprint = def.Footprint.Any()
             ? $"{def.Footprint.Max(tile => tile.Offset.X) + 1}x{def.Footprint.Max(tile => tile.Offset.Y) + 1}"
@@ -175,14 +184,12 @@ public partial class ActionBar : PanelContainer
         return new ItemSelectionEntry(
             Id: def.Id,
             Title: def.DisplayName,
-            Subtitle: $"{typeLabel} â€¢ footprint {footprint}",
+            Subtitle: $"{typeLabel} Ã¢â‚¬Â¢ footprint {footprint} Ã¢â‚¬Â¢ {FormatStateLabel(state)}",
             Details: def.ConstructionInputs.Count == 0
                 ? $"Build time {def.ConstructionTime:0.#}"
                 : $"Needs {requirements.NeededSummary}  |  Build {def.ConstructionTime:0.#}",
-            Status: requirements.CanFulfill
-                ? "Materials available now"
-                : $"Missing {requirements.MissingSummary}",
-            StatusColor: requirements.CanFulfill ? new Color(0.44f, 0.85f, 0.48f) : new Color(0.96f, 0.72f, 0.28f),
+            Status: BuildStatusText(state, requirements, info),
+            StatusColor: BuildStatusColor(state),
             Icon: PixelArtFactory.GetBuilding(def.Id),
             ActionLabel: canPlace ? "Place mode" : "Unavailable",
             IsEnabled: canPlace,
@@ -190,9 +197,69 @@ public partial class ActionBar : PanelContainer
             {
                 if (_input is null) return;
                 _input.PendingBuildingDefId = def.Id;
+                _input.PendingBuildingRotation = BuildingRotation.None;
                 _input.SetMode(InputMode.BuildingPreview);
                 _buildPopup?.Hide();
             } : null);
+    }
+
+    private static Color BuildStatusColor(DiscoveryKnowledgeState state)
+        => state switch
+        {
+            DiscoveryKnowledgeState.BuildableNow => new Color(0.44f, 0.85f, 0.48f),
+            DiscoveryKnowledgeState.Unlocked => new Color(0.96f, 0.72f, 0.28f),
+            DiscoveryKnowledgeState.Known => new Color(0.91f, 0.68f, 0.34f),
+            _ => new Color(0.7f, 0.7f, 0.7f),
+        };
+
+    private static string FormatStateLabel(DiscoveryKnowledgeState state)
+        => state switch
+        {
+            DiscoveryKnowledgeState.BuildableNow => "buildable",
+            DiscoveryKnowledgeState.Unlocked => "known",
+            DiscoveryKnowledgeState.Known => "partial knowledge",
+            _ => "hidden",
+        };
+
+    private static string BuildStatusText(DiscoveryKnowledgeState state, RequirementAnalysis requirements, BuildingDiscoveryInfo? info)
+        => state switch
+        {
+            DiscoveryKnowledgeState.BuildableNow => "Materials available now",
+            DiscoveryKnowledgeState.Unlocked => string.IsNullOrWhiteSpace(requirements.MissingSummary)
+                ? "Discovered"
+                : $"Missing {requirements.MissingSummary}",
+            DiscoveryKnowledgeState.Known => $"Need to discover {FormatMissingDiscovery(info)}",
+            _ => "Not yet discovered",
+        };
+
+    private static string FormatMissingDiscovery(BuildingDiscoveryInfo? info)
+    {
+        if (info is null)
+            return "more materials";
+
+        var missing = info.Value.DiscoveryRequirements
+            .Where(status => !status.IsEncountered)
+            .Select(status => FormatRequirement(status.Input))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return missing.Count > 0
+            ? string.Join(", ", missing)
+            : "more materials";
+    }
+
+    private static string FormatRequirement(RecipeInput input)
+    {
+        if (!string.IsNullOrWhiteSpace(input.ItemDefId))
+            return ItemTextFormatter.Humanize(input.ItemDefId);
+
+        if (!string.IsNullOrWhiteSpace(input.MaterialId))
+            return ItemTextFormatter.Humanize(input.MaterialId);
+
+        if (input.RequiredTags.Count > 0)
+            return string.Join("/", input.RequiredTags.All.Select(ItemTextFormatter.Humanize));
+
+        return "material";
     }
 
     private static void ConfigureActionButton(Button button, Texture2D icon, string text, string tooltip)

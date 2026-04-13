@@ -24,6 +24,10 @@ public static class EntityMovement
         if (oldPos == newPos)
             return false;
 
+        var map = ctx.TryGet<World.WorldMap>();
+        if (map is not null && oldPos.ManhattanDistanceTo(newPos) == 1 && !map.CanTraverse(oldPos, newPos))
+            return false;
+
         posComp.Position = newPos;
         ctx.TryGet<ItemSystem>()?.UpdateCarriedItemsPosition(entity.Id, newPos);
 

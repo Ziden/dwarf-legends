@@ -18,14 +18,20 @@ public sealed class GameFeedbackController
     private const float CombatCueLifetimeSeconds = 0.26f;
     private const float InventoryPickupCueLifetimeSeconds = 0.34f;
     private const float ResourceBurstCueLifetimeSeconds = 0.42f;
+    private const float WoodCuttingSwingCycleSeconds = 0.34f;
+    private const float WoodCuttingImpactLeadInSeconds = 0.18f;
+    private const float WoodCuttingImpactBurstScale = 0.42f;
     private const int MaxAreaSelectionPulseTiles = 32;
     private static readonly Color SelectionPulseColor = new(0.35f, 0.70f, 1f, 1f);
+    private static readonly Color WoodCuttingImpactColor = new(0.76f, 0.60f, 0.28f, 1f);
 
     private readonly Node _owner;
     private readonly List<WorldFx> _worldFx = new();
     private readonly List<CombatCue> _combatCues = new();
     private readonly List<InventoryPickupCue> _inventoryPickupCues = new();
     private readonly List<ResourceBurstCue> _resourceBurstCues = new();
+    private readonly Dictionary<int, WoodCuttingAnimationState> _woodCuttingAnimations = new();
+    private readonly Dictionary<int, DwarfWorkAnimationState> _dwarfWorkAnimations = new();
     private readonly Dictionary<int, ActivityPulse> _dwarfActivityPulses = new();
     private readonly Dictionary<int, ActivityPulse> _buildingActivityPulses = new();
     private readonly Dictionary<Vec3i, ActivityPulse> _tileActivityPulses = new();
@@ -57,9 +63,11 @@ public sealed class GameFeedbackController
 
     public readonly record struct InventoryPickupCueView(int Id, string ItemDefId, Vec3i SourcePosition, Vec3i TargetPosition, int CarrierEntityId, float TimeLeft, float Duration);
 
-    public readonly record struct ResourceBurstCueView(int Id, Vec3i Position, Color Color, float TimeLeft, float Duration);
+    public readonly record struct ResourceBurstCueView(int Id, Vec3i Position, Color Color, float TimeLeft, float Duration, float Scale);
 
     public readonly record struct CombatCueView(int Id, Vec3i Position, Color Color, float TimeLeft, float Duration, int DirectionX, int DirectionY, bool DidHit);
+
+    public readonly record struct DwarfWorkAnimationView(string AnimationHint, Vec3i TargetPos, float ElapsedSeconds);
 
     public void Bind(GameSimulation simulation, WorldMap map, WorldQuerySystem query)
     {
@@ -226,6 +234,14 @@ public sealed class GameFeedbackController
 
             _resourceBurstCues[index] = cue;
         }
+
+        if (_dwarfWorkAnimations.Count > 0)
+        {
+            foreach (var animation in _dwarfWorkAnimations.Values)
+                animation.ElapsedSeconds += delta;
+        }
+
+        UpdateWoodCuttingAnimations(delta);
     }
 
     public IReadOnlyList<TilePulseView> GetTilePulseViews(int currentZ)
@@ -255,7 +271,7 @@ public sealed class GameFeedbackController
     public IReadOnlyList<ResourceBurstCueView> GetResourceBurstCueViews(int currentZ)
         => _resourceBurstCues
             .Where(cue => cue.Position.Z == currentZ)
-            .Select(cue => new ResourceBurstCueView(cue.Id, cue.Position, cue.Color, cue.TimeLeft, cue.Duration))
+            .Select(cue => new ResourceBurstCueView(cue.Id, cue.Position, cue.Color, cue.TimeLeft, cue.Duration, cue.Scale))
             .ToArray();
 
     public IReadOnlyList<CombatCueView> GetCombatCueViews(int currentZ)
@@ -266,6 +282,23 @@ public sealed class GameFeedbackController
 
     public bool TryGetDwarfPulseView(int dwarfId, out ActivityPulseView pulse)
         => TryGetPulseView(_dwarfActivityPulses, dwarfId, out pulse);
+
+    public float GetDwarfRollDegrees(int dwarfId)
+        => _woodCuttingAnimations.TryGetValue(dwarfId, out var animation)
+            ? EvaluateWoodCuttingRollDegrees(animation.ElapsedSeconds)
+            : 0f;
+
+    public bool TryGetDwarfWorkAnimation(int dwarfId, out DwarfWorkAnimationView animation)
+    {
+        if (_dwarfWorkAnimations.TryGetValue(dwarfId, out var state))
+        {
+            animation = new DwarfWorkAnimationView(state.AnimationHint, state.TargetPos, state.ElapsedSeconds);
+            return true;
+        }
+
+        animation = default;
+        return false;
+    }
 
     public bool TryGetBuildingPulseView(int buildingId, out ActivityPulseView pulse)
         => TryGetPulseView(_buildingActivityPulses, buildingId, out pulse);
@@ -390,13 +423,14 @@ public sealed class GameFeedbackController
             InventoryPickupCueLifetimeSeconds,
             InventoryPickupCueLifetimeSeconds));
 
-    private void SpawnResourceBurst(Vec3i position, Color color)
+    private void SpawnResourceBurst(Vec3i position, Color color, float scale = 1f)
         => _resourceBurstCues.Add(new ResourceBurstCue(
             _nextResourceBurstCueId++,
             position,
             color,
             ResourceBurstCueLifetimeSeconds,
-            ResourceBurstCueLifetimeSeconds));
+            ResourceBurstCueLifetimeSeconds,
+            scale));
 
     private static bool TryGetPulseView<TKey>(Dictionary<TKey, ActivityPulse> store, TKey key, out ActivityPulseView pulse) where TKey : notnull
     {
@@ -415,6 +449,15 @@ public sealed class GameFeedbackController
 
     private void StartWorkActivityAnimation(JobWorkStartedEvent e)
     {
+        if (!string.IsNullOrWhiteSpace(e.AnimationHint))
+        {
+            _dwarfWorkAnimations[e.DwarfId] = new DwarfWorkAnimationState(
+                e.JobId,
+                e.AnimationHint,
+                e.TargetPos,
+                elapsedSeconds: 0f);
+        }
+
         switch (e.AnimationHint)
         {
             case "mining":
@@ -426,9 +469,14 @@ public sealed class GameFeedbackController
 
             case "wood_cutting":
                 StartLoopPulse(_dwarfActivityPulses, e.DwarfId, new Color(0.42f, 0.92f, 0.26f, 1f),
-                    1.01f, 1.12f, -1f, -11f, 0.16f, 0.34f, 0.92f, 1.20f, 0.14f);
+                    1.00f, 1.08f, 0f, -7f, 0.10f, 0.26f, 0.96f, 1.12f, WoodCuttingSwingCycleSeconds * 0.5f);
                 StartLoopPulse(_tileActivityPulses, e.TargetPos, new Color(0.34f, 0.88f, 0.24f, 1f),
-                    1f, 1f, 0f, 0f, 0.12f, 0.26f, 0.96f, 1.18f, 0.14f);
+                    1f, 1f, 0f, 0f, 0.08f, 0.20f, 0.98f, 1.10f, WoodCuttingSwingCycleSeconds * 0.5f);
+                _woodCuttingAnimations[e.DwarfId] = new WoodCuttingAnimationState(
+                    e.JobId,
+                    e.TargetPos,
+                    elapsedSeconds: 0f,
+                    timeUntilImpactSeconds: WoodCuttingImpactLeadInSeconds);
                 break;
 
             case "crafting":
@@ -445,12 +493,17 @@ public sealed class GameFeedbackController
 
     private void StopWorkActivityAnimation(JobWorkStoppedEvent e)
     {
+        if (_dwarfWorkAnimations.TryGetValue(e.DwarfId, out var activeAnimation) && activeAnimation.JobId == e.JobId)
+            _dwarfWorkAnimations.Remove(e.DwarfId);
+
         switch (e.AnimationHint)
         {
             case "mining":
             case "wood_cutting":
                 StopLoopPulse(_dwarfActivityPulses, e.DwarfId);
                 StopLoopPulse(_tileActivityPulses, e.TargetPos);
+                if (_woodCuttingAnimations.TryGetValue(e.DwarfId, out var animation) && animation.JobId == e.JobId)
+                    _woodCuttingAnimations.Remove(e.DwarfId);
                 break;
 
             case "crafting":
@@ -653,6 +706,36 @@ public sealed class GameFeedbackController
         return new Rect2(nextPosition, nextSize);
     }
 
+    private void UpdateWoodCuttingAnimations(float delta)
+    {
+        if (_woodCuttingAnimations.Count == 0)
+            return;
+
+        foreach (var animation in _woodCuttingAnimations.Values)
+        {
+            animation.ElapsedSeconds += delta;
+            animation.TimeUntilImpactSeconds -= delta;
+            while (animation.TimeUntilImpactSeconds <= 0f)
+            {
+                animation.TimeUntilImpactSeconds += WoodCuttingSwingCycleSeconds;
+                SpawnResourceBurst(animation.TargetPos, WoodCuttingImpactColor, WoodCuttingImpactBurstScale);
+            }
+        }
+    }
+
+    private static float EvaluateWoodCuttingRollDegrees(float elapsedSeconds)
+    {
+        var cycleProgress = Mathf.PosMod(elapsedSeconds, WoodCuttingSwingCycleSeconds) / WoodCuttingSwingCycleSeconds;
+        if (cycleProgress < 0.58f)
+            return Mathf.Lerp(-1.5f, 7.0f, cycleProgress / 0.58f);
+
+        var downswingProgress = (cycleProgress - 0.58f) / 0.42f;
+        if (downswingProgress < 0.34f)
+            return Mathf.Lerp(7.0f, -10.5f, downswingProgress / 0.34f);
+
+        return Mathf.Lerp(-10.5f, -1.0f, (downswingProgress - 0.34f) / 0.66f);
+    }
+
     private static string HumanizeId(string id)
         => string.IsNullOrWhiteSpace(id) ? string.Empty : id.Replace('_', ' ');
 
@@ -726,13 +809,14 @@ public sealed class GameFeedbackController
 
     private sealed class ResourceBurstCue
     {
-        public ResourceBurstCue(int id, Vec3i position, Color color, float timeLeft, float duration)
+        public ResourceBurstCue(int id, Vec3i position, Color color, float timeLeft, float duration, float scale)
         {
             Id = id;
             Position = position;
             Color = color;
             TimeLeft = timeLeft;
             Duration = duration;
+            Scale = scale;
         }
 
         public int Id { get; }
@@ -740,6 +824,7 @@ public sealed class GameFeedbackController
         public Color Color { get; }
         public float TimeLeft { get; set; }
         public float Duration { get; }
+        public float Scale { get; }
     }
 
     private sealed class ActivityPulse
@@ -758,5 +843,43 @@ public sealed class GameFeedbackController
 
         public Color WithAlpha(float alpha)
             => new(Color.R, Color.G, Color.B, alpha);
+    }
+
+    private sealed class WoodCuttingAnimationState
+    {
+        public WoodCuttingAnimationState(int jobId, Vec3i targetPos, float elapsedSeconds, float timeUntilImpactSeconds)
+        {
+            JobId = jobId;
+            TargetPos = targetPos;
+            ElapsedSeconds = elapsedSeconds;
+            TimeUntilImpactSeconds = timeUntilImpactSeconds;
+        }
+
+        public int JobId { get; }
+
+        public Vec3i TargetPos { get; }
+
+        public float ElapsedSeconds { get; set; }
+
+        public float TimeUntilImpactSeconds { get; set; }
+    }
+
+    private sealed class DwarfWorkAnimationState
+    {
+        public DwarfWorkAnimationState(int jobId, string animationHint, Vec3i targetPos, float elapsedSeconds)
+        {
+            JobId = jobId;
+            AnimationHint = animationHint;
+            TargetPos = targetPos;
+            ElapsedSeconds = elapsedSeconds;
+        }
+
+        public int JobId { get; }
+
+        public string AnimationHint { get; }
+
+        public Vec3i TargetPos { get; }
+
+        public float ElapsedSeconds { get; set; }
     }
 }

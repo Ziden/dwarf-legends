@@ -41,7 +41,7 @@ public partial class WorldRender3D : Node3D
 
     private readonly Dictionary<Vec3i, WorldChunkRenderSnapshot> _chunkSnapshots = new();
     private readonly Dictionary<Vec3i, ChunkMeshState> _chunkMeshes = new();
-    private readonly Dictionary<int, WorkshopMeshState> _workshopMeshes = new();
+    private readonly Dictionary<int, StructureMeshState> _structureMeshes = new();
     private readonly Dictionary<Vec3i, BillboardState> _treeBillboards = new();
     private readonly Dictionary<Vec3i, BillboardState> _plantBillboards = new();
     private readonly List<Chunk> _activeChunks = new();
@@ -53,7 +53,7 @@ public partial class WorldRender3D : Node3D
     private readonly Dictionary<Texture2D, StandardMaterial3D> _designationOutlineBillboardMaterials = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _outlineBillboardMaterials = new();
     private readonly WorldChunkSliceMesher _sliceMesher = new();
-    private readonly WorldWorkshopMesher _workshopMesher = new();
+    private readonly WorldStructureMesher _structureMesher = new();
 
     private WorldActorPresentation3D? _actorPresentation;
     private ShaderMaterial? _chunkTopMaterial;
@@ -92,8 +92,8 @@ public partial class WorldRender3D : Node3D
         foreach (var state in _chunkMeshes.Values)
             ReleaseChunkMeshState(state);
 
-        foreach (var state in _workshopMeshes.Values)
-            ReleaseWorkshopMeshState(state);
+        foreach (var state in _structureMeshes.Values)
+            ReleaseStructureMeshState(state);
 
         ClearOverlayMesh(ref _designationOverlayMesh);
         ClearOverlayMesh(ref _stockpileOverlayMesh);
@@ -107,7 +107,7 @@ public partial class WorldRender3D : Node3D
         DisposeMaterials(_outlineBillboardMaterials);
 
         _chunkMeshes.Clear();
-        _workshopMeshes.Clear();
+        _structureMeshes.Clear();
         _chunkSnapshots.Clear();
         _activeChunks.Clear();
         _activeChunkOrigins.Clear();
@@ -132,8 +132,8 @@ public partial class WorldRender3D : Node3D
         foreach (var state in _chunkMeshes.Values)
             state.Mesh.Visible = active && state.IsVisible;
 
-        foreach (var state in _workshopMeshes.Values)
-            state.Mesh.Visible = active;
+        foreach (var state in _structureMeshes.Values)
+            ApplyStructureMeshVisibility(state, hovered: false);
 
         if (_designationOverlayMesh is not null)
             _designationOverlayMesh.Visible = active;
@@ -187,8 +187,8 @@ public partial class WorldRender3D : Node3D
             ProcessChunkBuildQueue(map, data, currentZ);
         }
 
-        using (profiler?.Measure("sync_workshops") ?? default)
-            SyncWorkshopMeshes(buildings, data, currentZ, visibleTileBounds);
+        using (profiler?.Measure("sync_structures") ?? default)
+            SyncStructureMeshes(buildings, data, currentZ, visibleTileBounds);
 
         using (profiler?.Measure("stockpile_overlay") ?? default)
             SyncStockpileOverlay(map, stockpiles, currentZ, visibleTileBounds);
@@ -264,6 +264,8 @@ public partial class WorldRender3D : Node3D
 
             SyncResourceBillboardHighlights(input);
         }
+
+        UpdateStructureHoverState(input, spatial, currentZ);
 
         EnsureActorPresentation();
         _actorPresentation?.Sync(camera, map, registry, items, spatial, movementPresentation, data, renderCache, feedback, currentZ, visibleTileBounds, presentationTimeSeconds, profiler);
@@ -346,11 +348,11 @@ public partial class WorldRender3D : Node3D
         return _actorPresentation?.GetDebugItemBillboardRenderPriority() ?? 0;
     }
 
-        public int GetDebugItemPreviewCount(int itemLikeId)
-        {
-            EnsureActorPresentation();
-            return _actorPresentation?.GetDebugItemPreviewCount(itemLikeId) ?? 0;
-        }
+    public int GetDebugItemPreviewCount(int itemLikeId)
+    {
+        EnsureActorPresentation();
+        return _actorPresentation?.GetDebugItemPreviewCount(itemLikeId) ?? 0;
+    }
 
     public int GetDebugOverlayRenderPriority()
         => _overlayMaterial?.RenderPriority ?? 0;
@@ -360,6 +362,13 @@ public partial class WorldRender3D : Node3D
         EnsureActorPresentation();
         worldPosition = default;
         return _actorPresentation?.TryGetDebugBillboardWorldPosition(entityId, out worldPosition) == true;
+    }
+
+    public bool TryGetDebugBillboardRenderPriority(int entityId, out int renderPriority)
+    {
+        EnsureActorPresentation();
+        renderPriority = default;
+        return _actorPresentation?.TryGetDebugBillboardRenderPriority(entityId, out renderPriority) == true;
     }
 
     public bool TryGetDebugTreeBillboardTexture(Vec3i tilePosition, out Texture2D? texture)
@@ -629,90 +638,132 @@ public partial class WorldRender3D : Node3D
         return meshInstance;
     }
 
-    private void SyncWorkshopMeshes(BuildingSystem? buildings, DataManager? data, int currentZ, Rect2I visibleTileBounds)
+    private void SyncStructureMeshes(BuildingSystem? buildings, DataManager? data, int currentZ, Rect2I visibleTileBounds)
     {
         if (buildings is null || data is null)
         {
-            ClearWorkshopMeshes();
+            ClearStructureMeshes();
             return;
         }
 
         var visibleIds = new HashSet<int>();
         foreach (var building in buildings.GetAll())
         {
-            if (!building.IsWorkshop || building.Origin.Z != currentZ)
+            if (building.Origin.Z != currentZ)
                 continue;
 
             var definition = data.Buildings.GetOrNull(building.BuildingDefId);
-            if (definition is null || !FootprintIntersectsVisibleTileBounds(building.Origin, definition, visibleTileBounds))
+            if (definition is null || !ShouldRenderStructure(definition, building) || !FootprintIntersectsVisibleTileBounds(building.Origin, definition, building.Rotation, visibleTileBounds))
                 continue;
 
             visibleIds.Add(building.Id);
-            SyncWorkshopMesh(building, definition, currentZ);
+            SyncStructureMesh(building, definition, currentZ);
         }
 
-        var staleIds = _workshopMeshes.Keys.Where(id => !visibleIds.Contains(id)).ToArray();
+        var staleIds = _structureMeshes.Keys.Where(id => !visibleIds.Contains(id)).ToArray();
         foreach (var staleId in staleIds)
-            RemoveWorkshopMesh(staleId);
+            RemoveStructureMesh(staleId);
     }
 
-    private void SyncWorkshopMesh(PlacedBuildingData building, BuildingDef definition, int currentZ)
+    private void SyncStructureMesh(PlacedBuildingData building, BuildingDef definition, int currentZ)
     {
-        var needsRebuild = !_workshopMeshes.TryGetValue(building.Id, out var state)
+        var needsRebuild = !_structureMeshes.TryGetValue(building.Id, out var state)
             || state.BuildingDefId != building.BuildingDefId
-            || state.Origin != building.Origin;
+            || state.Origin != building.Origin
+            || state.Rotation != building.Rotation;
 
         if (!needsRebuild && state is not null)
         {
-            state.Mesh.Visible = _isActive;
-            state.Mesh.Position = ResolveChunkMeshPosition(building.Origin, currentZ);
+            state.Root.Position = ResolveChunkMeshPosition(building.Origin, currentZ);
+            ApplyStructureMeshVisibility(state, hovered: false);
             return;
         }
 
-        var mesh = _workshopMesher.BuildWorkshopMesh(definition, building.BuildingDefId);
-        if (mesh is null)
+        var meshParts = _structureMesher.BuildStructureMeshes(definition, building);
+        if (meshParts.BodyMesh is null && meshParts.RoofMesh is null)
         {
-            RemoveWorkshopMesh(building.Id);
+            RemoveStructureMesh(building.Id);
             return;
         }
 
-        var meshInstance = state?.Mesh ?? CreateWorkshopMeshInstance(building.Id);
-        ReplaceOwnedMesh(meshInstance, mesh);
-        meshInstance.MaterialOverride = _chunkMaterial;
-        meshInstance.Position = ResolveChunkMeshPosition(building.Origin, currentZ);
-        meshInstance.Visible = _isActive;
+        state ??= CreateStructureMeshState(building.Id);
+        ReplaceOwnedMesh(state.BodyMesh, meshParts.BodyMesh);
+        ReplaceOwnedMesh(state.RoofMesh, meshParts.RoofMesh);
+        state.BodyMesh.MaterialOverride = _chunkMaterial;
+        state.RoofMesh.MaterialOverride = _chunkMaterial;
+        state.Root.Position = ResolveChunkMeshPosition(building.Origin, currentZ);
+        state.BuildingDefId = building.BuildingDefId;
+        state.Origin = building.Origin;
+        state.Rotation = building.Rotation;
+        state.HideRoofOnHover = meshParts.HideRoofOnHover;
+        ApplyStructureMeshVisibility(state, hovered: false);
 
-        _workshopMeshes[building.Id] = new WorkshopMeshState(meshInstance, building.BuildingDefId, building.Origin);
+        _structureMeshes[building.Id] = state;
     }
 
-    private MeshInstance3D CreateWorkshopMeshInstance(int buildingId)
+    private StructureMeshState CreateStructureMeshState(int buildingId)
     {
-        var meshInstance = new MeshInstance3D
+        var root = new Node3D
         {
-            Name = $"Workshop_{buildingId}",
+            Name = $"Structure_{buildingId}",
+        };
+
+        var bodyMesh = new MeshInstance3D
+        {
+            Name = "Body",
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
         };
 
-        AddChild(meshInstance);
-        return meshInstance;
+        var roofMesh = new MeshInstance3D
+        {
+            Name = "Roof",
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+        };
+
+        root.AddChild(bodyMesh);
+        root.AddChild(roofMesh);
+        AddChild(root);
+        return new StructureMeshState(root, bodyMesh, roofMesh);
     }
 
-    private void ClearWorkshopMeshes()
+    private void ClearStructureMeshes()
     {
-        foreach (var state in _workshopMeshes.Values)
-            ReleaseWorkshopMeshState(state);
+        foreach (var state in _structureMeshes.Values)
+            ReleaseStructureMeshState(state);
 
-        _workshopMeshes.Clear();
+        _structureMeshes.Clear();
     }
 
-    private void RemoveWorkshopMesh(int buildingId)
+    private void RemoveStructureMesh(int buildingId)
     {
-        if (!_workshopMeshes.TryGetValue(buildingId, out var state))
+        if (!_structureMeshes.TryGetValue(buildingId, out var state))
             return;
 
-        ReleaseWorkshopMeshState(state);
-        _workshopMeshes.Remove(buildingId);
+        ReleaseStructureMeshState(state);
+        _structureMeshes.Remove(buildingId);
     }
+
+    private void UpdateStructureHoverState(InputController? input, SpatialIndexSystem? spatial, int currentZ)
+    {
+        var hoveredBuildingId = -1;
+        if (input is not null && spatial is not null)
+            hoveredBuildingId = spatial.GetBuildingAt(new Vec3i(input.HoveredTile.X, input.HoveredTile.Y, currentZ)) ?? -1;
+
+        foreach (var pair in _structureMeshes)
+            ApplyStructureMeshVisibility(pair.Value, hoveredBuildingId == pair.Key);
+    }
+
+    private void ApplyStructureMeshVisibility(StructureMeshState state, bool hovered)
+    {
+        state.Root.Visible = _isActive;
+        state.BodyMesh.Visible = _isActive && state.BodyMesh.Mesh is not null;
+        state.RoofMesh.Visible = _isActive
+            && state.RoofMesh.Mesh is not null
+            && (!state.HideRoofOnHover || !hovered);
+    }
+
+    private static bool ShouldRenderStructure(BuildingDef definition, PlacedBuildingData building)
+        => building.IsWorkshop || !string.IsNullOrWhiteSpace(definition.StructureVisualId);
 
     private void SyncDesignationOverlay(int currentZ, Rect2I visibleTileBounds)
     {
@@ -933,6 +984,7 @@ public partial class WorldRender3D : Node3D
             overlayState.Add(resourceBurst.Color);
             overlayState.Add(resourceBurst.TimeLeft);
             overlayState.Add(resourceBurst.Duration);
+            overlayState.Add(resourceBurst.Scale);
         }
 
         overlayState.Add(visibleBuildingPulses.Count);
@@ -953,6 +1005,7 @@ public partial class WorldRender3D : Node3D
         if (hasPreview)
         {
             overlayState.Add(input!.PendingBuildingDefId);
+            overlayState.Add(input.PendingBuildingRotation);
             overlayState.Add(new Vec3i(input.HoveredTile.X, input.HoveredTile.Y, currentZ));
         }
 
@@ -1007,6 +1060,7 @@ public partial class WorldRender3D : Node3D
                 data,
                 building.Origin,
                 building.BuildingDefId,
+                building.Rotation,
                 currentZ,
                 visibleTileBounds,
                 buildingPulse.Pulse.WithAlpha(0.08f + (buildingPulse.Pulse.Flash * 0.16f)),
@@ -1058,7 +1112,7 @@ public partial class WorldRender3D : Node3D
             AddTilePlate(plates, map, selectedItem.Position.X, selectedItem.Position.Y, currentZ, visibleTileBounds, new Color(0.90f, 0.72f, 1f, 0.28f), 0.08f);
 
         if (selectedBuilding is not null && selectedBuilding.Origin.Z == currentZ)
-            AddBuildingFootprint(plates, map, data, selectedBuilding.Origin, selectedBuilding.BuildingDefId, currentZ, visibleTileBounds, new Color(0.40f, 0.85f, 1f, 0.30f), 0.05f);
+            AddBuildingFootprint(plates, map, data, selectedBuilding.Origin, selectedBuilding.BuildingDefId, selectedBuilding.Rotation, currentZ, visibleTileBounds, new Color(0.40f, 0.85f, 1f, 0.30f), 0.05f);
 
         if (hasPreview)
         {
@@ -1069,6 +1123,7 @@ public partial class WorldRender3D : Node3D
                 data,
                 previewOrigin,
                 input.PendingBuildingDefId!,
+                input.PendingBuildingRotation,
                 currentZ,
                 visibleTileBounds,
                 new Color(0.35f, 0.70f, 1f, 0.30f),
@@ -1486,6 +1541,7 @@ public partial class WorldRender3D : Node3D
         DataManager? data,
         Vec3i origin,
         string buildingDefId,
+        BuildingRotation rotation,
         int currentZ,
         Rect2I visibleTileBounds,
         Color color,
@@ -1498,8 +1554,8 @@ public partial class WorldRender3D : Node3D
             return;
         }
 
-        foreach (var footprintTile in definition.Footprint)
-            AddTilePlate(plates, map, origin.X + footprintTile.Offset.X, origin.Y + footprintTile.Offset.Y, currentZ, visibleTileBounds, color, inset);
+        foreach (var footprintPosition in BuildingPlacementGeometry.EnumerateWorldFootprint(definition, origin, rotation))
+            AddTilePlate(plates, map, footprintPosition.X, footprintPosition.Y, currentZ, visibleTileBounds, color, inset);
     }
 
     private static void AddTilePlate(
@@ -1559,14 +1615,23 @@ public partial class WorldRender3D : Node3D
     {
         var fade = Mathf.Clamp(resourceBurst.TimeLeft / resourceBurst.Duration, 0f, 1f);
         var progress = 1f - fade;
+        var scale = Mathf.Clamp(resourceBurst.Scale, 0.20f, 1.25f);
         var dustColor = resourceBurst.Color.Lightened(0.24f) with { A = 0.08f + (fade * 0.14f) };
         var chipColor = resourceBurst.Color.Darkened(0.12f) with { A = 0.10f + (fade * 0.24f) };
         var splinterColor = resourceBurst.Color.Lightened(0.08f) with { A = 0.10f + (fade * 0.22f) };
         var centerInset = Mathf.Clamp(0.34f - (progress * 0.08f), 0.18f, 0.34f);
-        var drift = Mathf.Lerp(0.08f, 0.24f, progress);
-        var chipHalfWidth = Mathf.Lerp(0.07f, 0.04f, progress);
-        var chipHalfLength = Mathf.Lerp(0.10f, 0.06f, progress);
-        var diagonalDrift = Mathf.Lerp(0.05f, 0.18f, progress);
+        var drift = Mathf.Lerp(0.08f, 0.24f, progress) * scale;
+        var chipHalfWidth = Mathf.Lerp(0.07f, 0.04f, progress) * scale;
+        var chipHalfLength = Mathf.Lerp(0.10f, 0.06f, progress) * scale;
+        var diagonalDrift = Mathf.Lerp(0.05f, 0.18f, progress) * scale;
+        var (dustMin, dustMax) = ScaleLocalRange(centerInset, 1f - centerInset, scale);
+        var (westMinX, westMaxX) = ScaleLocalRange(0.50f - drift - chipHalfWidth, 0.50f - drift + chipHalfWidth, scale);
+        var (chipMin, chipMax) = ScaleLocalRange(0.50f - chipHalfLength, 0.50f + chipHalfLength, scale);
+        var (eastMinX, eastMaxX) = ScaleLocalRange(0.50f + drift - chipHalfWidth, 0.50f + drift + chipHalfWidth, scale);
+        var (northMinY, northMaxY) = ScaleLocalRange(0.50f - drift - chipHalfWidth, 0.50f - drift + chipHalfWidth, scale);
+        var (southMinY, southMaxY) = ScaleLocalRange(0.50f + drift - chipHalfWidth, 0.50f + drift + chipHalfWidth, scale);
+        var (splinterMinX, splinterMaxX) = ScaleLocalRange(0.50f + diagonalDrift - 0.05f, 0.50f + diagonalDrift + 0.05f, scale);
+        var (splinterMinY, splinterMaxY) = ScaleLocalRange(0.50f - diagonalDrift - 0.05f, 0.50f - diagonalDrift + 0.05f, scale);
 
         AddTileLocalPlate(
             plates,
@@ -1574,10 +1639,10 @@ public partial class WorldRender3D : Node3D
             resourceBurst.Position.Y,
             visibleTileBounds,
             overlayBaseY,
-            centerInset,
-            1f - centerInset,
-            centerInset,
-            1f - centerInset,
+            dustMin,
+            dustMax,
+            dustMin,
+            dustMax,
             dustColor,
             0.68f);
 
@@ -1587,10 +1652,10 @@ public partial class WorldRender3D : Node3D
             resourceBurst.Position.Y,
             visibleTileBounds,
             overlayBaseY,
-            0.50f - drift - chipHalfWidth,
-            0.50f - drift + chipHalfWidth,
-            0.50f - chipHalfLength,
-            0.50f + chipHalfLength,
+            westMinX,
+            westMaxX,
+            chipMin,
+            chipMax,
             chipColor,
             0.82f);
         AddTileLocalPlate(
@@ -1599,10 +1664,10 @@ public partial class WorldRender3D : Node3D
             resourceBurst.Position.Y,
             visibleTileBounds,
             overlayBaseY,
-            0.50f + drift - chipHalfWidth,
-            0.50f + drift + chipHalfWidth,
-            0.50f - chipHalfLength,
-            0.50f + chipHalfLength,
+            eastMinX,
+            eastMaxX,
+            chipMin,
+            chipMax,
             chipColor,
             0.82f);
         AddTileLocalPlate(
@@ -1611,10 +1676,10 @@ public partial class WorldRender3D : Node3D
             resourceBurst.Position.Y,
             visibleTileBounds,
             overlayBaseY,
-            0.50f - chipHalfLength,
-            0.50f + chipHalfLength,
-            0.50f - drift - chipHalfWidth,
-            0.50f - drift + chipHalfWidth,
+            chipMin,
+            chipMax,
+            northMinY,
+            northMaxY,
             chipColor,
             0.82f);
         AddTileLocalPlate(
@@ -1623,10 +1688,10 @@ public partial class WorldRender3D : Node3D
             resourceBurst.Position.Y,
             visibleTileBounds,
             overlayBaseY,
-            0.50f - chipHalfLength,
-            0.50f + chipHalfLength,
-            0.50f + drift - chipHalfWidth,
-            0.50f + drift + chipHalfWidth,
+            chipMin,
+            chipMax,
+            southMinY,
+            southMaxY,
             chipColor,
             0.82f);
         AddTileLocalPlate(
@@ -1635,12 +1700,19 @@ public partial class WorldRender3D : Node3D
             resourceBurst.Position.Y,
             visibleTileBounds,
             overlayBaseY,
-            0.50f + diagonalDrift - 0.05f,
-            0.50f + diagonalDrift + 0.05f,
-            0.50f - diagonalDrift - 0.05f,
-            0.50f - diagonalDrift + 0.05f,
+            splinterMinX,
+            splinterMaxX,
+            splinterMinY,
+            splinterMaxY,
             splinterColor,
             0.76f);
+    }
+
+    private static (float Min, float Max) ScaleLocalRange(float min, float max, float scale)
+    {
+        var center = (min + max) * 0.5f;
+        var halfExtent = (max - min) * 0.5f * scale;
+        return (center - halfExtent, center + halfExtent);
     }
 
     private static void AddCombatCuePlate(List<WorldOverlayMesher.OverlayPlate> plates, GameFeedbackController.CombatCueView combatCue, Rect2I visibleTileBounds, float overlayBaseY)
@@ -1908,11 +1980,13 @@ public partial class WorldRender3D : Node3D
         state.Mesh.QueueFree();
     }
 
-    private static void ReleaseWorkshopMeshState(WorkshopMeshState state)
+    private static void ReleaseStructureMeshState(StructureMeshState state)
     {
-        state.Mesh.MaterialOverride = null;
-        ReplaceOwnedMesh(state.Mesh, null);
-        state.Mesh.QueueFree();
+        state.BodyMesh.MaterialOverride = null;
+        ReplaceOwnedMesh(state.BodyMesh, null);
+        state.RoofMesh.MaterialOverride = null;
+        ReplaceOwnedMesh(state.RoofMesh, null);
+        state.Root.QueueFree();
     }
 
     private static void ReleaseBillboardState(BillboardState state)
@@ -1987,15 +2061,16 @@ public partial class WorldRender3D : Node3D
             && origin.Y <= visibleMaxY;
     }
 
-    private static bool FootprintIntersectsVisibleTileBounds(Vec3i origin, BuildingDef definition, Rect2I visibleTileBounds)
+    private static bool FootprintIntersectsVisibleTileBounds(Vec3i origin, BuildingDef definition, BuildingRotation rotation, Rect2I visibleTileBounds)
     {
         if (visibleTileBounds.Size.X <= 0 || visibleTileBounds.Size.Y <= 0)
             return false;
 
-        var minX = definition.Footprint.Min(tile => origin.X + tile.Offset.X);
-        var maxX = definition.Footprint.Max(tile => origin.X + tile.Offset.X);
-        var minY = definition.Footprint.Min(tile => origin.Y + tile.Offset.Y);
-        var maxY = definition.Footprint.Max(tile => origin.Y + tile.Offset.Y);
+        var bounds = BuildingPlacementGeometry.GetRotatedBounds(definition, rotation);
+        var minX = origin.X + bounds.MinX;
+        var maxX = origin.X + bounds.MaxX;
+        var minY = origin.Y + bounds.MinY;
+        var maxY = origin.Y + bounds.MaxY;
         var visibleMaxX = visibleTileBounds.Position.X + visibleTileBounds.Size.X - 1;
         var visibleMaxY = visibleTileBounds.Position.Y + visibleTileBounds.Size.Y - 1;
 
@@ -2156,20 +2231,28 @@ public partial class WorldRender3D : Node3D
         public bool IsVisible { get; set; }
     }
 
-    private sealed class WorkshopMeshState
+    private sealed class StructureMeshState
     {
-        public WorkshopMeshState(MeshInstance3D mesh, string buildingDefId, Vec3i origin)
+        public StructureMeshState(Node3D root, MeshInstance3D bodyMesh, MeshInstance3D roofMesh)
         {
-            Mesh = mesh;
-            BuildingDefId = buildingDefId;
-            Origin = origin;
+            Root = root;
+            BodyMesh = bodyMesh;
+            RoofMesh = roofMesh;
         }
 
-        public MeshInstance3D Mesh { get; }
+        public Node3D Root { get; }
 
-        public string BuildingDefId { get; }
+        public MeshInstance3D BodyMesh { get; }
 
-        public Vec3i Origin { get; }
+        public MeshInstance3D RoofMesh { get; }
+
+        public string BuildingDefId { get; set; } = string.Empty;
+
+        public Vec3i Origin { get; set; }
+
+        public BuildingRotation Rotation { get; set; }
+
+        public bool HideRoofOnHover { get; set; }
     }
 
     private sealed class BillboardState

@@ -26,7 +26,7 @@ public record CancelDesignationCommand(Vec3i From, Vec3i To) : ICommand;
 // ── Construction ─────────────────────────────────────────────────────────────
 
 /// <summary>Place a building of the given definition at a world position.</summary>
-public record PlaceBuildingCommand(string BuildingDefId, Vec3i Origin) : ICommand;
+public record PlaceBuildingCommand(string BuildingDefId, Vec3i Origin, Data.Defs.BuildingRotation Rotation = Data.Defs.BuildingRotation.None) : ICommand;
 
 /// <summary>Deconstruct a building at a world position.</summary>
 public record DeconstructBuildingCommand(Vec3i Origin) : ICommand;
@@ -34,7 +34,7 @@ public record DeconstructBuildingCommand(Vec3i Origin) : ICommand;
 // ── Stockpiles ────────────────────────────────────────────────────────────────
 
 /// <summary>Define a new stockpile zone over a rectangular area.</summary>
-public record CreateStockpileCommand(Vec3i From, Vec3i To, string[] AcceptedTags) : ICommand;
+public record CreateStockpileCommand(Vec3i From, Vec3i To, string[] AcceptedTags, int OwnerBuildingId = -1) : ICommand;
 
 /// <summary>Remove a stockpile zone.</summary>
 public record RemoveStockpileCommand(int StockpileId) : ICommand;

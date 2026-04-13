@@ -250,6 +250,23 @@ public sealed class FortressBootstrapTests
     }
 
     [Fact]
+    public void StartFortressCommand_Starter_Log_Makes_House_Buildable_And_Carpenter_Discovered()
+    {
+        var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
+
+        sim.Context.Commands.Dispatch(new StartFortressCommand(Seed: 42, Width: 48, Height: 48, Depth: 8));
+
+        var discovery = sim.Context.Get<DiscoverySystem>();
+
+        Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(BuildingDefIds.House));
+        Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.House));
+        Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.CarpenterWorkshop));
+        Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(BuildingDefIds.CarpenterWorkshop));
+        Assert.Equal(ItemDefIds.Log, discovery.GetDiscoveredBy(BuildingDefIds.House));
+        Assert.Equal(ItemDefIds.Log, discovery.GetDiscoveredBy(BuildingDefIds.CarpenterWorkshop));
+    }
+
+    [Fact]
     public void WorldQuerySystem_Exposes_Client_Read_Model()
     {
         var (sim, _, _, _, _) = TestFixtures.BuildFullSim();

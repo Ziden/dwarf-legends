@@ -345,17 +345,9 @@ public sealed class DataManager : IGameSystem
 
     private static RecipeDef ParseRecipe(JsonNode n)
     {
-        var inputs  = new List<RecipeInput>();
+        var inputs = ParseRecipeInputs(n["inputs"]);
+        var discoveryInputs = ParseRecipeInputs(n["discoveryInputs"]);
         var outputs = new List<RecipeOutput>();
-
-        if (n["inputs"] is JsonArray inp)
-            foreach (var i in inp)
-                if (i is not null)
-                    inputs.Add(new RecipeInput(
-                        ParseTagSet(i["tags"]),
-                        i["qty"]?.GetValue<int>() ?? 1,
-                        i["itemId"]?.GetValue<string>(),
-                        i["materialId"]?.GetValue<string>()));
 
         if (n["outputs"] is JsonArray out_)
             foreach (var o in out_)
@@ -372,6 +364,7 @@ public sealed class DataManager : IGameSystem
             WorkshopDefId:    n["workshop"]!.GetValue<string>(),
             RequiredLaborId:  n["labor"]?.GetValue<string>() ?? "crafting",
             Inputs:           inputs,
+            DiscoveryInputs:  discoveryInputs,
             Outputs:          outputs,
             WorkTime:         n["workTime"]?.GetValue<float>() ?? 100f,
             SkillXp:          n["skillXp"]?.GetValue<int>()   ?? 10);
@@ -509,7 +502,9 @@ public sealed class DataManager : IGameSystem
     private static BuildingDef ParseBuilding(JsonNode n)
     {
         var footprint = new List<BuildingTile>();
-        var inputs    = new List<RecipeInput>();
+        var inputs = ParseRecipeInputs(n["constructionInputs"]);
+        var discoveryInputs = ParseRecipeInputs(n["discoveryInputs"]);
+        var entryOffsets = new List<Core.Vec2i>();
 
         if (n["footprint"] is JsonArray fp)
             foreach (var t in fp)
@@ -518,10 +513,12 @@ public sealed class DataManager : IGameSystem
                         new Core.Vec2i(t["x"]?.GetValue<int>() ?? 0, t["y"]?.GetValue<int>() ?? 0),
                         t["tile"]!.GetValue<string>()));
 
-        if (n["constructionInputs"] is JsonArray ci)
-            foreach (var i in ci)
-                if (i is not null)
-                    inputs.Add(new RecipeInput(ParseTagSet(i["tags"]), i["qty"]?.GetValue<int>() ?? 1));
+        if (n["entryOffsets"] is JsonArray eo)
+            foreach (var entry in eo)
+                if (entry is not null)
+                    entryOffsets.Add(new Core.Vec2i(
+                        entry["x"]?.GetValue<int>() ?? 0,
+                        entry["y"]?.GetValue<int>() ?? 0));
 
         return new BuildingDef(
             Id:                 n["id"]!.GetValue<string>(),
@@ -529,8 +526,14 @@ public sealed class DataManager : IGameSystem
             Tags:               ParseTagSet(n["tags"]),
             Footprint:          footprint,
             ConstructionInputs: inputs,
+            DiscoveryInputs:    discoveryInputs,
             ConstructionTime:   n["constructionTime"]?.GetValue<float>() ?? 50f,
-            IsWorkshop:         n["isWorkshop"]?.GetValue<bool>() ?? false);
+            IsWorkshop:         n["isWorkshop"]?.GetValue<bool>() ?? false,
+            ProducedSmokeId:    n["producedSmokeId"]?.GetValue<string>(),
+            ResidenceCapacity:  n["residenceCapacity"]?.GetValue<int>() ?? 0,
+            EntryOffsets:       entryOffsets,
+            AutoStockpileAcceptedTags: ParseStringList(n["autoStockpileAcceptedTags"]),
+            StructureVisualId:  n["structureVisualId"]?.GetValue<string>());
     }
 
     // ── Shared helpers ─────────────────────────────────────────────────────
@@ -543,6 +546,27 @@ public sealed class DataManager : IGameSystem
             if (t?.GetValue<string>() is string s)
                 tags.Add(s);
         return TagSet.From(tags);
+    }
+
+    private static List<RecipeInput> ParseRecipeInputs(JsonNode? node)
+    {
+        var inputs = new List<RecipeInput>();
+        if (node is not JsonArray arr)
+            return inputs;
+
+        foreach (var input in arr)
+        {
+            if (input is null)
+                continue;
+
+            inputs.Add(new RecipeInput(
+                ParseTagSet(input["tags"]),
+                input["qty"]?.GetValue<int>() ?? 1,
+                input["itemId"]?.GetValue<string>(),
+                input["materialId"]?.GetValue<string>()));
+        }
+
+        return inputs;
     }
 
     private static IReadOnlyList<string> ParseStringList(JsonNode? node)

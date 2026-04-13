@@ -14,6 +14,8 @@ namespace DwarfFortress.GameLogic.Jobs.Strategies;
 /// </summary>
 public sealed class CutTreeStrategy : IJobStrategy
 {
+    private const float DefaultCutTreeWorkDurationSeconds = 6f;
+
     public string JobDefId => JobDefIds.CutTree;
 
     public bool CanExecute(Job job, int dwarfId, GameContext ctx)
@@ -36,11 +38,12 @@ public sealed class CutTreeStrategy : IJobStrategy
         var chopFromPos = ResolveChopFromPos(ctx, map, job.TargetPos, dwarfId)
             ?? TerrainClearanceHelper.FindAdjacentPassable(map, job.TargetPos)
             ?? job.TargetPos + Vec3i.South; // fallback (should pass CanExecute)
+        var workDuration = ResolveWorkDuration(ctx);
 
         return new ActionStep[]
         {
             new MoveToStep(chopFromPos),
-            new WorkAtStep(Duration: 4f, AnimationHint: "wood_cutting", RequiredPosition: chopFromPos),
+            new WorkAtStep(Duration: workDuration, AnimationHint: "wood_cutting", RequiredPosition: chopFromPos),
         };
     }
 
@@ -115,6 +118,12 @@ public sealed class CutTreeStrategy : IJobStrategy
             return resolvedMaterialId;
 
         return defaultMaterialId;
+    }
+
+    private static float ResolveWorkDuration(GameContext ctx)
+    {
+        var data = ctx.TryGet<DataManager>();
+        return data?.Jobs.GetOrNull(JobDefIds.CutTree)?.WorkTime ?? DefaultCutTreeWorkDurationSeconds;
     }
 
     private static string ResolveLogItemDefId(GameContext ctx, string materialId)

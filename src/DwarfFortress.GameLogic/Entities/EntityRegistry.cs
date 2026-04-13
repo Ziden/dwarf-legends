@@ -106,6 +106,7 @@ public sealed class EntityRegistry : IGameSystem
                     RegionX = d.Provenance.RegionX,
                     RegionY = d.Provenance.RegionY,
                 },
+                HomeBuildingId = d.Residence.HomeBuildingId,
             };
         }).ToList();
 
@@ -232,6 +233,8 @@ public sealed class EntityRegistry : IGameSystem
                 dwarf.Provenance.RegionY = dto.Provenance.RegionY;
             }
 
+            dwarf.Residence.HomeBuildingId = dto.HomeBuildingId;
+
             // Register without re-emitting EntitySpawnedEvent
             _entities[dwarf.Id] = dwarf;
         }
@@ -312,6 +315,7 @@ public sealed class EntityRegistry : IGameSystem
         public string? DislikedFoodId  { get; set; }
         public byte    DislikeStrength { get; set; }
         public DwarfProvenanceDto? Provenance { get; set; }
+        public int HomeBuildingId { get; set; } = -1;
     }
 
     private sealed class DwarfProvenanceDto

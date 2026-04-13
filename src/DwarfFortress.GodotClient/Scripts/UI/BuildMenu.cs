@@ -1,18 +1,18 @@
-using System.Collections.Generic;
 using System.Linq;
 using DwarfFortress.GameLogic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
+using DwarfFortress.GameLogic.Systems;
 using Godot;
 
 namespace DwarfFortress.GodotClient.UI;
 
 
-/// <summary>Right-side panel listing all building defs; clicking one enters BuildingPreview mode.</summary>
+/// <summary>Right-side panel listing building defs; clicking one enters BuildingPreview mode.</summary>
 public partial class BuildMenu : PanelContainer
 {
-    private VBoxContainer?  _list;
+    private VBoxContainer? _list;
     private InputController? _input;
 
     public override void _Ready()
@@ -45,23 +45,40 @@ public partial class BuildMenu : PanelContainer
         _input = input;
 
         var dataManager = sim.Context.Get<DataManager>();
-        foreach (Node child in _list!.GetChildren()) child.QueueFree();
+        var discovery = sim.Context.TryGet<DiscoverySystem>();
+        foreach (Node child in _list!.GetChildren())
+            child.QueueFree();
 
         foreach (var def in dataManager.Buildings.All())
         {
+            var state = discovery?.GetBuildingState(def.Id) ?? DiscoveryKnowledgeState.BuildableNow;
+            if (state == DiscoveryKnowledgeState.Hidden)
+                continue;
+
             var btn = new Button
             {
-                Text      = $"{def.DisplayName}  [{(def.IsWorkshop ? "workshop" : "structure")}]",
+                Text = $"{def.DisplayName}  [{(def.IsWorkshop ? "workshop" : "structure")}, {FormatState(state)}]",
                 Alignment = HorizontalAlignment.Left,
+                Disabled = state != DiscoveryKnowledgeState.BuildableNow,
             };
             var capturedId = def.Id;
             btn.Pressed += () =>
             {
                 if (_input is null) return;
                 _input.PendingBuildingDefId = capturedId;
+                _input.PendingBuildingRotation = BuildingRotation.None;
                 _input.SetMode(InputMode.BuildingPreview);
             };
             _list.AddChild(btn);
         }
     }
+
+    private static string FormatState(DiscoveryKnowledgeState state)
+        => state switch
+        {
+            DiscoveryKnowledgeState.BuildableNow => "buildable",
+            DiscoveryKnowledgeState.Unlocked => "known",
+            DiscoveryKnowledgeState.Known => "partial",
+            _ => "hidden",
+        };
 }

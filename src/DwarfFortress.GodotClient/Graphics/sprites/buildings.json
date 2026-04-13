@@ -1,0 +1,18 @@
+{
+  "category": "building",
+  "sheet": "res://Graphics/art/_Meph_workshops.png",
+  "tile_w": 32,
+  "tile_h": 32,
+  "entries": [
+    {
+      "id": "carpenter_workshop",
+      "col": 8,
+      "row": 9
+    },
+    {
+      "id": "smelter",
+      "col": 8,
+      "row": 0
+    }
+  ]
+}

@@ -28,9 +28,9 @@ public record struct EntityWakeEvent(int EntityId, Vec3i Position);
 /// </summary>
 public sealed class SleepSystem : IGameSystem
 {
-    private const float CreatureSleepNetRecoveryPerSecond = 0.004f;
-    private const float DwarfBedSleepNetRecoveryPerSecond = 1f / 180f;
-    private const float DwarfGroundSleepNetRecoveryPerSecond = 1f / 240f;
+    private const float CreatureSleepNetRecoveryPerSecond = 0.003f;
+    private const float DwarfBedSleepNetRecoveryPerSecond = 1f / 240f;
+    private const float DwarfGroundSleepNetRecoveryPerSecond = 1f / 320f;
     public string SystemId    => SystemIds.SleepSystem;
     public int    UpdateOrder => 5;
     public bool   IsEnabled   { get; set; } = true;
@@ -472,7 +472,7 @@ public sealed class SleepSystem : IGameSystem
     private static void EnsureSleepEmote(EmoteComponent emotes)
     {
         var currentEmote = emotes.CurrentEmote;
-        if (!string.Equals(currentEmote?.Id, EmoteIds.Sleep, StringComparison.Ordinal) || currentEmote.TimeLeft <= 1f)
+        if (!string.Equals(currentEmote?.Id, EmoteIds.Sleep, StringComparison.Ordinal) || currentEmote?.TimeLeft <= 1f)
             emotes.SetEmote(EmoteIds.Sleep, EmoteDuration);
     }
 

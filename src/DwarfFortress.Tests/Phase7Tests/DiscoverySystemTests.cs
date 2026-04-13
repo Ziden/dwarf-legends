@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
@@ -13,28 +14,24 @@ public sealed class DiscoverySystemTests
     private const string SmelterBuildingId = "smelter";
 
     [Fact]
-    public void DiscoverySystem_Does_Not_Unlock_MultiItem_Building_Until_Quantity_Is_Met()
+    public void DiscoverySystem_Separates_Discovery_From_Current_Buildability()
     {
-        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
+        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
         var discovery = sim.Context.Get<DiscoverySystem>();
-        var dwarf = new Dwarf(er.NextId(), "Hauler", new Vec3i(10, 10, 0));
-        er.Register(dwarf);
 
-        var firstStone = items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(1, 1, 0));
-        items.PickUpItem(firstStone.Id, dwarf.Id, dwarf.Position.Position);
-
-        Assert.False(discovery.IsBuildingUnlocked(SmelterBuildingId));
-
-        var secondStone = items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(2, 1, 0));
-        items.PickUpItem(secondStone.Id, dwarf.Id, dwarf.Position.Position);
-
-        Assert.False(discovery.IsBuildingUnlocked(SmelterBuildingId));
-
-        var thirdStone = items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(3, 1, 0));
-        items.PickUpItem(thirdStone.Id, dwarf.Id, dwarf.Position.Position);
+        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(1, 1, 0));
 
         Assert.True(discovery.IsBuildingUnlocked(SmelterBuildingId));
+        Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(SmelterBuildingId));
         Assert.Equal(ItemDefIds.GraniteBoulder, discovery.GetDiscoveredBy(SmelterBuildingId));
+
+        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(2, 1, 0));
+
+        Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(SmelterBuildingId));
+
+        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(3, 1, 0));
+
+        Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(SmelterBuildingId));
     }
 
     [Fact]
@@ -71,5 +68,50 @@ public sealed class DiscoverySystemTests
         Assert.True(discovery.IsRecipeUnlocked("make_plank"));
         Assert.Contains(ItemDefIds.Plank, discovery.GetCraftableItems());
         Assert.Equal(ItemDefIds.Log, discovery.GetDiscoveredBy("make_plank"));
+    }
+
+    [Fact]
+    public void DiscoverySystem_Creating_First_Log_Makes_House_Buildable_And_Carpenter_Discovered()
+    {
+        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
+        var discovery = sim.Context.Get<DiscoverySystem>();
+
+        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(1, 1, 0));
+
+        Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(BuildingDefIds.House));
+        Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.House));
+        Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.CarpenterWorkshop));
+        Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(BuildingDefIds.CarpenterWorkshop));
+        Assert.True(discovery.IsRecipeUnlocked("make_plank"));
+        Assert.Equal(ItemDefIds.Log, discovery.GetDiscoveredBy(BuildingDefIds.House));
+        Assert.Equal(ItemDefIds.Log, discovery.GetDiscoveredBy(BuildingDefIds.CarpenterWorkshop));
+    }
+
+    [Fact]
+    public void DiscoverySystem_Partial_Discovery_Uses_Known_State()
+    {
+        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
+        var discovery = sim.Context.Get<DiscoverySystem>();
+
+        items.CreateItem(ItemDefIds.GraniteBoulder, MaterialIds.Granite, new Vec3i(1, 1, 0));
+
+        Assert.Equal(DiscoveryKnowledgeState.Known, discovery.GetBuildingState(BuildingDefIds.Kitchen));
+        Assert.Equal(DiscoveryKnowledgeState.Known, discovery.GetBuildingState(BuildingDefIds.Still));
+    }
+
+    [Fact]
+    public void BuildingSystem_Rejects_Undiscovered_Buildings_Even_When_Called_Directly()
+    {
+        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
+        var rejections = new List<BuildingPlacementRejectedEvent>();
+        sim.Context.EventBus.On<BuildingPlacementRejectedEvent>(rejection => rejections.Add(rejection));
+
+        items.CreateItem(ItemDefIds.GraniteBoulder, MaterialIds.Granite, new Vec3i(1, 1, 0));
+
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(BuildingDefIds.Kitchen, new Vec3i(10, 10, 0)));
+
+        var rejection = Assert.Single(rejections);
+        Assert.Equal(BuildingDefIds.Kitchen, rejection.BuildingDefId);
+        Assert.Equal("Building not discovered yet.", rejection.Reason);
     }
 }

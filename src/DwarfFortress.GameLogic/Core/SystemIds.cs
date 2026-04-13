@@ -17,6 +17,7 @@ public static class SystemIds
     public const string FortressLocationSystem = "fortress_location_system";
     public const string SpatialIndexSystem = "spatial_index_system";
     public const string StockpileManager   = "stockpile_manager";
+    public const string HousingSystem      = "housing_system";
     public const string NeedsSystem        = "needs_system";
     public const string NutritionSystem     = "nutrition_system";
     public const string VegetationSystem   = "vegetation_system";

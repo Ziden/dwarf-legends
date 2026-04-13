@@ -28,6 +28,7 @@ public sealed class WorldMap : IGameSystem
     public int Depth  { get; private set; }
 
     private readonly Dictionary<Vec3i, Chunk> _chunks = new();
+    private readonly List<Func<Vec3i, Vec3i, bool>> _traversalConstraints = new();
     private EventBus? _eventBus;
 
     // Dirty tile tracking for efficient saves — only serialize changed tiles
@@ -297,23 +298,45 @@ public sealed class WorldMap : IGameSystem
         return canSwim && IsSwimmable(pos);
     }
 
+    public void RegisterTraversalConstraint(Func<Vec3i, Vec3i, bool> constraint)
+    {
+        ArgumentNullException.ThrowIfNull(constraint);
+
+        if (!_traversalConstraints.Contains(constraint))
+            _traversalConstraints.Add(constraint);
+    }
+
+    public bool CanTraverse(Vec3i from, Vec3i to, bool canSwim = false, bool requiresSwimming = false)
+    {
+        if (!IsInBounds(to) || !IsTraversable(to, canSwim, requiresSwimming))
+            return false;
+
+        foreach (var constraint in _traversalConstraints)
+        {
+            if (!constraint(from, to))
+                return false;
+        }
+
+        return true;
+    }
+
     public void CollectTraversableNeighbors(Vec3i origin, bool canSwim, bool requiresSwimming, List<Vec3i> buffer)
     {
         buffer.Clear();
         if (!IsTraversable(origin, canSwim, requiresSwimming))
             return;
 
-        TryAddHorizontalNeighbor(origin + Vec3i.North, canSwim, requiresSwimming, buffer);
-        TryAddHorizontalNeighbor(origin + Vec3i.South, canSwim, requiresSwimming, buffer);
-        TryAddHorizontalNeighbor(origin + Vec3i.East, canSwim, requiresSwimming, buffer);
-        TryAddHorizontalNeighbor(origin + Vec3i.West, canSwim, requiresSwimming, buffer);
+        TryAddHorizontalNeighbor(origin, origin + Vec3i.North, canSwim, requiresSwimming, buffer);
+        TryAddHorizontalNeighbor(origin, origin + Vec3i.South, canSwim, requiresSwimming, buffer);
+        TryAddHorizontalNeighbor(origin, origin + Vec3i.East, canSwim, requiresSwimming, buffer);
+        TryAddHorizontalNeighbor(origin, origin + Vec3i.West, canSwim, requiresSwimming, buffer);
         TryAddVerticalNeighbor(origin, origin + Vec3i.Up, canSwim, requiresSwimming, buffer);
         TryAddVerticalNeighbor(origin, origin + Vec3i.Down, canSwim, requiresSwimming, buffer);
     }
 
-    private void TryAddHorizontalNeighbor(Vec3i target, bool canSwim, bool requiresSwimming, List<Vec3i> buffer)
+    private void TryAddHorizontalNeighbor(Vec3i origin, Vec3i target, bool canSwim, bool requiresSwimming, List<Vec3i> buffer)
     {
-        if (IsTraversable(target, canSwim, requiresSwimming))
+        if (CanTraverse(origin, target, canSwim, requiresSwimming))
             buffer.Add(target);
     }
 

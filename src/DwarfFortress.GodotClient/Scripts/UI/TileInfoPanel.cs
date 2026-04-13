@@ -675,7 +675,16 @@ public partial class TileInfoPanel : PanelContainer
         builder.AppendLine($"  {(building.IsWorkshop ? "Workshop" : "Building")}");
         if (!string.IsNullOrWhiteSpace(building.MaterialId))
             builder.AppendLine($"  Material: {ItemTextFormatter.FormatToken(building.MaterialId!)}");
-        if (building.StoredItemCount > 0)
+        if (building.HousingCapacity > 0)
+        {
+            builder.AppendLine($"  Residents: {building.ResidentNames.Length}/{building.HousingCapacity}");
+            foreach (var residentName in building.ResidentNames.Take(3))
+                builder.AppendLine($"    {residentName}");
+        }
+
+        if (building.StorageItemCount > 0)
+            builder.AppendLine($"  Storage: {building.StorageItemCount}");
+        else if (building.StoredItemCount > 0)
             builder.AppendLine($"  Stored items: {building.StoredItemCount}");
         return builder.ToString().TrimEnd();
     }

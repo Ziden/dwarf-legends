@@ -1,6 +1,6 @@
 [
   { "id": "mine_tile",          "displayName": "Mine Tile",         "labor": "mining",       "workTime": 5.0  },
-  { "id": "cut_tree",           "displayName": "Cut Tree",          "labor": "wood_cutting", "workTime": 4.0  },
+  { "id": "cut_tree",           "displayName": "Cut Tree",          "labor": "wood_cutting", "workTime": 6.0  },
   { "id": "harvest_plant",      "displayName": "Harvest Plant",     "labor": "misc",         "workTime": 2.5  },
   { "id": "haul_item",          "displayName": "Haul Item",         "labor": "hauling",      "workTime": 1.0  },
   { "id": "construct_building", "displayName": "Construct",         "labor": "construction", "workTime": 10.0 },

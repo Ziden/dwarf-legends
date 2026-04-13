@@ -43,6 +43,7 @@ public sealed class NeedsSystem : IGameSystem
     private const int DrinkSurvivalPriority = 102;
     private const int EatPlantSearchRadius = 24;
     private const int DrinkSearchRadius = 14;
+    private const float StaggeredNeedIntervalSeconds = 1f;
 
     private float _elapsedTime;
     private GameContext? _ctx;
@@ -59,6 +60,7 @@ public sealed class NeedsSystem : IGameSystem
 
     public void Tick(float delta)
     {
+        var elapsedBeforeTick = _elapsedTime;
         _elapsedTime += delta;
 
         var registry  = _ctx!.Get<EntityRegistry>();
@@ -66,7 +68,7 @@ public sealed class NeedsSystem : IGameSystem
 
         foreach (var dwarf in registry.GetAlive<Dwarf>())
         {
-            TickDwarfNeeds(dwarf, delta, _ctx!.TryGet<DataManager>());
+            TickDwarfNeeds(dwarf, delta, elapsedBeforeTick, _ctx!.TryGet<DataManager>());
 
             CheckNeed(dwarf, dwarf.Needs.Hunger, Jobs.JobDefIds.Eat, jobSystem);
             CheckNeed(dwarf, dwarf.Needs.Thirst, Jobs.JobDefIds.Drink, jobSystem);
@@ -75,7 +77,7 @@ public sealed class NeedsSystem : IGameSystem
 
         foreach (var creature in registry.GetAlive<Creature>())
         {
-            TickNeeds(creature.Needs, delta);
+            TickNeeds(creature.Id, creature.Needs, delta, elapsedBeforeTick);
             EmitNeedCritical(creature, creature.Needs.Hunger);
             EmitNeedCritical(creature, creature.Needs.Thirst);
         }
@@ -91,28 +93,74 @@ public sealed class NeedsSystem : IGameSystem
 
     // ── Private ────────────────────────────────────────────────────────────
 
-    private static void TickNeeds(NeedsComponent needs, float delta)
+    private static void TickNeeds(int entityId, NeedsComponent needs, float delta, float elapsedBeforeTick)
     {
-        foreach (var need in needs.All)
-            need.Decay(delta);
+        TickNeed(entityId, needs.Hunger, delta, elapsedBeforeTick);
+        TickNeed(entityId, needs.Thirst, delta, elapsedBeforeTick);
+        needs.Sleep.Decay(delta);
+        needs.Social.Decay(delta);
+        needs.Recreation.Decay(delta);
     }
 
-    private static void TickDwarfNeeds(Dwarf dwarf, float delta, DataManager? dataManager)
+    private static void TickDwarfNeeds(Dwarf dwarf, float delta, float elapsedBeforeTick, DataManager? dataManager)
     {
         var sleepDecayMultiplier = SleepSystem.GetSleepDecayMultiplier(dwarf, dataManager);
-        
-        foreach (var need in dwarf.Needs.All)
+
+        TickNeed(dwarf.Id, dwarf.Needs.Hunger, delta, elapsedBeforeTick);
+        TickNeed(dwarf.Id, dwarf.Needs.Thirst, delta, elapsedBeforeTick);
+        // Sleep decay is driven by stamina rather than a separate trait system.
+        dwarf.Needs.Sleep.Decay(delta * sleepDecayMultiplier);
+        dwarf.Needs.Social.Decay(delta);
+        dwarf.Needs.Recreation.Decay(delta);
+    }
+
+    private static void TickNeed(int entityId, Need need, float delta, float elapsedBeforeTick)
+    {
+        if (!RequiresStaggeredDecay(need.Name))
         {
-            if (need.Name == NeedIds.Sleep)
-            {
-                // Sleep decay is driven by stamina rather than a separate trait system.
-                need.Decay(delta * sleepDecayMultiplier);
-            }
-            else
-            {
-                need.Decay(delta);
-            }
+            need.Decay(delta);
+            return;
         }
+
+        var pulses = CountStaggeredNeedPulses(entityId, need.Name, elapsedBeforeTick, delta, StaggeredNeedIntervalSeconds);
+        for (var pulse = 0; pulse < pulses; pulse++)
+            need.Decay(StaggeredNeedIntervalSeconds);
+    }
+
+    private static bool RequiresStaggeredDecay(string needId)
+        => string.Equals(needId, NeedIds.Hunger, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(needId, NeedIds.Thirst, StringComparison.OrdinalIgnoreCase);
+
+    private static int CountStaggeredNeedPulses(int entityId, string needId, float elapsedBeforeTick, float delta, float intervalSeconds)
+    {
+        if (delta <= 0f)
+            return 0;
+
+        var phaseOffset = ResolveNeedPhaseOffset(entityId, needId, intervalSeconds);
+        var previous = elapsedBeforeTick + phaseOffset;
+        var current = previous + delta;
+        return Math.Max(0, (int)MathF.Floor(current / intervalSeconds) - (int)MathF.Floor(previous / intervalSeconds));
+    }
+
+    private static float ResolveNeedPhaseOffset(int entityId, string needId, float intervalSeconds)
+    {
+        var hash = ((uint)entityId * 747796405u) ^ StableOrdinalHash(needId);
+        var normalized = (hash & 0xFFFF) / 65536f;
+        return normalized * intervalSeconds;
+    }
+
+    private static uint StableOrdinalHash(string value)
+    {
+        const uint offset = 2166136261u;
+        const uint prime = 16777619u;
+        var hash = offset;
+        foreach (var ch in value)
+        {
+            hash ^= ch;
+            hash *= prime;
+        }
+
+        return hash;
     }
 
     private void CheckNeed(Dwarf dwarf, Need need, string jobDefId, Jobs.JobSystem? jobSystem)

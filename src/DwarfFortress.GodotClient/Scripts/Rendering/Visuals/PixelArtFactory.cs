@@ -16,6 +16,8 @@ namespace DwarfFortress.GodotClient.Rendering;
 public static class PixelArtFactory
 {
     public const int Size = 64;
+    private const string EntityIdleCachePrefix = "entity:idle";
+    private const string EntityPoseCachePrefix = "entity:pose";
     private const string UseSpritesEnvVar = "DF_USE_SPRITES";
     private const string Strict2DArtEnvVar = "DF_STRICT_2D_ART";
     private const int DefaultOutlineThickness = 2;
@@ -81,10 +83,13 @@ public static class PixelArtFactory
         => WithAlpha(new Color(0.18f, 0.50f, 0.98f), alpha);
 
     public static Texture2D GetDwarf(DwarfAppearanceComponent appearance)
+        => GetDwarf(appearance, DwarfSpritePose.Idle());
+
+    internal static Texture2D GetDwarf(DwarfAppearanceComponent appearance, DwarfSpritePose pose)
     {
-        var key = $"dwarf:{appearance.Signature}";
+        var key = $"dwarf:{appearance.Signature}:{pose.Facing}:{pose.Action}:{pose.Frame}";
         if (Cache.TryGetValue(key, out var cached)) return cached;
-        return Cache[key] = MakeDwarf(appearance);
+        return Cache[key] = MakeDwarf(appearance, pose);
     }
 
     public static Texture2D GetDwarf(DwarfAppearanceView appearance)
@@ -104,7 +109,7 @@ public static class PixelArtFactory
             FaceType = ParseEnum(appearance.FaceType, DwarfFaceType.Round),
         };
 
-        return Cache[key] = MakeDwarf(component);
+        return GetDwarf(component, DwarfSpritePose.Idle());
     }
 
     public static Texture2D GetUiIcon(string iconId)
@@ -1015,30 +1020,30 @@ public static class PixelArtFactory
         if (Strict2DArt)
             throw CreateMissingArtException("entity", id);
 
-        var key = $"entity:{id}";
-        var profileId = ClientContentQueries.ResolveCreatureProceduralProfileId(id);
+        var key = GetEntityIdleCacheKey(id);
         StrictResolvedKeys.Remove(key);
-        return Cache[key] = ResolveCreatureTexture(id, profileId);
+        return Cache[key] = ResolveEntityTexture(id, CreatureSpritePose.Idle(), allowFallback: true);
+    }
+
+    internal static Texture2D GetEntity(string id, CreatureSpritePose pose)
+    {
+        var key = GetEntityPoseCacheKey(id, pose);
+        if (Cache.TryGetValue(key, out var cached))
+            return cached;
+
+        return Cache[key] = ResolveEntityTexture(id, pose, allowFallback: true);
     }
 
     public static bool TryGetEntity(string id, out Texture2D? texture)
     {
-        var key = $"entity:{id}";
+        var key = GetEntityIdleCacheKey(id);
         if (StrictResolvedKeys.Contains(key) && Cache.TryGetValue(key, out var cached))
         {
             texture = cached;
             return true;
         }
 
-        if (UseSprites && SpriteRegistry.TryGetEntity(id, out var sprite) && sprite is not null)
-        {
-            texture = Cache[key] = sprite;
-            StrictResolvedKeys.Add(key);
-            return true;
-        }
-
-        var profileId = ClientContentQueries.ResolveCreatureProceduralProfileId(id);
-        if (!TryResolveCreatureTexture(id, profileId, out texture) || texture is null)
+        if (!TryResolveEntityTexture(id, CreatureSpritePose.Idle(), allowFallback: false, out texture) || texture is null)
             return false;
 
         Cache[key] = texture;
@@ -1046,32 +1051,67 @@ public static class PixelArtFactory
         return true;
     }
 
-    private static Texture2D ResolveCreatureTexture(string id, string? profileId)
+    private static string GetEntityIdleCacheKey(string id)
+        => $"{EntityIdleCachePrefix}:{id}";
+
+    private static string GetEntityPoseCacheKey(string id, CreatureSpritePose pose)
+        => $"{EntityPoseCachePrefix}:{id}:{pose.Facing}:{pose.Action}:{pose.Frame}";
+
+    private static Texture2D ResolveEntityTexture(string id, CreatureSpritePose pose, bool allowFallback)
     {
-        if (TryResolveCreatureTexture(id, profileId, out var texture) && texture is not null)
+        if (TryResolveEntityTexture(id, pose, allowFallback, out var texture) && texture is not null)
             return texture;
 
-        return MakeCreatureFromId(id);
+        if (Strict2DArt)
+            throw CreateMissingArtException("entity", id);
+
+        return CreatureSpriteComposer.Create(
+            id,
+            ClientContentQueries.ResolveCreatureProceduralProfileId(id),
+            ClientContentQueries.ResolveCreatureMovementModeId(id),
+            ClientContentQueries.ResolveCreatureViewerColor(id),
+            pose);
     }
 
-    private static bool TryResolveCreatureTexture(string id, string? profileId, out Texture2D? texture)
+    private static bool TryResolveEntityTexture(string id, CreatureSpritePose pose, bool allowFallback, out Texture2D? texture)
     {
-        texture = profileId switch
+        var profileId = ClientContentQueries.ResolveCreatureProceduralProfileId(id);
+        if (string.Equals(profileId, ContentCreatureVisualProfileIds.Dwarf, StringComparison.OrdinalIgnoreCase)
+            || (profileId is null && string.Equals(id, DefIds.Dwarf, StringComparison.OrdinalIgnoreCase)))
         {
-            ContentCreatureVisualProfileIds.Dwarf => GetDwarf(DefaultDwarfAppearance),
-            ContentCreatureVisualProfileIds.Goblin => MakeGoblin(),
-            ContentCreatureVisualProfileIds.Troll => MakeTroll(),
-            ContentCreatureVisualProfileIds.Elk => MakeElk(),
-            ContentCreatureVisualProfileIds.GiantCarp => MakeGiantCarp(),
-            ContentCreatureVisualProfileIds.Cat => MakeCat(),
-            ContentCreatureVisualProfileIds.Dog => MakeDog(),
-            _ => null,
-        };
-
-        if (texture is not null)
+            texture = GetDwarf(DefaultDwarfAppearance);
             return true;
+        }
 
-        return profileId is null && TryResolveLegacyCreatureTexture(id, out texture);
+        if (!string.IsNullOrWhiteSpace(profileId))
+        {
+            texture = CreatureSpriteComposer.Create(
+                id,
+                profileId,
+                ClientContentQueries.ResolveCreatureMovementModeId(id),
+                ClientContentQueries.ResolveCreatureViewerColor(id),
+                pose);
+            return true;
+        }
+
+        if (UseSprites && SpriteRegistry.TryGetEntity(id, out var sprite) && sprite is not null)
+        {
+            texture = sprite;
+            return true;
+        }
+
+        if (allowFallback)
+        {
+            texture = CreatureSpriteComposer.Create(
+                id,
+                profileId,
+                ClientContentQueries.ResolveCreatureMovementModeId(id),
+                ClientContentQueries.ResolveCreatureViewerColor(id),
+                pose);
+            return true;
+        }
+
+        return TryResolveLegacyCreatureTexture(id, out texture);
     }
 
     private static bool TryResolveLegacyCreatureTexture(string id, out Texture2D? texture)
@@ -1190,6 +1230,7 @@ public static class PixelArtFactory
             BuildingDefIds.Smelter => MakeWorkshop(new Color(0.46f, 0.48f, 0.52f), new Color(0.22f, 0.24f, 0.28f), new Color(0.95f, 0.54f, 0.16f)),
             BuildingDefIds.Kitchen => MakeWorkshop(new Color(0.73f, 0.68f, 0.54f), new Color(0.42f, 0.35f, 0.20f), new Color(0.47f, 0.72f, 0.31f)),
             BuildingDefIds.Still => MakeWorkshop(new Color(0.58f, 0.54f, 0.62f), new Color(0.30f, 0.26f, 0.34f), new Color(0.34f, 0.72f, 0.86f)),
+            BuildingDefIds.House => MakeHouseBuilding(),
             BuildingDefIds.Bed => MakeBed(),
             BuildingDefIds.Table => MakeTable(),
             BuildingDefIds.Chair => MakeChair(),
@@ -2369,35 +2410,10 @@ public static class PixelArtFactory
     }
 
     private static Texture2D MakeDwarf(DwarfAppearanceComponent appearance)
-    {
-        var image = NewImage();
-        var faceRect = ResolveFaceRect(appearance.FaceType);
-        var tunic = ResolveDwarfTunicColor(appearance);
-        var skin = ResolveDwarfSkinColor(appearance);
-        var hair = ResolveHairColor(appearance.HairColor);
-        var beard = ResolveHairColor(appearance.BeardColor);
-        var boot = new Color(0.28f, 0.19f, 0.11f);
+        => MakeDwarf(appearance, DwarfSpritePose.Idle());
 
-        FillRect(image, new Rect2I(0, 0, Size, Size), new Color(0, 0, 0, 0));
-        DrawDwarfFace(image, faceRect, appearance.FaceType, skin);
-        FillRect(image, new Rect2I(15, 24, 34, 24), tunic);
-        FillRect(image, new Rect2I(13, 28, 8, 14), tunic.Darkened(0.08f));
-        FillRect(image, new Rect2I(43, 28, 8, 14), tunic.Darkened(0.08f));
-        FillRect(image, new Rect2I(18, 30, 28, 18), tunic.Lightened(0.05f));
-        FillRect(image, new Rect2I(16, 48, 12, 12), tunic.Darkened(0.18f));
-        FillRect(image, new Rect2I(36, 48, 12, 12), tunic.Darkened(0.18f));
-        FillRect(image, new Rect2I(16, 58, 12, 4), boot);
-        FillRect(image, new Rect2I(36, 58, 12, 4), boot);
-        FillRect(image, new Rect2I(20, 26, 24, 3), new Color(0.88f, 0.82f, 0.62f, 0.38f));
-
-        DrawDwarfHair(image, faceRect, appearance.HairType, hair);
-        DrawDwarfEyes(image, faceRect, appearance.EyeType);
-        DrawDwarfNose(image, faceRect, appearance.NoseType, skin.Darkened(0.22f));
-        DrawDwarfMouth(image, faceRect, appearance.MouthType);
-        DrawDwarfBeard(image, faceRect, appearance.BeardType, beard);
-
-        return CreateOutlinedTexture(image, tunic.Darkened(0.50f));
-    }
+    private static Texture2D MakeDwarf(DwarfAppearanceComponent appearance, DwarfSpritePose pose)
+        => DwarfSpriteComposer.Create(appearance, pose);
 
     private static Rect2I ResolveFaceRect(DwarfFaceType faceType)
         => faceType switch
@@ -3418,6 +3434,28 @@ public static class PixelArtFactory
         FillRect(image, new Rect2I(16, 36, 28, 8), accent.Darkened(0.18f));
         Outline(image, trim, new Rect2I(8, 14, 48, 36));
         return CreateOutlinedTexture(image, trim.Darkened(0.32f));
+    }
+
+    private static Texture2D MakeHouseBuilding()
+    {
+        var image = NewImage();
+        var wall = new Color(0.72f, 0.54f, 0.34f);
+        var roof = new Color(0.40f, 0.28f, 0.18f);
+        var trim = new Color(0.26f, 0.17f, 0.10f);
+        var floor = new Color(0.58f, 0.41f, 0.25f);
+        var door = new Color(0.24f, 0.14f, 0.08f);
+
+        FillRect(image, new Rect2I(0, 0, Size, Size), new Color(0, 0, 0, 0));
+        FillRect(image, new Rect2I(10, 38, 44, 10), floor);
+        FillRect(image, new Rect2I(10, 22, 44, 20), wall);
+        FillRect(image, new Rect2I(8, 14, 48, 12), roof);
+        FillRect(image, new Rect2I(18, 28, 10, 10), new Color(0.90f, 0.84f, 0.72f));
+        FillRect(image, new Rect2I(36, 26, 8, 12), new Color(0.84f, 0.78f, 0.68f));
+        FillRect(image, new Rect2I(28, 30, 8, 18), door);
+        FillRect(image, new Rect2I(10, 40, 6, 8), trim);
+        FillRect(image, new Rect2I(48, 40, 6, 8), trim);
+        Outline(image, trim, new Rect2I(10, 22, 44, 26));
+        return CreateOutlinedTexture(image, trim);
     }
 
     private static Texture2D MakePickaxeIcon()

@@ -60,7 +60,7 @@ public static class UiText
     public static string ModeLabel(InputMode mode) => mode switch
     {
         InputMode.Select => "Select",
-        InputMode.DesignateClear => "DIG / CHOP",
+        InputMode.DesignateClear => "HARVEST",
         InputMode.DesignateMine => "MINING",
         InputMode.DesignateCutTrees => "CHOPPING",
         InputMode.DesignateCancel => "CANCEL DESIGNATION",
@@ -72,12 +72,12 @@ public static class UiText
     public static string ModeHint(InputMode mode) => mode switch
     {
         InputMode.Select => "Click to select a dwarf, creature, or building",
-        InputMode.DesignateClear => "Drag over walls and trees to queue clearing",
+        InputMode.DesignateClear => "Drag over walls and trees to queue harvesting",
         InputMode.DesignateMine => "Drag over stone/soil walls to queue mining",
         InputMode.DesignateCutTrees => "Drag over trees to queue chopping",
         InputMode.DesignateCancel => "Drag over designated tiles to cancel",
         InputMode.StockpileZone => "Drag to define a stockpile zone",
-        InputMode.BuildingPreview => "Click to place  |  Right-click to cancel",
+        InputMode.BuildingPreview => "Click to place  |  R to rotate  |  Right-click to cancel",
         _ => string.Empty,
     };
 }

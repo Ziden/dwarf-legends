@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Jobs;
@@ -128,7 +129,19 @@ public sealed record ItemView(
     public ItemJobBindingView[] JobBindings { get; init; } = Array.Empty<ItemJobBindingView>();
 }
 public sealed record ContainerEntityView(int Id, string DefId, Vec3i Position, StoredItemsView Storage);
-public sealed record BuildingView(int Id, string BuildingDefId, Vec3i Origin, bool IsWorkshop, int StoredItemCount, string? MaterialId);
+public sealed record BuildingView(
+    int Id,
+    string BuildingDefId,
+    Vec3i Origin,
+    bool IsWorkshop,
+    int StoredItemCount,
+    string? MaterialId,
+    BuildingRotation Rotation,
+    int HousingCapacity,
+    int[] ResidentDwarfIds,
+    string[] ResidentNames,
+    int LinkedStockpileId,
+    int StorageItemCount);
 public sealed record StockpileView(int Id, Vec3i From, Vec3i To, string[] AcceptedTags);
 public sealed record WorldLoreSummaryView(
     string RegionName,

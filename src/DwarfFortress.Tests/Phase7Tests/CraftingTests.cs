@@ -1,5 +1,6 @@
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Items;
@@ -31,8 +32,7 @@ public sealed class CraftingTests
     {
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
 
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(1, 1, 0));
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(2, 1, 0));
+        CreateWorkshopLogs(items);
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
             BuildingDefId: "carpenter_workshop",
             Origin: new Vec3i(5, 5, 0)));
@@ -61,8 +61,7 @@ public sealed class CraftingTests
     {
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
 
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(1, 1, 0));
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(2, 1, 0));
+        CreateWorkshopLogs(items);
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
             BuildingDefId: "carpenter_workshop",
             Origin: new Vec3i(5, 5, 0)));
@@ -103,8 +102,7 @@ public sealed class CraftingTests
     {
         var (sim, map, _, js, items) = TestFixtures.BuildFullSim();
 
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(0, 0, 0));
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(1, 0, 0));
+        CreateWorkshopLogs(items);
 
         // Place a carpenter workshop so RecipeSystem can resolve its position
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
@@ -160,8 +158,7 @@ public sealed class CraftingTests
     {
         var (sim, _, _, js, items) = TestFixtures.BuildFullSim();
 
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(5, 4, 0));
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(5, 3, 0));
+        CreateWorkshopLogs(items);
 
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
             BuildingDefId: "carpenter_workshop",
@@ -192,8 +189,7 @@ public sealed class CraftingTests
         var dwarf = new Dwarf(er.NextId(), "Crafter", new Vec3i(5, 5, 0));
         er.Register(dwarf);
 
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(3, 5, 0));
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(3, 6, 0));
+        CreateWorkshopLogs(items);
 
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
             BuildingDefId: "carpenter_workshop",
@@ -227,8 +223,7 @@ public sealed class CraftingTests
 
         var dwarf = new Dwarf(er.NextId(), "Carpenter", new Vec3i(5, 5, 0));
         er.Register(dwarf);
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(1, 1, 0));
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(2, 1, 0));
+        CreateWorkshopLogs(items);
 
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
             BuildingDefId: "carpenter_workshop",
@@ -298,7 +293,7 @@ public sealed class CraftingTests
     {
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
 
-        items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(2, 2, 0));
+        CreateWorkshopLogs(items);
 
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
             BuildingDefId: "carpenter_workshop",
@@ -313,7 +308,7 @@ public sealed class CraftingTests
     {
         var (sim, map, _, _, items) = TestFixtures.BuildFullSim();
 
-        items.CreateItem(ItemDefIds.Log, "oak_wood", new Vec3i(2, 2, 0));
+        CreateWorkshopLogs(items, "oak_wood");
 
         sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
             BuildingDefId: BuildingDefIds.CarpenterWorkshop,
@@ -345,8 +340,10 @@ public sealed class CraftingTests
 
         var move = Assert.IsType<MoveToStep>(steps[0]);
         var work = Assert.IsType<WorkAtStep>(steps[1]);
+        var expectedDuration = (1f - dwarf.Needs.Sleep.Level)
+            / SleepSystem.GetDwarfSleepNetRecoveryPerSecond(dwarf, inBed: true, sim.Context.TryGet<DataManager>());
         Assert.Equal(new Vec3i(12, 10, 0), move.Target);
-        Assert.Equal(171f, work.Duration, precision: 3);
+        Assert.Equal(expectedDuration, work.Duration, precision: 3);
     }
 
     [Fact]
@@ -471,5 +468,20 @@ public sealed class CraftingTests
 
         Assert.InRange(dwarf.Needs.Hunger.Level, 0.79f, 1f);
         Assert.Equal(0, map.GetTile(plantPos).PlantYieldLevel);
+    }
+
+    private static void CreateWorkshopLogs(ItemSystem items, string materialId = "wood")
+    {
+        foreach (var pos in new[]
+                 {
+                     new Vec3i(1, 1, 0),
+                     new Vec3i(2, 1, 0),
+                     new Vec3i(1, 2, 0),
+                     new Vec3i(2, 2, 0),
+                     new Vec3i(1, 3, 0),
+                 })
+        {
+            items.CreateItem(ItemDefIds.Log, materialId, pos);
+        }
     }
 }

@@ -1,8 +1,10 @@
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Jobs.Strategies;
+using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.World;
 using DwarfFortress.GameLogic.Tests;
 using Xunit;
@@ -39,10 +41,12 @@ public sealed class JobSystemTests
         var logger = new Fakes.TestLogger();
         var ds     = new Fakes.InMemoryDataSource();
         TestFixtures.AddCoreData(ds);
+        var data = new DataManager();
         var er = new EntityRegistry();
+        var items = new ItemSystem();
         var js = new JobSystem();
         var wm = new WorldMap();
-        var sim = TestFixtures.CreateSimulation(logger, ds, er, js, wm);
+        var sim = TestFixtures.CreateSimulation(logger, ds, data, er, items, js, wm);
         wm.SetDimensions(16, 16, 4);
         return (js, er, wm, sim);
     }

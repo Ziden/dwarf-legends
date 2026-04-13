@@ -66,7 +66,7 @@ public static class TestFixtures
         [
                     { "id": "engage_hostile", "displayName": "Engage Hostile", "labor": "misc",        "workTime": 1.0 },
           { "id": "mine_tile",  "displayName": "Mine",     "labor": "mining",      "workTime": 5.0 },
-          { "id": "cut_tree",   "displayName": "Cut Tree", "labor": "wood_cutting","workTime": 4.0 },
+          { "id": "cut_tree",   "displayName": "Cut Tree", "labor": "wood_cutting","workTime": 6.0 },
           { "id": "haul_item",  "displayName": "Haul",     "labor": "hauling",     "workTime": 1.0 }
         ]
         """;
@@ -205,7 +205,7 @@ public static class TestFixtures
             [
                             { "id": "engage_hostile",     "displayName": "Engage Hostile", "labor": "misc",         "workTime": 1.0  },
               { "id": "mine_tile",        "displayName": "Mine",      "labor": "mining",       "workTime": 5.0  },
-              { "id": "cut_tree",         "displayName": "Cut Tree",  "labor": "wood_cutting", "workTime": 4.0  },
+              { "id": "cut_tree",         "displayName": "Cut Tree",  "labor": "wood_cutting", "workTime": 6.0  },
               { "id": "haul_item",        "displayName": "Haul",      "labor": "hauling",      "workTime": 1.0  },
               { "id": "construct_building","displayName": "Construct", "labor": "construction","workTime": 10.0 },
               { "id": "craft_item",       "displayName": "Craft",     "labor": "crafting",     "workTime": 8.0  },

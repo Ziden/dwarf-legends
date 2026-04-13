@@ -35,6 +35,7 @@ public sealed class Dwarf : Entity
     public EmoteComponent        Emotes       => Components.Get<EmoteComponent>();
     public BodyFatComponent      BodyFat      => Components.Get<BodyFatComponent>();
     public DwarfProvenanceComponent Provenance=> Components.Get<DwarfProvenanceComponent>();
+    public ResidenceComponent Residence => Components.Get<ResidenceComponent>();
 
     public Dwarf(int id, string firstName, Vec3i spawnPos, float maxHealth = 100f)
         : base(id, "dwarf")
@@ -70,6 +71,7 @@ public sealed class Dwarf : Entity
         Components.Add(new EmoteComponent());
         Components.Add(new BodyFatComponent());
         Components.Add(new DwarfProvenanceComponent());
+        Components.Add(new ResidenceComponent());
 
         // All labors enabled by default
         Components.Get<LaborComponent>().EnableAll(LaborIds.All);

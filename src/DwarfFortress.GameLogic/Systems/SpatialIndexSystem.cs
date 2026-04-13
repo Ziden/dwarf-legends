@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 
 namespace DwarfFortress.GameLogic.Systems;
@@ -123,7 +124,7 @@ public sealed class SpatialIndexSystem : IGameSystem
         var buildingSystem = _ctx.TryGet<BuildingSystem>();
         if (buildingSystem is not null)
             foreach (var building in buildingSystem.GetAll())
-                AddBuilding(building.Id, building.BuildingDefId, building.Origin);
+                AddBuilding(building.Id, building.BuildingDefId, building.Origin, building.Rotation);
     }
 
     private void OnEntitySpawned(EntitySpawnedEvent e)
@@ -190,12 +191,12 @@ public sealed class SpatialIndexSystem : IGameSystem
         => MoveEntity(_itemsByTile, _itemPositions, e.ItemId, e.OldPos, e.NewPos);
 
     private void OnBuildingPlaced(BuildingPlacedEvent e)
-        => AddBuilding(e.BuildingId, e.BuildingDefId, e.Origin);
+        => AddBuilding(e.BuildingId, e.BuildingDefId, e.Origin, e.Rotation);
 
     private void OnBuildingRemoved(BuildingRemovedEvent e)
-        => RemoveBuilding(e.BuildingId, e.BuildingDefId, e.Origin);
+        => RemoveBuilding(e.BuildingId, e.BuildingDefId, e.Origin, e.Rotation);
 
-    private void AddBuilding(int buildingId, string buildingDefId, Vec3i origin)
+    private void AddBuilding(int buildingId, string buildingDefId, Vec3i origin, BuildingRotation rotation)
     {
         if (_ctx is null) return;
 
@@ -206,11 +207,11 @@ public sealed class SpatialIndexSystem : IGameSystem
             return;
         }
 
-        foreach (var tile in def.Footprint)
-            _buildingByTile[new Vec3i(origin.X + tile.Offset.X, origin.Y + tile.Offset.Y, origin.Z)] = buildingId;
+        foreach (var pos in BuildingPlacementGeometry.EnumerateWorldFootprint(def, origin, rotation))
+            _buildingByTile[pos] = buildingId;
     }
 
-    private void RemoveBuilding(int buildingId, string buildingDefId, Vec3i origin)
+    private void RemoveBuilding(int buildingId, string buildingDefId, Vec3i origin, BuildingRotation rotation)
     {
         if (_ctx is null) return;
 
@@ -222,9 +223,8 @@ public sealed class SpatialIndexSystem : IGameSystem
             return;
         }
 
-        foreach (var tile in def.Footprint)
+        foreach (var pos in BuildingPlacementGeometry.EnumerateWorldFootprint(def, origin, rotation))
         {
-            var pos = new Vec3i(origin.X + tile.Offset.X, origin.Y + tile.Offset.Y, origin.Z);
             if (_buildingByTile.TryGetValue(pos, out var existingId) && existingId == buildingId)
                 _buildingByTile.Remove(pos);
         }

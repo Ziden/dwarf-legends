@@ -45,6 +45,7 @@ public static class GameBootstrapper
         sim.RegisterSystem(new ItemSystem());
         sim.RegisterSystem(new SpatialIndexSystem());
         sim.RegisterSystem(new StockpileManager());
+        sim.RegisterSystem(new HousingSystem());
         sim.RegisterSystem(new FortressBootstrapSystem());
 
         // ── Dwarf simulation systems ──────────────────────────────────────

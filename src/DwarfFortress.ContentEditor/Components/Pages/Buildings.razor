@@ -1,0 +1,195 @@
+@page "/buildings"
+@rendermode InteractiveServer
+@inject DataService DataSvc
+
+<PageTitle>Buildings</PageTitle>
+
+<h2>Buildings</h2>
+
+@if (_buildings == null)
+{
+    <p>Loading…</p>
+}
+else if (_editing != null)
+{
+    <h5 class="mt-3">@(_editing.Id == "" ? "New Building" : $"Editing: {_editing.Id}")</h5>
+    <EditForm Model="_editing" OnValidSubmit="SaveBuilding">
+        <div class="row g-2 mb-3">
+            <div class="col-md-3">
+                <label class="form-label">ID</label>
+                <InputText class="form-control form-control-sm" @bind-Value="_editing.Id" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Display Name</label>
+                <InputText class="form-control form-control-sm" @bind-Value="_editing.DisplayName" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Tags (comma-separated)</label>
+                <InputText class="form-control form-control-sm" Value="@_tagsText" ValueChanged="OnTagsChanged" ValueExpression="() => _tagsText" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Construction Time</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="_editing.ConstructionTime" />
+            </div>
+        </div>
+
+        <div class="row g-2 mb-3">
+            <div class="col-auto d-flex align-items-center">
+                <div class="form-check">
+                    <InputCheckbox class="form-check-input" @bind-Value="_editing.IsWorkshop" id="isWorkshop" />
+                    <label class="form-check-label" for="isWorkshop">Is Workshop</label>
+                </div>
+            </div>
+        </div>
+
+        <h6 class="mb-1">Construction Inputs <button type="button" class="btn btn-outline-secondary btn-sm ms-2" @onclick="AddConstructionInput">+ Add</button></h6>
+        @for (int i = 0; i < _editing.ConstructionInputs.Count; i++)
+        {
+            var idx = i;
+            <div class="row g-2 mb-2 align-items-center">
+                <div class="col-md-5">
+                    <InputText class="form-control form-control-sm"
+                               Value="@TagsDisplay(_editing.ConstructionInputs[idx].Tags)"
+                               ValueChanged="@(v => _editing.ConstructionInputs[idx].Tags = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList())"
+                               ValueExpression="@(() => TagsDisplay(_editing.ConstructionInputs[idx].Tags))"
+                               placeholder="tags" />
+                </div>
+                <div class="col-md-2">
+                    <InputNumber class="form-control form-control-sm" @bind-Value="_editing.ConstructionInputs[idx].Qty" />
+                </div>
+                <div class="col-auto">
+                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.ConstructionInputs.RemoveAt(idx)">✕</button>
+                </div>
+            </div>
+        }
+
+        <h6 class="mb-1 mt-3">Footprint <button type="button" class="btn btn-outline-secondary btn-sm ms-2" @onclick="AddFootprintTile">+ Add Tile</button></h6>
+        @for (int i = 0; i < _editing.Footprint.Count; i++)
+        {
+            var idx = i;
+            <div class="row g-2 mb-1 align-items-center">
+                <div class="col-auto"><label class="form-label mb-0">X</label></div>
+                <div class="col-md-1">
+                    <InputNumber class="form-control form-control-sm" @bind-Value="_editing.Footprint[idx].X" />
+                </div>
+                <div class="col-auto"><label class="form-label mb-0">Y</label></div>
+                <div class="col-md-1">
+                    <InputNumber class="form-control form-control-sm" @bind-Value="_editing.Footprint[idx].Y" />
+                </div>
+                <div class="col-md-3">
+                    <InputSelect class="form-select form-select-sm" @bind-Value="_editing.Footprint[idx].Tile">
+                        <option value="">(select tile)</option>
+                        @foreach (var t in _tiles)
+                        {
+                            <option value="@t.Id">@t.DisplayName</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="col-auto">
+                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.Footprint.RemoveAt(idx)">✕</button>
+                </div>
+            </div>
+        }
+
+        <div class="mt-3">
+            <button type="submit" class="btn btn-primary btn-sm me-2">Save</button>
+            <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _editing = null">Cancel</button>
+        </div>
+    </EditForm>
+}
+else
+{
+    <div class="mb-3">
+        <button class="btn btn-success btn-sm" @onclick="AddNew">+ New Building</button>
+    </div>
+
+    <table class="table table-sm table-hover">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Display Name</th>
+                <th>Tags</th>
+                <th>Workshop</th>
+                <th>Footprint</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var b in _buildings)
+            {
+                <tr>
+                    <td><code>@b.Id</code></td>
+                    <td>@b.DisplayName</td>
+                    <td>@string.Join(", ", b.Tags)</td>
+                    <td>@(b.IsWorkshop ? "✓" : "")</td>
+                    <td>@b.Footprint.Count tiles</td>
+                    <td>
+                        <button class="btn btn-outline-primary btn-sm me-1" @onclick="() => Edit(b)">Edit</button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="() => Delete(b)">Delete</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (!string.IsNullOrEmpty(_feedback))
+{
+    <div class="alert alert-success mt-3">@_feedback</div>
+}
+
+@code {
+    private List<BuildingModel>? _buildings;
+    private List<TileModel> _tiles = [];
+    private BuildingModel? _editing;
+    private string _tagsText = "";
+    private string _feedback = "";
+
+    protected override void OnInitialized()
+    {
+        _buildings = DataSvc.LoadBuildings();
+        _tiles = DataSvc.LoadTiles();
+    }
+
+    private void AddNew() { _editing = new BuildingModel(); _tagsText = ""; }
+
+    private void Edit(BuildingModel b)
+    {
+        _editing = new BuildingModel
+        {
+            Id = b.Id, DisplayName = b.DisplayName, IsWorkshop = b.IsWorkshop, ConstructionTime = b.ConstructionTime,
+            Tags = [..b.Tags],
+            Footprint = b.Footprint.Select(f => new FootprintTile { X = f.X, Y = f.Y, Tile = f.Tile }).ToList(),
+            ConstructionInputs = b.ConstructionInputs.Select(i => new BuildingInput { Tags = [..i.Tags], Qty = i.Qty }).ToList(),
+        };
+        _tagsText = string.Join(", ", b.Tags);
+    }
+
+    private void OnTagsChanged(string v)
+    {
+        _tagsText = v;
+        _editing!.Tags = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    private static string TagsDisplay(List<string> tags) => string.Join(", ", tags);
+
+    private void AddConstructionInput() => _editing!.ConstructionInputs.Add(new BuildingInput());
+    private void AddFootprintTile()     => _editing!.Footprint.Add(new FootprintTile());
+
+    private void SaveBuilding()
+    {
+        var idx = _buildings!.FindIndex(x => x.Id == _editing!.Id);
+        if (idx >= 0) _buildings![idx] = _editing!;
+        else _buildings!.Add(_editing!);
+        DataSvc.SaveBuildings(_buildings!);
+        _feedback = $"Saved '{_editing!.Id}'.";
+        _editing = null;
+    }
+
+    private void Delete(BuildingModel b)
+    {
+        _buildings!.Remove(b);
+        DataSvc.SaveBuildings(_buildings!);
+        _feedback = $"Deleted '{b.Id}'.";
+    }
+}

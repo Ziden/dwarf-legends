@@ -314,4 +314,68 @@ public sealed class NeedsSystemTests
 
         Assert.True(creature.Needs.Hunger.Level < initialHunger);
     }
+
+    [Fact]
+    public void Tick_Staggers_Hunger_Critical_Transitions_Across_Dwarves()
+    {
+        var (_, er, _, sim) = CreateSim();
+        var dwarves = Enumerable.Range(1, 6)
+            .Select(id => new Dwarf(id, $"Dwarf{id}", new Vec3i(id, 0, 0)))
+            .ToList();
+
+        foreach (var dwarf in dwarves)
+        {
+            dwarf.Needs.Hunger.SetLevel(0.101f);
+            er.Register(dwarf);
+        }
+
+        var criticalTimes = new Dictionary<int, float>();
+        var elapsed = 0f;
+        sim.Context.EventBus.On<NeedCriticalEvent>(e =>
+        {
+            if (e.NeedId == NeedIds.Hunger)
+                criticalTimes.TryAdd(e.EntityId, elapsed);
+        });
+
+        for (var tick = 0; tick < 40 && criticalTimes.Count < dwarves.Count; tick++)
+        {
+            elapsed += 0.05f;
+            sim.Tick(0.05f);
+        }
+
+        Assert.Equal(dwarves.Count, criticalTimes.Count);
+        Assert.True(criticalTimes.Values.Distinct().Count() > 1);
+    }
+
+    [Fact]
+    public void Tick_Staggers_Thirst_Critical_Transitions_Across_Dwarves()
+    {
+        var (_, er, _, sim) = CreateSim();
+        var dwarves = Enumerable.Range(1, 6)
+            .Select(id => new Dwarf(id, $"Dwarf{id}", new Vec3i(id, 0, 0)))
+            .ToList();
+
+        foreach (var dwarf in dwarves)
+        {
+            dwarf.Needs.Thirst.SetLevel(0.201f);
+            er.Register(dwarf);
+        }
+
+        var criticalTimes = new Dictionary<int, float>();
+        var elapsed = 0f;
+        sim.Context.EventBus.On<NeedCriticalEvent>(e =>
+        {
+            if (e.NeedId == NeedIds.Thirst)
+                criticalTimes.TryAdd(e.EntityId, elapsed);
+        });
+
+        for (var tick = 0; tick < 40 && criticalTimes.Count < dwarves.Count; tick++)
+        {
+            elapsed += 0.05f;
+            sim.Tick(0.05f);
+        }
+
+        Assert.Equal(dwarves.Count, criticalTimes.Count);
+        Assert.True(criticalTimes.Values.Distinct().Count() > 1);
+    }
 }
