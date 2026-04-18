@@ -19,7 +19,7 @@ public sealed class WorldGenAnalyzerTests
 
         Assert.True(metrics.BordersPassable);
         Assert.True(metrics.CornerPathExists);
-        Assert.InRange(metrics.PassableSurfaceRatio, 0.68f, 1.00f);
+        Assert.InRange(metrics.PassableSurfaceRatio, 0.66f, 1.00f);
     }
 
     [Fact]

@@ -193,7 +193,11 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
             NoiseOriginY: noiseOriginY,
             ContinuitySeed: settings.ContinuitySeed ?? region.Seed);
 
-        var localSettings = ApplyResolvedEmbarkContract(settings, resolvedContract);
+        var fieldRaster = BuildLocalEmbarkFieldRaster(regionFieldMaps, resolvedContract);
+        var localSettings = ApplyResolvedEmbarkContract(settings, resolvedContract) with
+        {
+            FieldRaster = fieldRaster,
+        };
 
         return EmbarkGenerator.Generate(localSettings, localSeed, regionFieldMaps);
     }
@@ -421,6 +425,240 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
             surfaceSnowWeight,
             surfaceStoneWeight);
     }
+
+    private static LocalEmbarkFieldRaster BuildLocalEmbarkFieldRaster(
+        LocalRegionFieldMaps regionFieldMaps,
+        ResolvedLocalEmbarkContract contract)
+    {
+        var width = regionFieldMaps.Width;
+        var height = regionFieldMaps.Height;
+        var elevation = new float[width, height];
+        var surfaceWetness = new float[width, height];
+        var drainage = new float[width, height];
+        var channelPotential = new float[width, height];
+        var floodplainPotential = new float[width, height];
+        var vegetationPotential = new float[width, height];
+        var canopyPotential = new float[width, height];
+        var understoryPotential = new float[width, height];
+        var vegetationNeighborhoodSupport = new float[width, height];
+        var exposedGroundPotential = new float[width, height];
+        var forestCoverageTarget = Math.Clamp(contract.ForestCoverageTarget, 0f, 1f);
+        var wetnessBias = Math.Clamp(contract.ParentWetnessBias, -1f, 1f);
+        var soilDepthBias = Math.Clamp(contract.ParentSoilDepthBias, -1f, 1f);
+        var forestPatchBias = Math.Clamp(contract.ForestPatchBias, -1f, 1f);
+
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
+        {
+            var fx = ResolveFieldNoiseSampleCoord(contract.NoiseOriginX, x, width);
+            var fy = ResolveFieldNoiseSampleCoord(contract.NoiseOriginY, y, height);
+            var macroNoise = ResolveCenteredNoise(
+                CoherentNoise.DomainWarpedFractal2D(
+                    contract.ContinuitySeed,
+                    fx * 2.4f,
+                    fy * 2.4f,
+                    octaves: 2,
+                    lacunarity: 2f,
+                    gain: 0.52f,
+                    warpStrength: 0.14f,
+                    salt: 7811));
+            var detailNoise = ResolveCenteredNoise(
+                CoherentNoise.Fractal2D(
+                    contract.ContinuitySeed,
+                    fx * 6.2f,
+                    fy * 6.2f,
+                    octaves: 2,
+                    lacunarity: 2f,
+                    gain: 0.5f,
+                    salt: 7841));
+
+            drainage[x, y] = Math.Clamp(
+                (regionFieldMaps.FlowAccumulationBand[x, y] * 0.42f) +
+                (regionFieldMaps.Slope[x, y] * 0.28f) +
+                (regionFieldMaps.RiverDischargeBand[x, y] * 0.14f) +
+                (regionFieldMaps.RiverOrderBand[x, y] * 0.10f) +
+                (regionFieldMaps.RiverInfluence[x, y] * 0.06f),
+                0f,
+                1f);
+            channelPotential[x, y] = Math.Clamp(
+                (regionFieldMaps.RiverInfluence[x, y] * 0.42f) +
+                (regionFieldMaps.LakeInfluence[x, y] * 0.20f) +
+                (regionFieldMaps.FlowAccumulationBand[x, y] * 0.18f) +
+                (regionFieldMaps.RiverDischargeBand[x, y] * 0.12f) +
+                (regionFieldMaps.RiverOrderBand[x, y] * 0.08f) +
+                (detailNoise * 0.04f),
+                0f,
+                1f);
+            floodplainPotential[x, y] = Math.Clamp(
+                (channelPotential[x, y] * 0.40f) +
+                (regionFieldMaps.Groundwater[x, y] * 0.22f) +
+                (regionFieldMaps.MoistureBand[x, y] * 0.18f) +
+                (regionFieldMaps.SurfaceMudWeight[x, y] * 0.10f) +
+                (regionFieldMaps.SurfaceSoilWeight[x, y] * 0.08f) -
+                (regionFieldMaps.Slope[x, y] * 0.14f),
+                0f,
+                1f);
+            exposedGroundPotential[x, y] = Math.Clamp(
+                (regionFieldMaps.SurfaceStoneWeight[x, y] * 0.52f) +
+                (regionFieldMaps.SurfaceSandWeight[x, y] * 0.10f) +
+                (regionFieldMaps.Slope[x, y] * 0.26f) +
+                ((1f - regionFieldMaps.SoilDepth[x, y]) * 0.16f) -
+                (regionFieldMaps.Groundwater[x, y] * 0.08f) -
+                (regionFieldMaps.MoistureBand[x, y] * 0.06f),
+                0f,
+                1f);
+            elevation[x, y] = Math.Clamp(
+                (regionFieldMaps.Slope[x, y] * 0.48f) +
+                (exposedGroundPotential[x, y] * 0.30f) +
+                ((1f - regionFieldMaps.SoilDepth[x, y]) * 0.12f) -
+                (floodplainPotential[x, y] * 0.12f) +
+                (macroNoise * 0.08f),
+                0f,
+                1f);
+            surfaceWetness[x, y] = Math.Clamp(
+                (regionFieldMaps.MoistureBand[x, y] * 0.28f) +
+                (regionFieldMaps.Groundwater[x, y] * 0.28f) +
+                (regionFieldMaps.SoilDepth[x, y] * 0.08f) +
+                (floodplainPotential[x, y] * 0.18f) +
+                (channelPotential[x, y] * 0.10f) +
+                (regionFieldMaps.SurfaceMudWeight[x, y] * 0.04f) +
+                (wetnessBias * 0.10f) +
+                (soilDepthBias * 0.04f) -
+                (exposedGroundPotential[x, y] * 0.08f) +
+                (detailNoise * 0.05f),
+                0f,
+                1f);
+            vegetationPotential[x, y] = Math.Clamp(
+                (regionFieldMaps.VegetationDensity[x, y] * 0.28f) +
+                (regionFieldMaps.VegetationSuitability[x, y] * 0.24f) +
+                (regionFieldMaps.SoilDepth[x, y] * 0.12f) +
+                (regionFieldMaps.Groundwater[x, y] * 0.10f) +
+                (surfaceWetness[x, y] * 0.10f) +
+                (regionFieldMaps.SurfaceGrassWeight[x, y] * 0.06f) +
+                (regionFieldMaps.SurfaceSoilWeight[x, y] * 0.06f) +
+                (forestCoverageTarget * 0.08f) +
+                (forestPatchBias * 0.06f) -
+                (exposedGroundPotential[x, y] * 0.18f) -
+                (regionFieldMaps.Slope[x, y] * 0.06f) +
+                (macroNoise * 0.05f),
+                0f,
+                1f);
+            canopyPotential[x, y] = Math.Clamp(
+                (vegetationPotential[x, y] * 0.52f) +
+                (regionFieldMaps.VegetationDensity[x, y] * 0.16f) +
+                (regionFieldMaps.Groundwater[x, y] * 0.10f) +
+                (forestCoverageTarget * 0.10f) +
+                (channelPotential[x, y] * 0.04f) -
+                (regionFieldMaps.SurfaceSandWeight[x, y] * 0.06f) -
+                (regionFieldMaps.SurfaceSnowWeight[x, y] * 0.04f),
+                0f,
+                1f);
+            understoryPotential[x, y] = Math.Clamp(
+                (vegetationPotential[x, y] * 0.44f) +
+                (surfaceWetness[x, y] * 0.16f) +
+                (floodplainPotential[x, y] * 0.14f) +
+                (regionFieldMaps.SurfaceMudWeight[x, y] * 0.08f) +
+                (regionFieldMaps.SurfaceSoilWeight[x, y] * 0.08f) -
+                (exposedGroundPotential[x, y] * 0.10f) +
+                (detailNoise * 0.04f),
+                0f,
+                1f);
+        }
+
+        BuildVegetationNeighborhoodSupportMap(
+            regionFieldMaps,
+            vegetationPotential,
+            canopyPotential,
+            understoryPotential,
+            surfaceWetness,
+            floodplainPotential,
+            vegetationNeighborhoodSupport);
+
+        return new LocalEmbarkFieldRaster(
+            elevation,
+            surfaceWetness,
+            regionFieldMaps.SoilDepth,
+            regionFieldMaps.Groundwater,
+            regionFieldMaps.Slope,
+            drainage,
+            channelPotential,
+            floodplainPotential,
+            vegetationPotential,
+            canopyPotential,
+            understoryPotential,
+            vegetationNeighborhoodSupport,
+            exposedGroundPotential,
+            regionFieldMaps.SurfaceGrassWeight,
+            regionFieldMaps.SurfaceSoilWeight,
+            regionFieldMaps.SurfaceSandWeight,
+            regionFieldMaps.SurfaceMudWeight,
+            regionFieldMaps.SurfaceSnowWeight,
+            regionFieldMaps.SurfaceStoneWeight);
+    }
+
+    private static void BuildVegetationNeighborhoodSupportMap(
+        LocalRegionFieldMaps regionFieldMaps,
+        float[,] vegetationPotential,
+        float[,] canopyPotential,
+        float[,] understoryPotential,
+        float[,] surfaceWetness,
+        float[,] floodplainPotential,
+        float[,] vegetationNeighborhoodSupport)
+    {
+        var width = vegetationPotential.GetLength(0);
+        var height = vegetationPotential.GetLength(1);
+
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
+        {
+            var weighted = 0f;
+            var weight = 0f;
+
+            for (var dy = -2; dy <= 2; dy++)
+            for (var dx = -2; dx <= 2; dx++)
+            {
+                var nx = x + dx;
+                var ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+                    continue;
+
+                var chebyshev = Math.Max(Math.Abs(dx), Math.Abs(dy));
+                var sampleWeight = chebyshev switch
+                {
+                    0 => 1.8f,
+                    1 => 1.0f,
+                    _ => 0.55f,
+                };
+
+                var support = Math.Clamp(
+                    (vegetationPotential[nx, ny] * 0.30f) +
+                    (understoryPotential[nx, ny] * 0.22f) +
+                    (canopyPotential[nx, ny] * 0.10f) +
+                    (surfaceWetness[nx, ny] * 0.12f) +
+                    (floodplainPotential[nx, ny] * 0.10f) +
+                    (regionFieldMaps.VegetationDensity[nx, ny] * 0.08f) +
+                    (regionFieldMaps.VegetationSuitability[nx, ny] * 0.08f),
+                    0f,
+                    1f);
+
+                weighted += support * sampleWeight;
+                weight += sampleWeight;
+            }
+
+            vegetationNeighborhoodSupport[x, y] = weight <= 0f
+                ? 0f
+                : Math.Clamp(weighted / weight, 0f, 1f);
+        }
+    }
+
+    private static float ResolveFieldNoiseSampleCoord(int noiseOrigin, int localCoord, int localExtent)
+    {
+        var safeExtent = Math.Max(1, localExtent - 1);
+        return (noiseOrigin + localCoord) / (float)safeExtent;
+    }
+
+    private static float ResolveCenteredNoise(float value)
+        => (value * 2f) - 1f;
 
     private static float ResolveRegionFieldSampleCoord(int regionIndex, int localCoord, int localExtent)
     {

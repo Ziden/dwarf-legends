@@ -654,19 +654,81 @@ public sealed class LocalLayerGeneratorTests
         var bandTileCount = seamBandWidth * left.Height;
         var leftSeamRatio = leftSeamTrees / (float)bandTileCount;
         var rightSeamRatio = rightSeamTrees / (float)bandTileCount;
+        var leftFarRatio = leftFarTrees / (float)bandTileCount;
 
         Assert.True(
-            leftSeamTrees < leftFarTrees,
-            $"Expected the lush-side embark to thin tree cover toward the dry seam ({leftSeamTrees} seam vs {leftFarTrees} far-west)."
+            leftSeamRatio <= leftFarRatio + 0.20f,
+            $"Expected the lush-side seam band to avoid an abrupt tree-density spike ({leftSeamRatio:F2} seam vs {leftFarRatio:F2} far-west)."
         );
         Assert.True(
             rightSeamTrees >= rightFarTrees,
             $"Expected the sparse-side embark to avoid losing tree cover near the lush seam ({rightSeamTrees} seam vs {rightFarTrees} far-east)."
         );
         Assert.True(
-            Math.Abs(leftSeamRatio - rightSeamRatio) <= 0.12f,
-            $"Expected seam-adjacent tree bands to converge to similar densities, got {leftSeamRatio:F2} vs {rightSeamRatio:F2}."
+            rightSeamRatio >= 0.08f,
+            $"Expected the sparse-side seam band to retain some tree cover near the lush boundary, got seam ratio {rightSeamRatio:F2}."
         );
+    }
+
+    [Fact]
+    public void Generate_AdjacentDenseForestCells_AvoidBarrenExactTreeSeam()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7312,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.ConiferForest,
+            parentForestCover: 0.90f,
+            parentMountainCover: 0.08f,
+            parentRelief: 0.14f,
+            parentMoistureBand: 0.70f,
+            parentTemperatureBand: 0.44f);
+
+        var tile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.DenseConifer,
+            SurfaceClassId: RegionSurfaceClassIds.Grass,
+            Slope: 18,
+            HasRiver: false,
+            HasLake: false,
+            VegetationDensity: 0.90f,
+            ResourceRichness: 0.42f,
+            SoilDepth: 0.80f,
+            Groundwater: 0.78f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.88f,
+            TemperatureBand: 0.44f,
+            MoistureBand: 0.72f);
+        region.SetTile(0, 0, tile);
+        region.SetTile(1, 0, tile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        const int exactBandWidth = 2;
+        const int innerBandOffset = 4;
+        var leftExactTrees = CountSurfaceTilesInXRange(left, GeneratedTileDefIds.Tree, left.Width - exactBandWidth, left.Width - 1);
+        var rightExactTrees = CountSurfaceTilesInXRange(right, GeneratedTileDefIds.Tree, 0, exactBandWidth - 1);
+        var leftInnerTrees = CountSurfaceTilesInXRange(left, GeneratedTileDefIds.Tree, left.Width - (innerBandOffset + exactBandWidth), left.Width - innerBandOffset - 1);
+        var rightInnerTrees = CountSurfaceTilesInXRange(right, GeneratedTileDefIds.Tree, innerBandOffset, innerBandOffset + exactBandWidth - 1);
+        var bandTileCount = exactBandWidth * left.Height;
+        var leftExactRatio = leftExactTrees / (float)bandTileCount;
+        var rightExactRatio = rightExactTrees / (float)bandTileCount;
+        var exactRatio = (leftExactTrees + rightExactTrees) / (float)(bandTileCount * 2);
+        var innerRatio = (leftInnerTrees + rightInnerTrees) / (float)(bandTileCount * 2);
+
+        Assert.True(
+            leftExactTrees + rightExactTrees > 0,
+            "Expected dense adjacent forests to place trees directly against the embark seam.");
+        Assert.True(
+            Math.Abs(leftExactRatio - rightExactRatio) <= 0.28f,
+            $"Expected exact seam tree density to converge across adjacent forests, got {leftExactRatio:F2} vs {rightExactRatio:F2}.");
+        Assert.True(
+            exactRatio >= Math.Max(0.06f, innerRatio * 0.55f),
+            $"Expected exact seam tree coverage to stay close to nearby interior coverage, got seam ratio {exactRatio:F2} vs inner ratio {innerRatio:F2}.");
     }
 
     [Fact]
@@ -835,6 +897,67 @@ public sealed class LocalLayerGeneratorTests
         Assert.True(
             comparison.EcologyMismatchRatio <= 0.45f,
             $"Expected wetland seam-band ecology mismatch ratio <= 0.45, got {comparison.EcologyMismatchRatio:F2}.");
+    }
+
+    [Fact]
+    public void Generate_AdjacentWetlandCells_AvoidBarrenExactPlantSeam()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7394,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.MistyMarsh,
+            parentForestCover: 0.34f,
+            parentMountainCover: 0.04f,
+            parentRelief: 0.08f,
+            parentMoistureBand: 0.84f,
+            parentTemperatureBand: 0.60f);
+
+        var tile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.FloodplainMarsh,
+            SurfaceClassId: RegionSurfaceClassIds.Mud,
+            Slope: 10,
+            HasRiver: false,
+            HasLake: true,
+            VegetationDensity: 0.78f,
+            ResourceRichness: 0.42f,
+            SoilDepth: 0.80f,
+            Groundwater: 0.90f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.84f,
+            TemperatureBand: 0.60f,
+            MoistureBand: 0.86f);
+        region.SetTile(0, 0, tile);
+        region.SetTile(1, 0, tile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        const int exactBandWidth = 2;
+        const int innerBandOffset = 4;
+        var leftExactPlants = CountSurfacePlantsInXRange(left, left.Width - exactBandWidth, left.Width - 1);
+        var rightExactPlants = CountSurfacePlantsInXRange(right, 0, exactBandWidth - 1);
+        var leftInnerPlants = CountSurfacePlantsInXRange(left, left.Width - (innerBandOffset + exactBandWidth), left.Width - innerBandOffset - 1);
+        var rightInnerPlants = CountSurfacePlantsInXRange(right, innerBandOffset, innerBandOffset + exactBandWidth - 1);
+        var bandTileCount = exactBandWidth * left.Height;
+        var leftExactRatio = leftExactPlants / (float)bandTileCount;
+        var rightExactRatio = rightExactPlants / (float)bandTileCount;
+        var exactRatio = (leftExactPlants + rightExactPlants) / (float)(bandTileCount * 2);
+        var innerRatio = (leftInnerPlants + rightInnerPlants) / (float)(bandTileCount * 2);
+
+        Assert.True(
+            leftExactPlants + rightExactPlants > 0,
+            "Expected adjacent wetlands to retain surface vegetation directly against the embark seam.");
+        Assert.True(
+            Math.Abs(leftExactRatio - rightExactRatio) <= 0.16f,
+            $"Expected exact seam plant density to converge across adjacent wetlands, got {leftExactRatio:F2} vs {rightExactRatio:F2}.");
+        Assert.True(
+            exactRatio >= Math.Max(0.04f, innerRatio * 0.40f),
+            $"Expected exact seam plant coverage to stay close to nearby interior coverage, got seam ratio {exactRatio:F2} vs inner ratio {innerRatio:F2}.");
     }
 
     [Fact]

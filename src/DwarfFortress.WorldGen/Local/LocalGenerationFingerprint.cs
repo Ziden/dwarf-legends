@@ -34,6 +34,7 @@ public static class LocalGenerationFingerprint
         hash = MixNullableInt(hash, settings.ContinuitySeed);
         hash = MixSurfaceIntentGrid(hash, settings.SurfaceIntentGrid);
         hash = MixContinuityContract(hash, settings.ContinuityContract);
+        hash = MixFieldRaster(hash, settings.FieldRaster);
         return hash;
     }
 
@@ -72,6 +73,15 @@ public static class LocalGenerationFingerprint
 
         hash = Mix(hash, 1);
         return Mix(hash, Compute(contract.Value));
+    }
+
+    private static int MixFieldRaster(int hash, LocalEmbarkFieldRaster? fieldRaster)
+    {
+        if (fieldRaster is null)
+            return Mix(hash, 0);
+
+        hash = Mix(hash, 1);
+        return Mix(hash, fieldRaster.GetFingerprint());
     }
 
     private static int MixRiverPortals(int hash, LocalRiverPortal[]? portals)

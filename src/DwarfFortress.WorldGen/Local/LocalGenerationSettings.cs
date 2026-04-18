@@ -31,4 +31,5 @@ public readonly record struct LocalGenerationSettings(
     int NoiseOriginY = 0,
     int? ContinuitySeed = null,
     LocalSurfaceIntentGrid? SurfaceIntentGrid = null,
-    LocalContinuityContract? ContinuityContract = null);
+    LocalContinuityContract? ContinuityContract = null,
+    LocalEmbarkFieldRaster? FieldRaster = null);

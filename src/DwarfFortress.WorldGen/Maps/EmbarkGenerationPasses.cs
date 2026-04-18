@@ -10,6 +10,9 @@ public static partial class EmbarkGenerator
         new EcologyPass(),
         new HydrologyPolishPass(),
         new CivilizationOverlayPass(),
+        new VegetationPass(),
+        new SurfaceAccessPrepPass(),
+        new BoundaryContinuityPass(),
         new PlayabilityPass(),
         new PopulationPass(),
     ];
@@ -67,6 +70,30 @@ public static partial class EmbarkGenerator
 
         public void Execute(LocalGenerationContext context)
             => RunCivilizationOverlayStage(context);
+    }
+
+    private sealed class VegetationPass : IEmbarkGenerationPass
+    {
+        public EmbarkGenerationStageId StageId => EmbarkGenerationStageId.Vegetation;
+
+        public void Execute(LocalGenerationContext context)
+            => RunVegetationStage(context);
+    }
+
+    private sealed class SurfaceAccessPrepPass : IEmbarkGenerationPass
+    {
+        public EmbarkGenerationStageId StageId => EmbarkGenerationStageId.SurfaceAccessPrep;
+
+        public void Execute(LocalGenerationContext context)
+            => RunSurfaceAccessPrepStage(context);
+    }
+
+    private sealed class BoundaryContinuityPass : IEmbarkGenerationPass
+    {
+        public EmbarkGenerationStageId StageId => EmbarkGenerationStageId.BoundaryContinuity;
+
+        public void Execute(LocalGenerationContext context)
+            => RunBoundaryContinuityStage(context);
     }
 
     private sealed class PlayabilityPass : IEmbarkGenerationPass

@@ -9,6 +9,8 @@ namespace DwarfFortress.GodotClient.Bootstrap;
 
 public static class ClientSimulationFactory
 {
+    public const int DefaultClientSeed = 42;
+
     public static string ResolveDataPath()
     {
         var projectRoot = ProjectSettings.GlobalizePath("res://");
@@ -40,7 +42,8 @@ public static class ClientSimulationFactory
         var logger = new GodotLogger();
         var dataSource = new FolderDataSource(ResolveDataPath());
         var simulation = GameBootstrapper.Build(logger, dataSource);
-        var resolvedSeed = seed ?? Random.Shared.Next(1, int.MaxValue);
+        var resolvedSeed = seed ?? DefaultClientSeed;
+        GD.Print($"[ClientSimulationFactory] Starting simulation with seed {resolvedSeed}.");
         simulation.Context.Commands.Dispatch(new StartFortressCommand(resolvedSeed, width, height, depth));
         return simulation;
     }
