@@ -1,3 +1,5 @@
+using DwarfFortress.WorldGen.Generation;
+
 namespace DwarfFortress.WorldGen.Local;
 
 /// <summary>
@@ -24,5 +26,9 @@ public readonly record struct LocalGenerationSettings(
     LocalRoadPortal[]? RoadPortals = null,
     string? SurfaceTileOverrideId = null,
     float? ForestCoverageTarget = null,
+    EcologyEdgeDescriptors? EcologyEdges = null,
     int NoiseOriginX = 0,
-    int NoiseOriginY = 0);
+    int NoiseOriginY = 0,
+    int? ContinuitySeed = null,
+    LocalSurfaceIntentGrid? SurfaceIntentGrid = null,
+    LocalContinuityContract? ContinuityContract = null);

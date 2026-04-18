@@ -5,6 +5,7 @@ using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
+using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.World;
 
 namespace DwarfFortress.GameLogic.Systems;
@@ -12,6 +13,8 @@ namespace DwarfFortress.GameLogic.Systems;
 public record struct BuildingPlacedEvent(int BuildingId, string BuildingDefId, Vec3i Origin, bool IsWorkshop, BuildingRotation Rotation);
 public record struct BuildingRemovedEvent(int BuildingId, string BuildingDefId, Vec3i Origin, BuildingRotation Rotation);
 public record struct BuildingPlacementRejectedEvent(string BuildingDefId, Vec3i Origin, string Reason);
+public record struct BuildingConstructionStartedEvent(int BuildingId, string BuildingDefId, Vec3i Origin, BuildingRotation Rotation, int JobId);
+public record struct BuildingConstructionCompletedEvent(int BuildingId, string BuildingDefId, Vec3i Origin, BuildingRotation Rotation);
 
 public sealed class CapturedFootprintTileData
 {
@@ -27,13 +30,14 @@ public sealed class PlacedBuildingData
     public bool IsWorkshop { get; init; }
     public BuildingRotation Rotation { get; set; }
     public string? MaterialId { get; set; }
+    public bool IsComplete { get; set; }
+    public int ConstructionJobId { get; set; } = -1;
     public int LinkedStockpileId { get; set; } = -1;
     public List<CapturedFootprintTileData> UnderlyingTiles { get; init; } = new();
 }
 
 /// <summary>
-/// Minimal runtime building registry for workshop placement and client queries.
-/// Buildings are currently placed immediately; job-based construction can build on this later.
+/// Runtime building registry for reserved construction sites, completed buildings, and client queries.
 /// </summary>
 public sealed class BuildingSystem : IGameSystem
 {
@@ -70,30 +74,15 @@ public sealed class BuildingSystem : IGameSystem
             IsWorkshop = b.IsWorkshop,
             MaterialId = b.MaterialId,
             Rotation = (int)b.Rotation,
+            IsComplete = b.IsComplete,
+            ConstructionJobId = b.ConstructionJobId,
             LinkedStockpileId = b.LinkedStockpileId,
             UnderlyingTiles = b.UnderlyingTiles.Select(tile => new FootprintTileDto
             {
                 X = tile.Position.X,
                 Y = tile.Position.Y,
                 Z = tile.Position.Z,
-                TileDefId = tile.Tile.TileDefId,
-                MaterialId = tile.Tile.MaterialId,
-                TreeSpeciesId = tile.Tile.TreeSpeciesId,
-                PlantDefId = tile.Tile.PlantDefId,
-                PlantGrowthStage = tile.Tile.PlantGrowthStage,
-                PlantGrowthProgressSeconds = tile.Tile.PlantGrowthProgressSeconds,
-                PlantYieldLevel = tile.Tile.PlantYieldLevel,
-                PlantSeedLevel = tile.Tile.PlantSeedLevel,
-                OreItemDefId = tile.Tile.OreItemDefId,
-                IsAquifer = tile.Tile.IsAquifer,
-                FluidType = (byte)tile.Tile.FluidType,
-                FluidLevel = tile.Tile.FluidLevel,
-                FluidMaterialId = tile.Tile.FluidMaterialId,
-                CoatingMaterialId = tile.Tile.CoatingMaterialId,
-                CoatingAmount = tile.Tile.CoatingAmount,
-                IsDesignated = tile.Tile.IsDesignated,
-                IsUnderConstruction = tile.Tile.IsUnderConstruction,
-                IsPassable = tile.Tile.IsPassable,
+                Tile = TileDataSnapshot.FromTile(tile.Tile),
             }).ToList(),
         }).ToList());
     }
@@ -122,6 +111,8 @@ public sealed class BuildingSystem : IGameSystem
                 Rotation = Enum.IsDefined(typeof(BuildingRotation), dto.Rotation)
                     ? (BuildingRotation)dto.Rotation
                     : BuildingRotation.None,
+                IsComplete = dto.IsComplete,
+                ConstructionJobId = dto.ConstructionJobId,
                 LinkedStockpileId = dto.LinkedStockpileId,
                 UnderlyingTiles = dto.UnderlyingTiles?.Select(ToCapturedFootprintTileData).ToList() ?? new List<CapturedFootprintTileData>(),
             };
@@ -188,6 +179,7 @@ public sealed class BuildingSystem : IGameSystem
             IsWorkshop = def.IsWorkshop,
             Rotation = cmd.Rotation,
             MaterialId = ResolveConstructionMaterialId(dm, def, consumedInputs),
+            IsComplete = false,
             UnderlyingTiles = CaptureUnderlyingTiles(cmd.Origin, def, cmd.Rotation),
         };
 
@@ -195,8 +187,14 @@ public sealed class BuildingSystem : IGameSystem
         _byOrigin[building.Origin] = building.Id;
         ApplyFootprint(building);
         IndexFootprint(building);
-        CreateOwnedStockpileIfNeeded(building, def);
+        StartConstructionJob(building);
         _ctx.EventBus.Emit(new BuildingPlacedEvent(building.Id, building.BuildingDefId, building.Origin, building.IsWorkshop, building.Rotation));
+        _ctx.EventBus.Emit(new BuildingConstructionStartedEvent(
+            building.Id,
+            building.BuildingDefId,
+            building.Origin,
+            building.Rotation,
+            building.ConstructionJobId));
     }
 
     private void OnRemoveBuilding(DeconstructBuildingCommand cmd)
@@ -204,12 +202,40 @@ public sealed class BuildingSystem : IGameSystem
         var building = GetByFootprintTile(cmd.Origin);
         if (building is null) return;
 
+        CancelConstructionJobIfNeeded(building);
         RemoveOwnedStockpile(building);
         RestoreUnderlyingTiles(building);
         RemoveFootprintIndex(building);
         _byOrigin.Remove(building.Origin);
         _buildings.Remove(building.Id);
         _ctx!.EventBus.Emit(new BuildingRemovedEvent(building.Id, building.BuildingDefId, building.Origin, building.Rotation));
+    }
+
+    public bool CompleteConstruction(int buildingId, int completedByJobId = -1)
+    {
+        if (!_buildings.TryGetValue(buildingId, out var building))
+            return false;
+
+        var dm = _ctx!.Get<DataManager>();
+        var def = dm.Buildings.GetOrNull(building.BuildingDefId);
+        if (def is null)
+            return false;
+
+        if (building.IsComplete)
+            return true;
+
+        CancelConstructionJobIfNeeded(building, completedByJobId);
+        building.IsComplete = true;
+        building.ConstructionJobId = -1;
+
+        ApplyFootprint(building);
+        CreateOwnedStockpileIfNeeded(building, def);
+        _ctx.EventBus.Emit(new BuildingConstructionCompletedEvent(
+            building.Id,
+            building.BuildingDefId,
+            building.Origin,
+            building.Rotation));
+        return true;
     }
 
     private bool TryValidateFootprint(Vec3i origin, BuildingDef def, BuildingRotation rotation, out string reason)
@@ -266,7 +292,7 @@ public sealed class BuildingSystem : IGameSystem
                 TileDefId = tileDef.Id,
                 MaterialId = ResolveFootprintMaterialId(dm, def, tileDef, building.MaterialId, existing.MaterialId),
                 IsPassable = tileDef.IsPassable,
-                IsUnderConstruction = false,
+                IsUnderConstruction = !building.IsComplete,
                 FluidLevel = existing.FluidLevel,
                 FluidMaterialId = existing.FluidMaterialId,
                 CoatingAmount = existing.CoatingAmount,
@@ -390,6 +416,30 @@ public sealed class BuildingSystem : IGameSystem
         return true;
     }
 
+    private void StartConstructionJob(PlacedBuildingData building)
+    {
+        var jobSystem = _ctx!.TryGet<JobSystem>();
+        if (jobSystem is null)
+            return;
+
+        var job = jobSystem.CreateJob(JobDefIds.Construct, building.Origin, priority: 5, entityId: building.Id);
+        building.ConstructionJobId = job.Id;
+    }
+
+    private void CancelConstructionJobIfNeeded(PlacedBuildingData building, int preservingJobId = -1)
+    {
+        var jobId = building.ConstructionJobId;
+        if (jobId < 0 || jobId == preservingJobId)
+            return;
+
+        var jobSystem = _ctx!.TryGet<JobSystem>();
+        var job = jobSystem?.GetJob(jobId);
+        if (job is { Status: JobStatus.Pending or JobStatus.InProgress })
+            jobSystem!.CancelJob(jobId);
+
+        building.ConstructionJobId = -1;
+    }
+
     private static bool IsWoodLikeMaterial(DataManager data, string materialId)
     {
         if (string.Equals(materialId, MaterialIds.Wood, StringComparison.OrdinalIgnoreCase) ||
@@ -491,7 +541,7 @@ public sealed class BuildingSystem : IGameSystem
                 continue;
 
             var definition = dataManager.Buildings.GetOrNull(building.BuildingDefId);
-            if (definition is null || definition.EntryOffsets.Count == 0)
+            if (definition is null || !building.IsComplete || definition.Entries.Count == 0)
                 continue;
 
             if (!BuildingPlacementGeometry.CanTraverseBoundary(definition, building.Origin, building.Rotation, from, to))
@@ -505,27 +555,7 @@ public sealed class BuildingSystem : IGameSystem
         => new()
         {
             Position = new Vec3i(dto.X, dto.Y, dto.Z),
-            Tile = new TileData
-            {
-                TileDefId = dto.TileDefId,
-                MaterialId = dto.MaterialId,
-                TreeSpeciesId = dto.TreeSpeciesId,
-                PlantDefId = dto.PlantDefId,
-                PlantGrowthStage = dto.PlantGrowthStage,
-                PlantGrowthProgressSeconds = dto.PlantGrowthProgressSeconds,
-                PlantYieldLevel = dto.PlantYieldLevel,
-                PlantSeedLevel = dto.PlantSeedLevel,
-                OreItemDefId = dto.OreItemDefId,
-                IsAquifer = dto.IsAquifer,
-                FluidType = (FluidType)dto.FluidType,
-                FluidLevel = dto.FluidLevel,
-                FluidMaterialId = dto.FluidMaterialId,
-                CoatingMaterialId = dto.CoatingMaterialId,
-                CoatingAmount = dto.CoatingAmount,
-                IsDesignated = dto.IsDesignated,
-                IsUnderConstruction = dto.IsUnderConstruction,
-                IsPassable = dto.IsPassable,
-            },
+            Tile = dto.Tile?.ToTileData() ?? TileData.Empty,
         };
 
     private sealed class BuildingDto
@@ -538,6 +568,8 @@ public sealed class BuildingSystem : IGameSystem
         public bool IsWorkshop { get; set; }
         public string? MaterialId { get; set; }
         public int Rotation { get; set; }
+        public bool IsComplete { get; set; }
+        public int ConstructionJobId { get; set; } = -1;
         public int LinkedStockpileId { get; set; } = -1;
         public List<FootprintTileDto>? UnderlyingTiles { get; set; }
     }
@@ -547,23 +579,6 @@ public sealed class BuildingSystem : IGameSystem
         public int X { get; set; }
         public int Y { get; set; }
         public int Z { get; set; }
-        public string TileDefId { get; set; } = TileDefIds.Empty;
-        public string? MaterialId { get; set; }
-        public string? TreeSpeciesId { get; set; }
-        public string? PlantDefId { get; set; }
-        public byte PlantGrowthStage { get; set; }
-        public float PlantGrowthProgressSeconds { get; set; }
-        public byte PlantYieldLevel { get; set; }
-        public byte PlantSeedLevel { get; set; }
-        public string? OreItemDefId { get; set; }
-        public bool IsAquifer { get; set; }
-        public byte FluidType { get; set; }
-        public byte FluidLevel { get; set; }
-        public string? FluidMaterialId { get; set; }
-        public string? CoatingMaterialId { get; set; }
-        public float CoatingAmount { get; set; }
-        public bool IsDesignated { get; set; }
-        public bool IsUnderConstruction { get; set; }
-        public bool IsPassable { get; set; }
+        public TileDataSnapshot? Tile { get; set; }
     }
 }

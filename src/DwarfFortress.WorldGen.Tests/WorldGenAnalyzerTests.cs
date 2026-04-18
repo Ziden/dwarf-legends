@@ -3,6 +3,7 @@ using DwarfFortress.WorldGen.Ids;
 using DwarfFortress.WorldGen.Maps;
 using DwarfFortress.WorldGen.Story;
 using DwarfFortress.WorldGen.World;
+using System.Linq;
 
 namespace DwarfFortress.WorldGen.Tests;
 
@@ -38,7 +39,32 @@ public sealed class WorldGenAnalyzerTests
     [Fact]
     public void AnalyzeLore_ComputesEventBreakdown()
     {
-        var lore = WorldLoreGenerator.Generate(seed: 33, width: 48, height: 48, depth: 8);
+        var lore = new WorldLoreState
+        {
+            BiomeId = MacroBiomeIds.TemperatePlains,
+            Factions =
+            [
+                new FactionLoreState { Id = "civ_a", IsHostile = false },
+                new FactionLoreState { Id = "civ_b", IsHostile = true },
+            ],
+            FactionRelations =
+            [
+                new FactionRelationLoreState { FactionAId = "civ_a", FactionBId = "civ_b", Stance = RelationStanceIds.Hostile },
+            ],
+            Sites =
+            [
+                new SiteLoreState { Id = "site_a", Status = SiteStatusIds.Growing, Development = 0.7f, Security = 0.4f },
+                new SiteLoreState { Id = "site_b", Status = SiteStatusIds.Fortified, Development = 0.5f, Security = 0.9f },
+            ],
+            History =
+            [
+                new HistoricalEventLoreState { Type = HistoricalEventTypeIds.Treaty },
+                new HistoricalEventLoreState { Type = HistoricalEventTypeIds.Raid },
+                new HistoricalEventLoreState { Type = HistoricalEventTypeIds.Skirmish },
+                new HistoricalEventLoreState { Type = HistoricalEventTypeIds.Crisis },
+                new HistoricalEventLoreState { Type = HistoricalEventTypeIds.Founding },
+            ],
+        };
 
         var metrics = WorldGenAnalyzer.AnalyzeLore(lore);
 
@@ -47,6 +73,15 @@ public sealed class WorldGenAnalyzerTests
         Assert.Equal(lore.FactionRelations.Count, metrics.RelationCount);
         Assert.Equal(lore.Sites.Count, metrics.SiteCount);
         Assert.Equal(lore.History.Count, metrics.EventCount);
+        Assert.Equal(1, metrics.TreatyCount);
+        Assert.Equal(1, metrics.RaidCount);
+        Assert.Equal(1, metrics.SkirmishCount);
+        Assert.Equal(1, metrics.CrisisCount);
+        Assert.Equal(1, metrics.FoundingCount);
+        Assert.Equal(1, metrics.HostileFactionCount);
+        Assert.Equal(1, metrics.HostileRelationCount);
+        Assert.Equal(1, metrics.GrowingSiteCount);
+        Assert.Equal(1, metrics.FortifiedSiteCount);
         Assert.InRange(metrics.HostileEventRatio, 0f, 1f);
         Assert.InRange(metrics.AvgSiteDevelopment, 0f, 1f);
         Assert.InRange(metrics.AvgSiteSecurity, 0f, 1f);
@@ -57,7 +92,9 @@ public sealed class WorldGenAnalyzerTests
     {
         var report = WorldGenAnalyzer.AnalyzeDepthSamples(seedStart: 0, seedCount: 30, width: 48, height: 48, depth: 8);
 
-        Assert.True(report.Passed, "Expected default depth budgets to pass on current generator baseline.");
+        Assert.True(
+            report.Passed,
+            $"Expected default depth budgets to pass on current generator baseline. Failing budgets: {string.Join(" | ", report.Budgets.Where(b => !b.Passed).Select(b => $"{b.Name}: {b.Detail}"))}");
     }
 
     [Fact]
@@ -86,10 +123,20 @@ public sealed class WorldGenAnalyzerTests
             localHeight: localHeight,
             localDepth: localDepth);
 
-        Assert.True(report.Passed, "Expected layered worldgen pipeline budgets to pass on current generator baseline.");
+        Assert.True(
+            report.Passed,
+            $"Expected layered worldgen pipeline budgets to pass on current generator baseline. Failing budgets: {string.Join(" | ", report.Budgets.Where(b => !b.Passed).Select(b => $"{b.Name}: {b.Detail}"))}");
         Assert.InRange(report.RegionParentMacroAlignmentRatio, 0f, 1f);
         Assert.InRange(report.RegionVegetationSuitabilityCorrelation, 0f, 1f);
         Assert.InRange(report.LocalTreeSuitabilityCorrelation, -1f, 1f);
+        Assert.InRange(report.LocalSurfaceBoundaryMismatchRatio, 0f, 1f);
+        Assert.InRange(report.LocalWaterBoundaryMismatchRatio, 0f, 1f);
+        Assert.InRange(report.LocalEcologyBoundaryMismatchRatio, 0f, 1f);
+        Assert.InRange(report.LocalTreeBoundaryMismatchRatio, 0f, 1f);
+        Assert.InRange(report.LocalSurfaceBoundaryBandMismatchRatio, 0f, 1f);
+        Assert.InRange(report.LocalWaterBoundaryBandMismatchRatio, 0f, 1f);
+        Assert.InRange(report.LocalEcologyBoundaryBandMismatchRatio, 0f, 1f);
+        Assert.InRange(report.LocalTreeBoundaryBandMismatchRatio, 0f, 1f);
         Assert.InRange(report.WorldForestRegionVegetationCorrelation, -1f, 1f);
         Assert.InRange(report.WorldForestLocalTreeDensityCorrelation, -1f, 1f);
         Assert.InRange(report.WorldMountainRegionSlopeCorrelation, -1f, 1f);
@@ -100,6 +147,8 @@ public sealed class WorldGenAnalyzerTests
         Assert.Equal(seedCount, report.SeedCount);
         Assert.True(report.EvaluatedSeedCount >= seedCount);
         Assert.False(report.BiomeCoverageRequested);
+        Assert.InRange(report.LocalBoundarySampleCount, 0, int.MaxValue);
+        Assert.InRange(report.LocalBoundaryBandSampleCount, 0, int.MaxValue);
         Assert.InRange(report.DenseForestSampleCount, 0, int.MaxValue);
         Assert.InRange(report.TropicalSampleCount, 0, int.MaxValue);
         Assert.InRange(report.AridSampleCount, 0, int.MaxValue);
@@ -113,8 +162,16 @@ public sealed class WorldGenAnalyzerTests
 
         var diagnosticsCoverageBudget = report.Budgets.Single(b => b.Name == "Embark Stage Diagnostics Coverage");
         var diagnosticsPassBudget = report.Budgets.Single(b => b.Name == "Embark Stage Diagnostics Pass");
+        var surfaceEdgeBudget = report.Budgets.Single(b => b.Name == "Local Surface Edge Continuity");
+        var waterEdgeBudget = report.Budgets.Single(b => b.Name == "Local Water Edge Continuity");
+        var ecologyBandBudget = report.Budgets.Single(b => b.Name == "Local Ecology Seam Band Continuity");
+        var treeBandBudget = report.Budgets.Single(b => b.Name == "Local Tree Seam Band Continuity");
         Assert.True(diagnosticsCoverageBudget.Passed);
         Assert.True(diagnosticsPassBudget.Passed);
+        Assert.True(surfaceEdgeBudget.Passed);
+        Assert.True(waterEdgeBudget.Passed);
+        Assert.True(ecologyBandBudget.Passed);
+        Assert.True(treeBandBudget.Passed);
 
         var worldGenerator = new WorldLayerGenerator();
         var hasDenseForest = false;

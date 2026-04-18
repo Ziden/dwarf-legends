@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\DwarfFortress.GameLogic\DwarfFortress.GameLogic.csproj" />
     <ProjectReference Include="..\DwarfFortress.WorldGen\DwarfFortress.WorldGen.csproj" />
   </ItemGroup>
 

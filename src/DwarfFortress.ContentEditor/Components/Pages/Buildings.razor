@@ -31,6 +31,14 @@ else if (_editing != null)
                 <label class="form-label">Construction Time</label>
                 <InputNumber class="form-control form-control-sm" @bind-Value="_editing.ConstructionTime" />
             </div>
+            <div class="col-md-2">
+                <label class="form-label">Residence Capacity</label>
+                <InputNumber class="form-control form-control-sm" @bind-Value="_editing.ResidenceCapacity" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Produced Smoke ID</label>
+                <InputText class="form-control form-control-sm" @bind-Value="_editing.ProducedSmokeId" />
+            </div>
         </div>
 
         <div class="row g-2 mb-3">
@@ -42,12 +50,47 @@ else if (_editing != null)
             </div>
         </div>
 
+        <div class="row g-2 mb-3">
+            <div class="col-md-5">
+                <label class="form-label">Auto Stockpile Tags</label>
+                <InputText class="form-control form-control-sm" Value="@_stockpileTagsText" ValueChanged="OnStockpileTagsChanged" ValueExpression="() => _stockpileTagsText" />
+            </div>
+        </div>
+
+        <h6 class="mb-1">Visual Profile</h6>
+        @if (_editing.VisualProfile is null)
+        {
+            <button type="button" class="btn btn-outline-secondary btn-sm mb-3" @onclick="EnsureVisualProfile">+ Add Visual Profile</button>
+        }
+        else
+        {
+            <div class="row g-2 mb-3 align-items-center">
+                <div class="col-md-3">
+                    <label class="form-label">Archetype</label>
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.VisualProfile.Archetype" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Palette</label>
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.VisualProfile.Palette" />
+                </div>
+                <div class="col-auto d-flex align-items-end">
+                    <div class="form-check mb-1">
+                        <InputCheckbox class="form-check-input" @bind-Value="_editing.VisualProfile.HideRoofOnHover" id="hideRoofOnHover" />
+                        <label class="form-check-label" for="hideRoofOnHover">Hide roof on hover</label>
+                    </div>
+                </div>
+                <div class="col-auto d-flex align-items-end">
+                    <button type="button" class="btn btn-outline-danger btn-sm mb-1" @onclick="ClearVisualProfile">Remove</button>
+                </div>
+            </div>
+        }
+
         <h6 class="mb-1">Construction Inputs <button type="button" class="btn btn-outline-secondary btn-sm ms-2" @onclick="AddConstructionInput">+ Add</button></h6>
         @for (int i = 0; i < _editing.ConstructionInputs.Count; i++)
         {
             var idx = i;
             <div class="row g-2 mb-2 align-items-center">
-                <div class="col-md-5">
+                <div class="col-md-4">
                     <InputText class="form-control form-control-sm"
                                Value="@TagsDisplay(_editing.ConstructionInputs[idx].Tags)"
                                ValueChanged="@(v => _editing.ConstructionInputs[idx].Tags = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList())"
@@ -55,10 +98,43 @@ else if (_editing != null)
                                placeholder="tags" />
                 </div>
                 <div class="col-md-2">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.ConstructionInputs[idx].ItemDefId" placeholder="item id" />
+                </div>
+                <div class="col-md-2">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.ConstructionInputs[idx].MaterialId" placeholder="material id" />
+                </div>
+                <div class="col-md-2">
                     <InputNumber class="form-control form-control-sm" @bind-Value="_editing.ConstructionInputs[idx].Qty" />
                 </div>
                 <div class="col-auto">
                     <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.ConstructionInputs.RemoveAt(idx)">✕</button>
+                </div>
+            </div>
+        }
+
+        <h6 class="mb-1 mt-3">Discovery Inputs <button type="button" class="btn btn-outline-secondary btn-sm ms-2" @onclick="AddDiscoveryInput">+ Add</button></h6>
+        @for (int i = 0; i < _editing.DiscoveryInputs.Count; i++)
+        {
+            var idx = i;
+            <div class="row g-2 mb-2 align-items-center">
+                <div class="col-md-4">
+                    <InputText class="form-control form-control-sm"
+                               Value="@TagsDisplay(_editing.DiscoveryInputs[idx].Tags)"
+                               ValueChanged="@(v => _editing.DiscoveryInputs[idx].Tags = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList())"
+                               ValueExpression="@(() => TagsDisplay(_editing.DiscoveryInputs[idx].Tags))"
+                               placeholder="tags" />
+                </div>
+                <div class="col-md-2">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.DiscoveryInputs[idx].ItemDefId" placeholder="item id" />
+                </div>
+                <div class="col-md-2">
+                    <InputText class="form-control form-control-sm" @bind-Value="_editing.DiscoveryInputs[idx].MaterialId" placeholder="material id" />
+                </div>
+                <div class="col-md-2">
+                    <InputNumber class="form-control form-control-sm" @bind-Value="_editing.DiscoveryInputs[idx].Qty" />
+                </div>
+                <div class="col-auto">
+                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.DiscoveryInputs.RemoveAt(idx)">âœ•</button>
                 </div>
             </div>
         }
@@ -87,6 +163,33 @@ else if (_editing != null)
                 </div>
                 <div class="col-auto">
                     <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.Footprint.RemoveAt(idx)">✕</button>
+                </div>
+            </div>
+        }
+
+        <h6 class="mb-1 mt-3">Entries <button type="button" class="btn btn-outline-secondary btn-sm ms-2" @onclick="AddEntry">+ Add Entry</button></h6>
+        @for (int i = 0; i < _editing.Entries.Count; i++)
+        {
+            var idx = i;
+            <div class="row g-2 mb-1 align-items-center">
+                <div class="col-auto"><label class="form-label mb-0">X</label></div>
+                <div class="col-md-1">
+                    <InputNumber class="form-control form-control-sm" @bind-Value="_editing.Entries[idx].X" />
+                </div>
+                <div class="col-auto"><label class="form-label mb-0">Y</label></div>
+                <div class="col-md-1">
+                    <InputNumber class="form-control form-control-sm" @bind-Value="_editing.Entries[idx].Y" />
+                </div>
+                <div class="col-md-2">
+                    <InputSelect class="form-select form-select-sm" @bind-Value="_editing.Entries[idx].OutwardDirection">
+                        <option value="north">north</option>
+                        <option value="south">south</option>
+                        <option value="east">east</option>
+                        <option value="west">west</option>
+                    </InputSelect>
+                </div>
+                <div class="col-auto">
+                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => _editing.Entries.RemoveAt(idx)">âœ•</button>
                 </div>
             </div>
         }
@@ -143,6 +246,7 @@ else
     private List<TileModel> _tiles = [];
     private BuildingModel? _editing;
     private string _tagsText = "";
+    private string _stockpileTagsText = "";
     private string _feedback = "";
 
     protected override void OnInitialized()
@@ -151,18 +255,40 @@ else
         _tiles = DataSvc.LoadTiles();
     }
 
-    private void AddNew() { _editing = new BuildingModel(); _tagsText = ""; }
+    private void AddNew()
+    {
+        _editing = new BuildingModel();
+        _tagsText = "";
+        _stockpileTagsText = "";
+    }
 
     private void Edit(BuildingModel b)
     {
         _editing = new BuildingModel
         {
-            Id = b.Id, DisplayName = b.DisplayName, IsWorkshop = b.IsWorkshop, ConstructionTime = b.ConstructionTime,
+            Id = b.Id,
+            DisplayName = b.DisplayName,
+            IsWorkshop = b.IsWorkshop,
+            ConstructionTime = b.ConstructionTime,
+            ProducedSmokeId = b.ProducedSmokeId,
+            ResidenceCapacity = b.ResidenceCapacity,
             Tags = [..b.Tags],
             Footprint = b.Footprint.Select(f => new FootprintTile { X = f.X, Y = f.Y, Tile = f.Tile }).ToList(),
-            ConstructionInputs = b.ConstructionInputs.Select(i => new BuildingInput { Tags = [..i.Tags], Qty = i.Qty }).ToList(),
+            ConstructionInputs = b.ConstructionInputs.Select(CloneInput).ToList(),
+            DiscoveryInputs = b.DiscoveryInputs.Select(CloneInput).ToList(),
+            Entries = b.Entries.Select(e => new BuildingEntryModel { X = e.X, Y = e.Y, OutwardDirection = e.OutwardDirection }).ToList(),
+            AutoStockpileAcceptedTags = [..b.AutoStockpileAcceptedTags],
+            VisualProfile = b.VisualProfile is null
+                ? null
+                : new BuildingVisualProfileModel
+                {
+                    Archetype = b.VisualProfile.Archetype,
+                    Palette = b.VisualProfile.Palette,
+                    HideRoofOnHover = b.VisualProfile.HideRoofOnHover,
+                },
         };
         _tagsText = string.Join(", ", b.Tags);
+        _stockpileTagsText = string.Join(", ", b.AutoStockpileAcceptedTags);
     }
 
     private void OnTagsChanged(string v)
@@ -174,7 +300,30 @@ else
     private static string TagsDisplay(List<string> tags) => string.Join(", ", tags);
 
     private void AddConstructionInput() => _editing!.ConstructionInputs.Add(new BuildingInput());
+    private void AddDiscoveryInput() => _editing!.DiscoveryInputs.Add(new BuildingInput());
     private void AddFootprintTile()     => _editing!.Footprint.Add(new FootprintTile());
+    private void AddEntry() => _editing!.Entries.Add(new BuildingEntryModel());
+
+    private void EnsureVisualProfile()
+        => _editing!.VisualProfile = new BuildingVisualProfileModel();
+
+    private void ClearVisualProfile()
+        => _editing!.VisualProfile = null;
+
+    private void OnStockpileTagsChanged(string v)
+    {
+        _stockpileTagsText = v;
+        _editing!.AutoStockpileAcceptedTags = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    private static BuildingInput CloneInput(BuildingInput input)
+        => new()
+        {
+            Tags = [..input.Tags],
+            Qty = input.Qty,
+            ItemDefId = input.ItemDefId,
+            MaterialId = input.MaterialId,
+        };
 
     private void SaveBuilding()
     {

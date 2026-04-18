@@ -41,10 +41,19 @@ public sealed class DrinkStrategy : IJobStrategy
         var map = ctx.Get<WorldMap>();
         var itemSystem = ctx.TryGet<ItemSystem>();
         var reservedDrink = ResolveReservedDrink(job, itemSystem);
-        if (DrinkItemLocator.FindReachableDrinkItem(ctx, map, dwarf.Position.Position, reservedDrink) is not null)
-            return true;
+        if (reservedDrink is not null)
+        {
+            if (reservedDrink.CarriedByEntityId == dwarfId)
+                return true;
+
+            if (reservedDrink.CarriedByEntityId >= 0)
+                return false;
+
+            return ItemPickupHelper.CanReachForPickup(map, dwarf.Position.Position, reservedDrink);
+        }
 
         return DrinkSourceLocator.CanDrinkAt(map, dwarf.Position.Position)
+            || DrinkSourceLocator.IsDrinkableWaterTile(map, job.TargetPos)
             || TryResolveDrinkTileTarget(ctx, map, dwarf.Position.Position, out _);
     }
 
@@ -56,13 +65,26 @@ public sealed class DrinkStrategy : IJobStrategy
         var itemSystem = ctx.TryGet<ItemSystem>();
         var origin = dwarf.Position.Position;
         var reservedDrink = ResolveReservedDrink(job, itemSystem);
-        var drink = DrinkItemLocator.FindReachableDrinkItem(ctx, map, origin, reservedDrink);
-        if (reservedDrink is not null && (drink is null || drink.Id != reservedDrink.Id))
+        if (reservedDrink is not null && reservedDrink.CarriedByEntityId >= 0 && reservedDrink.CarriedByEntityId != dwarfId)
+            return Array.Empty<ActionStep>();
+
+        var drink = reservedDrink is not null && ItemPickupHelper.CanReachForPickup(map, origin, reservedDrink)
+            ? reservedDrink
+            : null;
+        if (reservedDrink is not null && drink is null)
             ReleaseReserved(job, ctx);
 
         if (drink is not null)
         {
             ReserveDrink(job, drink);
+
+            if (drink.CarriedByEntityId == dwarfId)
+            {
+                return new ActionStep[]
+                {
+                    new WorkAtStep(Duration: 1f, RequiredPosition: ItemPickupHelper.ResolveConsumeWorkPosition(drink)),
+                };
+            }
 
             return new ActionStep[]
             {
@@ -80,7 +102,9 @@ public sealed class DrinkStrategy : IJobStrategy
             };
         }
 
-        if (!TryResolveDrinkTileTarget(ctx, map, origin, out var drinkTile))
+        var drinkTile = job.TargetPos;
+        if (!DrinkSourceLocator.IsDrinkableWaterTile(map, drinkTile)
+            && !TryResolveDrinkTileTarget(ctx, map, origin, out drinkTile))
             return Array.Empty<ActionStep>();
 
         return new ActionStep[]
@@ -139,10 +163,14 @@ public sealed class DrinkStrategy : IJobStrategy
             return true;
 
         var fortressLocations = ctx.TryGet<FortressLocationSystem>();
-        if (fortressLocations is null || !fortressLocations.TryGetClosestDrinkLocation(out drinkTile))
+        if (fortressLocations is null || !fortressLocations.TryGetClosestDrinkLocation(out var fallbackDrinkTile))
+        {
+            drinkTile = origin;
             return false;
+        }
 
-        return DrinkSourceLocator.IsDrinkableWaterTile(map, drinkTile);
+        drinkTile = fallbackDrinkTile;
+        return DrinkSourceLocator.TryFindReachableDrinkStandPosition(map, origin, drinkTile, out _);
     }
 
     private static void ReleaseReserved(Job job, GameContext ctx)

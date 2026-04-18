@@ -11,6 +11,8 @@ public static class SystemIds
     public const string EntityEventLogSystem = "entity_event_log_system";
     public const string FortressAnnouncementSystem = "fortress_announcement_system";
     public const string WorldMap           = "world_map";
+    public const string ChunkActivationManager = "chunk_activation_manager";
+    public const string ChunkPreviewStreamingService = "chunk_preview_streaming_service";
     public const string MapGenerationService = "map_generation_service";
     public const string BuildingSystem     = "building_system";
     public const string ItemSystem         = "item_system";

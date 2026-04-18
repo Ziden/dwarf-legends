@@ -84,7 +84,7 @@ public sealed class SleepStrategy : IJobStrategy
         if (buildingSystem is not null)
         {
             var beds = buildingSystem.GetAll()
-                .Where(b => b.BuildingDefId == BuildingDefIds.Bed)
+                .Where(b => b.IsComplete && b.BuildingDefId == BuildingDefIds.Bed)
                 .OrderBy(b => b.Origin.ManhattanDistanceTo(dwarfPos))
                 .ToList();
 
@@ -153,6 +153,7 @@ public sealed class SleepStrategy : IJobStrategy
             foreach (var building in buildingSystem.GetAll())
             {
                 if (building.BuildingDefId == BuildingDefIds.Bed &&
+                    building.IsComplete &&
                     building.Origin.ManhattanDistanceTo(pos) <= 1)
                 {
                     score += 100; // Very high priority for beds
@@ -179,6 +180,8 @@ public sealed class SleepStrategy : IJobStrategy
             foreach (var building in buildingSystem.GetAll())
             {
                 if (building.Origin.Z == pos.Z &&
+                    building.IsComplete &&
+                    building.IsWorkshop &&
                     building.Origin.ManhattanDistanceTo(pos) <= 3)
                 {
                     score += 3;
@@ -210,7 +213,8 @@ public sealed class SleepStrategy : IJobStrategy
         if (buildingSystem is null) return false;
 
         return buildingSystem.GetAll()
-            .Any(b => b.BuildingDefId == BuildingDefIds.Bed &&
+            .Any(b => b.IsComplete &&
+                      b.BuildingDefId == BuildingDefIds.Bed &&
                       b.Origin.ManhattanDistanceTo(pos) <= 2);
     }
 
@@ -223,7 +227,7 @@ public sealed class SleepStrategy : IJobStrategy
             return null;
 
         var assignedHouse = buildingSystem.GetById(dwarf.Residence.HomeBuildingId);
-        if (assignedHouse is null)
+        if (assignedHouse is null || !assignedHouse.IsComplete)
             return null;
 
         var dataManager = ctx.TryGet<DataManager>();

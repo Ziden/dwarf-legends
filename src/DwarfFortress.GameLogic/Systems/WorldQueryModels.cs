@@ -31,7 +31,8 @@ public sealed record TileView(
     byte PlantGrowthStage,
     byte PlantYieldLevel,
     byte PlantSeedLevel,
-    bool IsVisible);
+    bool IsVisible,
+    bool IsPreview = false);
 public sealed record NeedView(string Id, float Level);
 public sealed record StatView(string Id, float Value);
 public sealed record SkillView(string Id, int Level, float Xp, float XpForNextLevel);
@@ -134,6 +135,7 @@ public sealed record BuildingView(
     string BuildingDefId,
     Vec3i Origin,
     bool IsWorkshop,
+    bool IsComplete,
     int StoredItemCount,
     string? MaterialId,
     BuildingRotation Rotation,

@@ -21,6 +21,7 @@ public static class PixelArtFactory
     private const string UseSpritesEnvVar = "DF_USE_SPRITES";
     private const string Strict2DArtEnvVar = "DF_STRICT_2D_ART";
     private const int DefaultOutlineThickness = 2;
+    private const float VegetationCutoutAlphaThreshold = 0.5f;
     private enum PlantVisualKind : byte
     {
         GenericGround = 0,
@@ -377,7 +378,7 @@ public static class PixelArtFactory
         if (growthStage == 0 || seedLevel > 0)
         {
             DrawPlantSeedOverlay(image, visualKind, stem, leaf, accent);
-            return CreateOutlinedTexture(image, outline);
+            return CreateVegetationCutoutTexture(image, outline);
         }
 
         switch (visualKind)
@@ -411,7 +412,7 @@ public static class PixelArtFactory
                 break;
         }
 
-        return CreateOutlinedTexture(image, outline);
+        return CreateVegetationCutoutTexture(image, outline);
     }
 
     private static void DrawPlantSeedOverlay(Image image, PlantVisualKind visualKind, Color stem, Color leaf, Color accent)
@@ -2347,11 +2348,11 @@ public static class PixelArtFactory
 
         // Leaf cluster details
         FillRect(image, new Rect2I(20, 18, 2, 2), new Color(0.30f, 0.70f, 0.28f));
-        FillRect(image, new Rect2I(32, 12, 3, 3), new Color(0.33f, 0.75f, 0.31f, 0.85f));
+        FillRect(image, new Rect2I(32, 12, 3, 3), new Color(0.33f, 0.75f, 0.31f));
         FillRect(image, new Rect2I(40, 22, 2, 2), new Color(0.28f, 0.68f, 0.26f));
         FillRect(image, new Rect2I(26, 24, 2, 2), new Color(0.14f, 0.42f, 0.16f));
 
-        return CreateOutlinedTexture(image, new Color(0.07f, 0.20f, 0.08f, 0.95f));
+        return CreateVegetationCutoutTexture(image, new Color(0.07f, 0.20f, 0.08f));
     }
 
     private static Texture2D MakeTree(string? materialId)
@@ -2397,7 +2398,7 @@ public static class PixelArtFactory
         FillRect(image, new Rect2I(40, 22, 2, 2), palette.Accent);
         FillRect(image, new Rect2I(26, 24, 2, 2), palette.Accent);
 
-        return CreateOutlinedTexture(image, palette.Outline);
+        return CreateVegetationCutoutTexture(image, palette.Outline);
     }
 
     private static Texture2D MakeStair()
@@ -3977,6 +3978,30 @@ public static class PixelArtFactory
     {
         OutlineOpaqueSilhouette(image, outlineColor, DefaultOutlineThickness);
         return ImageTexture.CreateFromImage(image);
+    }
+
+    private static Texture2D CreateVegetationCutoutTexture(Image image, Color outlineColor)
+    {
+        QuantizeAlpha(image, VegetationCutoutAlphaThreshold);
+        OutlineOpaqueSilhouette(image, new Color(outlineColor.R, outlineColor.G, outlineColor.B, 1f), DefaultOutlineThickness);
+        QuantizeAlpha(image, VegetationCutoutAlphaThreshold);
+        return ImageTexture.CreateFromImage(image);
+    }
+
+    private static void QuantizeAlpha(Image image, float threshold)
+    {
+        var width = image.GetWidth();
+        var height = image.GetHeight();
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
+        {
+            var pixel = image.GetPixel(x, y);
+            var alpha = pixel.A >= threshold ? 1f : 0f;
+            if (Mathf.IsEqualApprox(pixel.A, alpha))
+                continue;
+
+            image.SetPixel(x, y, new Color(pixel.R, pixel.G, pixel.B, alpha));
+        }
     }
 
     private static void OutlineOpaqueSilhouette(Image image, Color color, int thickness)

@@ -61,6 +61,10 @@ public sealed class RegionLayerGeneratorTests
             Assert.InRange(tile.MoistureBand, 0f, 1f);
             Assert.InRange(tile.FlowAccumulationBand, 0f, 1f);
             Assert.InRange(tile.RiverDischarge, 0f, 12f);
+            AssertEcologyProfileBounds(tile.EcologyEdges.North);
+            AssertEcologyProfileBounds(tile.EcologyEdges.East);
+            AssertEcologyProfileBounds(tile.EcologyEdges.South);
+            AssertEcologyProfileBounds(tile.EcologyEdges.West);
             if (tile.HasRiver)
             {
                 Assert.True(tile.RiverDischarge >= 1f);
@@ -1319,6 +1323,14 @@ public sealed class RegionLayerGeneratorTests
         }
 
         return sb.ToString();
+    }
+
+    private static void AssertEcologyProfileBounds(EcologyEdgeProfile profile)
+    {
+        Assert.InRange(profile.VegetationDensity, 0f, 1f);
+        Assert.InRange(profile.VegetationSuitability, 0f, 1f);
+        Assert.InRange(profile.SoilDepth, 0f, 1f);
+        Assert.InRange(profile.Groundwater, 0f, 1f);
     }
 
     private static int CountRiverTiles(GeneratedRegionMap map)

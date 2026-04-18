@@ -17,7 +17,7 @@ public static class SelectionRequirementHelper
     {
         var itemSystem = simulation.Context.Get<ItemSystem>();
         var dataManager = simulation.Context.Get<DataManager>();
-        var available = itemSystem.GetUsableItems().ToList();
+        var available = itemSystem.GetFulfillmentCandidates(ItemAvailabilityScope.Owned).ToList();
 
         var requirements = inputs
             .SelectMany(input => Enumerable.Repeat(input.RequiredTags, input.Quantity))

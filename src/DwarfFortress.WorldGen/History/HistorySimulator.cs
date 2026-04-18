@@ -610,11 +610,11 @@ public sealed class HistorySimulator : IHistorySimulator
 
     private static string ResolveCapitalSiteKind(WorldLoreConfig cfg)
     {
-        if (cfg.SiteKinds.Any(site => string.Equals(site.Id, "fortress", StringComparison.OrdinalIgnoreCase)))
-            return "fortress";
+        if (cfg.SiteKinds.Any(site => string.Equals(site.Id, SiteKindIds.Fortress, StringComparison.OrdinalIgnoreCase)))
+            return SiteKindIds.Fortress;
         if (cfg.SiteKinds.Count > 0)
             return cfg.SiteKinds[0].Id;
-        return "capital";
+        return SiteKindIds.Capital;
     }
 
     private static float ScoreSiteCandidate(
@@ -642,25 +642,21 @@ public sealed class HistorySimulator : IHistorySimulator
         Random rng)
     {
         if (cfg.SiteKinds.Count == 0)
-            return "settlement";
+            return SiteKindIds.Settlement;
 
         var kindIds = cfg.SiteKinds.Select(site => site.Id).ToArray();
         if (tile.MountainCover >= 0.65f || tile.Relief >= 0.70f)
         {
             var rocky = kindIds.FirstOrDefault(id =>
-                id.Contains("watch", StringComparison.OrdinalIgnoreCase) ||
-                id.Contains("cave", StringComparison.OrdinalIgnoreCase) ||
-                id.Contains("ruin", StringComparison.OrdinalIgnoreCase));
+                SiteKindIds.HasGarrisonSemantics(id) ||
+                SiteKindIds.HasMiningSemantics(id));
             if (rocky is not null)
                 return rocky;
         }
 
         if (tile.HasRiver || tile.DrainageBand >= 0.66f)
         {
-            var riparian = kindIds.FirstOrDefault(id =>
-                id.Contains("fortress", StringComparison.OrdinalIgnoreCase) ||
-                id.Contains("hamlet", StringComparison.OrdinalIgnoreCase) ||
-                id.Contains("shrine", StringComparison.OrdinalIgnoreCase));
+            var riparian = kindIds.FirstOrDefault(SiteKindIds.HasRiparianSettlementSemantics);
             if (riparian is not null)
                 return riparian;
         }
@@ -668,8 +664,8 @@ public sealed class HistorySimulator : IHistorySimulator
         if (civilization.IsHostile)
         {
             var hostile = kindIds.FirstOrDefault(id =>
-                id.Contains("cave", StringComparison.OrdinalIgnoreCase) ||
-                id.Contains("watch", StringComparison.OrdinalIgnoreCase));
+                SiteKindIds.HasMiningSemantics(id) ||
+                SiteKindIds.HasGarrisonSemantics(id));
             if (hostile is not null)
                 return hostile;
         }
@@ -1540,19 +1536,13 @@ public sealed class HistorySimulator : IHistorySimulator
     }
 
     private static bool HasGarrisonSiteKind(string siteKind)
-        => siteKind.Contains("watch", StringComparison.OrdinalIgnoreCase) ||
-           siteKind.Contains("fortress", StringComparison.OrdinalIgnoreCase) ||
-           siteKind.Contains("cave", StringComparison.OrdinalIgnoreCase);
+        => SiteKindIds.HasGarrisonSemantics(siteKind);
 
     private static bool HasAgrarianSiteKind(string siteKind)
-        => siteKind.Contains("hamlet", StringComparison.OrdinalIgnoreCase) ||
-           siteKind.Contains("village", StringComparison.OrdinalIgnoreCase) ||
-           siteKind.Contains("shrine", StringComparison.OrdinalIgnoreCase);
+        => SiteKindIds.HasAgrarianSemantics(siteKind);
 
     private static bool HasMiningSiteKind(string siteKind)
-        => siteKind.Contains("cave", StringComparison.OrdinalIgnoreCase) ||
-           siteKind.Contains("mine", StringComparison.OrdinalIgnoreCase) ||
-           siteKind.Contains("ruin", StringComparison.OrdinalIgnoreCase);
+        => SiteKindIds.HasMiningSemantics(siteKind);
 
     private static int MinimumPopulationForSite(string siteKind)
         => HasGarrisonSiteKind(siteKind) ? 4 : 6;

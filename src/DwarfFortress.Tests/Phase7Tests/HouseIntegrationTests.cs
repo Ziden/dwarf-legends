@@ -16,6 +16,30 @@ namespace DwarfFortress.GameLogic.Tests.Phase7Tests;
 public sealed class HouseIntegrationTests
 {
     [Fact]
+    public void House_Definition_Is_A_2x2_Wooden_Hut_With_Two_Log_Cost()
+    {
+        var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
+        var data = sim.Context.Get<DataManager>();
+
+        var houseDef = data.Buildings.Get(BuildingDefIds.House);
+        var input = Assert.Single(houseDef.ConstructionInputs);
+
+        Assert.Equal("Hut", houseDef.DisplayName);
+        Assert.Equal(2, input.Quantity);
+        Assert.True(input.RequiredTags.Contains(TagIds.Log));
+        Assert.Equal(
+            new[] { new Vec2i(0, 0), new Vec2i(1, 0), new Vec2i(0, 1), new Vec2i(1, 1) },
+            houseDef.Footprint.Select(tile => tile.Offset).ToArray());
+        Assert.All(houseDef.Footprint, tile => Assert.Equal(TileDefIds.WoodFloor, tile.TileDefId));
+        var entry = Assert.Single(houseDef.Entries);
+        Assert.Equal(new Vec2i(1, 1), entry.Offset);
+        Assert.Equal(Vec2i.South, entry.OutwardDirection);
+        Assert.NotNull(houseDef.VisualProfile);
+        Assert.Equal(BuildingVisualArchetypes.Hut, houseDef.VisualProfile!.Archetype);
+        Assert.True(houseDef.VisualProfile.HideRoofOnHover);
+    }
+
+    [Fact]
     public void SpatialIndexSystem_Indexes_All_House_Footprint_Tiles()
     {
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
@@ -27,6 +51,80 @@ public sealed class HouseIntegrationTests
 
         foreach (var position in BuildingPlacementGeometry.EnumerateWorldFootprint(houseDef, house.Origin, house.Rotation))
             Assert.Equal(house.Id, spatial.GetBuildingAt(position));
+    }
+
+    [Fact]
+    public void BuildingSystem_Requires_Two_Logs_To_Place_Hut()
+    {
+        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
+        var rejections = new List<BuildingPlacementRejectedEvent>();
+        sim.Context.EventBus.On<BuildingPlacementRejectedEvent>(rejection => rejections.Add(rejection));
+
+        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(1, 1, 0));
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(BuildingDefIds.House, new Vec3i(10, 10, 0)));
+
+        Assert.Null(sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(10, 10, 0)));
+        Assert.Contains(rejections, rejection => rejection.BuildingDefId == BuildingDefIds.House && rejection.Reason == "Missing construction materials.");
+
+        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(2, 1, 0));
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(BuildingDefIds.House, new Vec3i(10, 10, 0)));
+
+        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(10, 10, 0));
+        Assert.NotNull(building);
+        Assert.False(building!.IsComplete);
+        Assert.True(building.ConstructionJobId > 0);
+    }
+
+    [Fact]
+    public void BuildingSystem_Can_Place_Hut_Using_Boxed_Logs()
+    {
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
+        var boxPos = new Vec3i(4, 4, 0);
+        var box = new Box(er.NextId(), boxPos);
+        er.Register(box);
+
+        var firstLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, boxPos);
+        var secondLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, boxPos);
+        items.StoreItemInBox(firstLog.Id, box);
+        items.StoreItemInBox(secondLog.Id, box);
+
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(BuildingDefIds.House, new Vec3i(10, 10, 0)));
+
+        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(10, 10, 0));
+        Assert.NotNull(building);
+        Assert.False(items.TryGetItem(firstLog.Id, out _));
+        Assert.False(items.TryGetItem(secondLog.Id, out _));
+        Assert.Empty(box.Container.StoredItemIds);
+    }
+
+    [Fact]
+    public void ConstructionJob_Completes_Hut_And_Creates_Owned_Stockpile()
+    {
+        var (sim, map, er, js, _) = TestFixtures.BuildFullSim();
+        var stockpiles = sim.Context.Get<StockpileManager>();
+        var builder = new Dwarf(er.NextId(), "Builder", new Vec3i(10, 9, 0));
+        er.Register(builder);
+
+        var hut = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.House,
+            new Vec3i(10, 10, 0),
+            materialStart: new Vec3i(1, 1, 0),
+            complete: false);
+
+        Assert.False(hut.IsComplete);
+        Assert.True(map.GetTile(hut.Origin).IsUnderConstruction);
+        Assert.Null(stockpiles.GetByOwnerBuilding(hut.Id));
+        var constructionJobId = hut.ConstructionJobId;
+        Assert.Contains(js.GetAllJobs(), job => job.Id == constructionJobId && job.JobDefId == JobDefIds.Construct);
+
+        for (var i = 0; i < 300 && !hut.IsComplete; i++)
+            sim.Tick(0.1f);
+
+        Assert.True(hut.IsComplete);
+        Assert.False(map.GetTile(hut.Origin).IsUnderConstruction);
+        Assert.NotNull(stockpiles.GetByOwnerBuilding(hut.Id));
+        Assert.DoesNotContain(js.GetAllJobs(), job => job.Id == constructionJobId);
     }
 
     [Fact]
@@ -115,16 +213,6 @@ public sealed class HouseIntegrationTests
                 IsPassable = true,
                 IsDesignated = true,
             },
-            [houseOrigin + new Vec3i(2, 0, 0)] = new TileData
-            {
-                TileDefId = TileDefIds.Grass,
-                MaterialId = "soil",
-                PlantDefId = "berry_bush",
-                PlantGrowthStage = PlantGrowthStages.Mature,
-                PlantYieldLevel = 1,
-                PlantSeedLevel = 1,
-                IsPassable = true,
-            },
             [houseOrigin + new Vec3i(0, 1, 0)] = new TileData
             {
                 TileDefId = TileDefIds.WoodFloor,
@@ -137,38 +225,6 @@ public sealed class HouseIntegrationTests
             {
                 TileDefId = TileDefIds.StoneBrick,
                 MaterialId = "limestone",
-                IsPassable = true,
-            },
-            [houseOrigin + new Vec3i(2, 1, 0)] = new TileData
-            {
-                TileDefId = TileDefIds.Soil,
-                MaterialId = "soil",
-                PlantDefId = "sunroot",
-                PlantGrowthStage = PlantGrowthStages.Young,
-                PlantGrowthProgressSeconds = 12f,
-                IsPassable = true,
-            },
-            [houseOrigin + new Vec3i(0, 2, 0)] = new TileData
-            {
-                TileDefId = TileDefIds.Grass,
-                MaterialId = "soil",
-                PlantDefId = "grass_patch",
-                PlantGrowthStage = PlantGrowthStages.Sprout,
-                IsPassable = true,
-            },
-            [houseOrigin + new Vec3i(1, 2, 0)] = new TileData
-            {
-                TileDefId = TileDefIds.StoneFloor,
-                MaterialId = "granite",
-                OreItemDefId = ItemDefIds.IronOre,
-                IsPassable = true,
-            },
-            [houseOrigin + new Vec3i(2, 2, 0)] = new TileData
-            {
-                TileDefId = TileDefIds.StoneFloor,
-                MaterialId = "limestone",
-                CoatingMaterialId = "ash",
-                CoatingAmount = 0.45f,
                 IsPassable = true,
             },
         };
@@ -192,9 +248,9 @@ public sealed class HouseIntegrationTests
 
         var doorwayOutside = new Vec3i(9, 11, 0);
         var doorwayInside = new Vec3i(10, 11, 0);
-        var blockedOutside = new Vec3i(13, 11, 0);
-        var blockedInside = new Vec3i(12, 11, 0);
-        var pathToInterior = Pathfinder.FindPath(map, blockedOutside, new Vec3i(11, 11, 0));
+        var blockedOutside = new Vec3i(12, 11, 0);
+        var blockedInside = new Vec3i(11, 11, 0);
+        var pathToInterior = Pathfinder.FindPath(map, blockedOutside, new Vec3i(11, 10, 0));
 
         Assert.True(map.CanTraverse(doorwayOutside, doorwayInside));
         Assert.False(map.CanTraverse(blockedOutside, blockedInside));
@@ -268,12 +324,9 @@ public sealed class HouseIntegrationTests
         var houseMove = Assert.IsType<MoveToStep>(withoutBed[0]);
 
         Assert.Equal(house.Id, dwarf.Residence.HomeBuildingId);
-        Assert.Equal(new Vec3i(10, 11, 0), houseMove.Target);
+        Assert.Equal(new Vec3i(10, 10, 0), houseMove.Target);
 
-        items.CreateItem(ItemDefIds.Bed, "wood", new Vec3i(6, 13, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: BuildingDefIds.Bed,
-            Origin: new Vec3i(7, 13, 0)));
+        TestFixtures.PlaceBuildingWithMaterials(sim, BuildingDefIds.Bed, new Vec3i(7, 13, 0), materialStart: new Vec3i(6, 13, 0));
 
         var withBed = new SleepStrategy().GetSteps(job, dwarf.Id, sim.Context);
         var bedMove = Assert.IsType<MoveToStep>(withBed[0]);
@@ -369,17 +422,13 @@ public sealed class HouseIntegrationTests
         BuildingRotation rotation = BuildingRotation.None,
         string materialId = MaterialIds.Wood)
     {
-        AddConstructionLogs(items, logStart, materialId);
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(BuildingDefIds.House, origin, rotation));
-        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(origin);
-        Assert.NotNull(building);
-        return building!;
-    }
-
-    private static void AddConstructionLogs(ItemSystem items, Vec3i start, string materialId)
-    {
-        for (var i = 0; i < 6; i++)
-            items.CreateItem(ItemDefIds.Log, materialId, new Vec3i(start.X + i, start.Y, start.Z));
+        return TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.House,
+            origin,
+            rotation,
+            logStart,
+            materialId);
     }
 
     private static bool StoreItemInStockpile(ItemSystem items, StockpileManager stockpiles, Item item, out Vec3i slot)

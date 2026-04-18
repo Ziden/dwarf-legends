@@ -1,3 +1,4 @@
+﻿using DwarfFortress.WorldGen.Analysis;
 using DwarfFortress.WorldGen.Generation;
 using DwarfFortress.WorldGen.Ids;
 using DwarfFortress.WorldGen.Local;
@@ -382,11 +383,11 @@ public sealed class LocalLayerGeneratorTests
         var generator = new LocalLayerGenerator();
         var map = generator.Generate(region, new RegionCoord(2, 2, 2, 2), new LocalGenerationSettings(48, 48, 8));
 
-        var westEdgeWater = CountSurfaceWaterAtX(map, 1);
-        var eastEdgeWater = CountSurfaceWaterAtX(map, map.Width - 2);
+        var westEdgeWater = CountSurfaceWaterAtX(map, 0);
+        var eastEdgeWater = CountSurfaceWaterAtX(map, map.Width - 1);
 
-        Assert.True(westEdgeWater > 0, $"Expected anchored river water near west edge, got {westEdgeWater}.");
-        Assert.True(eastEdgeWater > 0, $"Expected anchored river water near east edge, got {eastEdgeWater}.");
+        Assert.True(westEdgeWater > 0, $"Expected anchored river water on west edge, got {westEdgeWater}.");
+        Assert.True(eastEdgeWater > 0, $"Expected anchored river water on east edge, got {eastEdgeWater}.");
     }
 
     [Fact]
@@ -420,11 +421,11 @@ public sealed class LocalLayerGeneratorTests
             new RegionCoord(1, 1, 1, 1),
             new LocalGenerationSettings(48, 48, 8));
 
-        var northEdgeWater = CountSurfaceWaterAtY(map, 1);
-        var southEdgeWater = CountSurfaceWaterAtY(map, map.Height - 2);
+        var northEdgeWater = CountSurfaceWaterAtY(map, 0);
+        var southEdgeWater = CountSurfaceWaterAtY(map, map.Height - 1);
 
-        Assert.True(northEdgeWater > 0, $"Expected anchored river water near north edge, got {northEdgeWater}.");
-        Assert.True(southEdgeWater > 0, $"Expected anchored river water near south edge, got {southEdgeWater}.");
+        Assert.True(northEdgeWater > 0, $"Expected anchored river water on north edge, got {northEdgeWater}.");
+        Assert.True(southEdgeWater > 0, $"Expected anchored river water on south edge, got {southEdgeWater}.");
     }
 
     [Fact]
@@ -451,8 +452,8 @@ public sealed class LocalLayerGeneratorTests
             new RegionCoord(0, 0, 0, 0),
             new LocalGenerationSettings(48, 48, 8));
 
-        var northCenter = ResolveSurfaceWaterCenterAtY(map, 1);
-        var southCenter = ResolveSurfaceWaterCenterAtY(map, map.Height - 2);
+        var northCenter = ResolveSurfaceWaterCenterAtY(map, 0);
+        var southCenter = ResolveSurfaceWaterCenterAtY(map, map.Height - 1);
 
         Assert.NotNull(northCenter);
         Assert.NotNull(southCenter);
@@ -497,10 +498,10 @@ public sealed class LocalLayerGeneratorTests
             new RegionCoord(1, 1, 1, 1),
             new LocalGenerationSettings(48, 48, 8));
 
-        var northEdgeWater = CountSurfaceWaterAtY(map, 1);
-        var southEdgeWater = CountSurfaceWaterAtY(map, map.Height - 2);
+        var northEdgeWater = CountSurfaceWaterAtY(map, 0);
+        var southEdgeWater = CountSurfaceWaterAtY(map, map.Height - 1);
 
-        Assert.True(northEdgeWater > 0, $"Expected inherited river contract near north edge, got {northEdgeWater}.");
+        Assert.True(northEdgeWater > 0, $"Expected inherited river contract on north edge, got {northEdgeWater}.");
         Assert.True(southEdgeWater > 0, $"Expected single-edge fallback to continue river through south edge, got {southEdgeWater}.");
     }
 
@@ -542,19 +543,363 @@ public sealed class LocalLayerGeneratorTests
         var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
         var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
 
-        var matchingFamilies = 0;
-        for (var y = 0; y < left.Height; y++)
-        {
-            var leftFamily = ResolveSurfaceFamily(left.GetTile(left.Width - 1, y, 0).TileDefId);
-            var rightFamily = ResolveSurfaceFamily(right.GetTile(0, y, 0).TileDefId);
-            if (string.Equals(leftFamily, rightFamily, StringComparison.Ordinal))
-                matchingFamilies++;
-        }
-
-        var matchRatio = matchingFamilies / (float)left.Height;
+        var comparison = EmbarkBoundaryContinuity.CompareBoundary(left, right, isEastNeighbor: true);
+        var matchRatio = 1f - comparison.SurfaceFamilyMismatchRatio;
         Assert.True(
-            matchRatio >= 0.45f,
+            matchRatio >= 0.90f,
             $"Expected neighboring embarks to share boundary surface families, got ratio {matchRatio:F2}.");
+    }
+
+    [Fact]
+    public void Generate_AdjacentForestCells_PreserveBoundaryEcologyProfiles()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7264,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.ConiferForest,
+            parentForestCover: 0.90f,
+            parentMountainCover: 0.12f,
+            parentRelief: 0.26f,
+            parentMoistureBand: 0.72f,
+            parentTemperatureBand: 0.48f);
+
+        var tile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.DenseConifer,
+            SurfaceClassId: RegionSurfaceClassIds.Grass,
+            Slope: 28,
+            HasRiver: false,
+            HasLake: false,
+            VegetationDensity: 0.90f,
+            ResourceRichness: 0.46f,
+            SoilDepth: 0.70f,
+            Groundwater: 0.74f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.88f,
+            TemperatureBand: 0.48f,
+            MoistureBand: 0.72f);
+        region.SetTile(0, 0, tile);
+        region.SetTile(1, 0, tile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        var comparison = EmbarkBoundaryContinuity.CompareBoundary(left, right, isEastNeighbor: true);
+
+        Assert.True(
+            comparison.EcologyMismatchRatio <= 0.35f,
+            $"Expected neighboring forest embarks to keep boundary ecology aligned, got ecology mismatch ratio {comparison.EcologyMismatchRatio:F2}.");
+        Assert.True(
+            comparison.TreeMismatchRatio <= 0.35f,
+            $"Expected neighboring forest embarks to keep boundary tree occupancy aligned, got tree mismatch ratio {comparison.TreeMismatchRatio:F2}.");
+    }
+
+    [Fact]
+    public void Generate_AdjacentContrastingEcologyCells_BlendTreeBandsAcrossEmbarkSeam()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7298,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.TemperatePlains,
+            parentForestCover: 0.52f,
+            parentMountainCover: 0.12f,
+            parentRelief: 0.18f,
+            parentMoistureBand: 0.46f,
+            parentTemperatureBand: 0.56f);
+
+        var lushTile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.TemperateWoodland,
+            SurfaceClassId: RegionSurfaceClassIds.Grass,
+            Slope: 20,
+            HasRiver: false,
+            HasLake: false,
+            VegetationDensity: 0.82f,
+            ResourceRichness: 0.44f,
+            SoilDepth: 0.68f,
+            Groundwater: 0.70f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.80f,
+            TemperatureBand: 0.56f,
+            MoistureBand: 0.64f);
+        var sparseTile = lushTile with
+        {
+            BiomeVariantId = RegionBiomeVariantIds.TemperatePlainsOpen,
+            VegetationDensity = 0.18f,
+            VegetationSuitability = 0.22f,
+            SoilDepth = 0.30f,
+            Groundwater = 0.16f,
+            MoistureBand = 0.18f,
+        };
+
+        region.SetTile(0, 0, lushTile);
+        region.SetTile(1, 0, sparseTile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        const int seamBandWidth = 6;
+        var leftFarTrees = CountSurfaceTilesInXRange(left, GeneratedTileDefIds.Tree, 0, seamBandWidth - 1);
+        var leftSeamTrees = CountSurfaceTilesInXRange(left, GeneratedTileDefIds.Tree, left.Width - seamBandWidth, left.Width - 1);
+        var rightSeamTrees = CountSurfaceTilesInXRange(right, GeneratedTileDefIds.Tree, 0, seamBandWidth - 1);
+        var rightFarTrees = CountSurfaceTilesInXRange(right, GeneratedTileDefIds.Tree, right.Width - seamBandWidth, right.Width - 1);
+        var bandTileCount = seamBandWidth * left.Height;
+        var leftSeamRatio = leftSeamTrees / (float)bandTileCount;
+        var rightSeamRatio = rightSeamTrees / (float)bandTileCount;
+
+        Assert.True(
+            leftSeamTrees < leftFarTrees,
+            $"Expected the lush-side embark to thin tree cover toward the dry seam ({leftSeamTrees} seam vs {leftFarTrees} far-west)."
+        );
+        Assert.True(
+            rightSeamTrees >= rightFarTrees,
+            $"Expected the sparse-side embark to avoid losing tree cover near the lush seam ({rightSeamTrees} seam vs {rightFarTrees} far-east)."
+        );
+        Assert.True(
+            Math.Abs(leftSeamRatio - rightSeamRatio) <= 0.12f,
+            $"Expected seam-adjacent tree bands to converge to similar densities, got {leftSeamRatio:F2} vs {rightSeamRatio:F2}."
+        );
+    }
+
+    [Fact]
+    public void Generate_AdjacentRiverCells_PreserveBoundaryWaterProfiles()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7342,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.TemperatePlains,
+            parentForestCover: 0.20f,
+            parentMountainCover: 0.10f,
+            parentRelief: 0.18f,
+            parentMoistureBand: 0.68f,
+            parentTemperatureBand: 0.56f,
+            parentHasRiver: true,
+            parentRiverOrder: 5,
+            parentRiverDischarge: 0.82f);
+
+        var tile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.TemperateWoodland,
+            SurfaceClassId: RegionSurfaceClassIds.Grass,
+            Slope: 18,
+            HasRiver: true,
+            RiverEdges: RegionRiverEdges.West | RegionRiverEdges.East,
+            RiverOrder: 5,
+            RiverDischarge: 7.5f,
+            HasLake: false,
+            VegetationDensity: 0.42f,
+            ResourceRichness: 0.46f,
+            SoilDepth: 0.58f,
+            Groundwater: 0.72f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.58f,
+            TemperatureBand: 0.56f,
+            MoistureBand: 0.68f);
+        region.SetTile(0, 0, tile);
+        region.SetTile(1, 0, tile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        var comparison = EmbarkBoundaryContinuity.CompareBoundary(left, right, isEastNeighbor: true);
+
+        Assert.True(
+            comparison.WaterMismatchRatio <= 0.20f,
+            $"Expected neighboring river embarks to keep boundary water aligned, got water mismatch ratio {comparison.WaterMismatchRatio:F2}.");
+        Assert.True(
+            comparison.SurfaceFamilyMismatchRatio <= 0.20f,
+            $"Expected river seams to preserve compatible boundary surfaces, got mismatch ratio {comparison.SurfaceFamilyMismatchRatio:F2}.");
+    }
+
+    [Fact]
+    public void Generate_AdjacentWetlandCells_BlendSurfaceWaterBandsAcrossEmbarkSeam()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7376,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.MistyMarsh,
+            parentForestCover: 0.44f,
+            parentMountainCover: 0.06f,
+            parentRelief: 0.10f,
+            parentMoistureBand: 0.84f,
+            parentTemperatureBand: 0.58f);
+
+        var tile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.FloodplainMarsh,
+            SurfaceClassId: RegionSurfaceClassIds.Mud,
+            Slope: 10,
+            HasRiver: false,
+            HasLake: true,
+            VegetationDensity: 0.70f,
+            ResourceRichness: 0.44f,
+            SoilDepth: 0.74f,
+            Groundwater: 0.86f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.78f,
+            TemperatureBand: 0.58f,
+            MoistureBand: 0.82f);
+        region.SetTile(0, 0, tile);
+        region.SetTile(1, 0, tile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        var comparison = EmbarkBoundaryContinuity.CompareBoundary(left, right, isEastNeighbor: true);
+        const int seamBandWidth = 6;
+        var leftSeamWater = CountSurfaceWaterInXRange(left, left.Width - seamBandWidth, left.Width - 1);
+        var rightSeamWater = CountSurfaceWaterInXRange(right, 0, seamBandWidth - 1);
+        var bandTileCount = seamBandWidth * left.Height;
+        var leftSeamRatio = leftSeamWater / (float)bandTileCount;
+        var rightSeamRatio = rightSeamWater / (float)bandTileCount;
+
+        Assert.True(
+            (leftSeamWater + rightSeamWater) > 0,
+            "Expected wetland generation to place some surface water in the seam-adjacent bands.");
+        Assert.True(
+            Math.Abs(leftSeamRatio - rightSeamRatio) <= 0.15f,
+            $"Expected adjacent wetland seam bands to converge to similar water densities, got {leftSeamRatio:F2} vs {rightSeamRatio:F2}.");
+        Assert.True(
+            comparison.WaterMismatchRatio <= 0.25f,
+            $"Expected wetland seam water mismatch ratio <= 0.25, got {comparison.WaterMismatchRatio:F2}.");
+    }
+
+    [Fact]
+    public void Generate_AdjacentWetlandCells_PreservePlantEcologyBandsAcrossEmbarkSeam()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7388,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.MistyMarsh,
+            parentForestCover: 0.36f,
+            parentMountainCover: 0.04f,
+            parentRelief: 0.08f,
+            parentMoistureBand: 0.82f,
+            parentTemperatureBand: 0.60f);
+
+        var tile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.FloodplainMarsh,
+            SurfaceClassId: RegionSurfaceClassIds.Mud,
+            Slope: 12,
+            HasRiver: false,
+            HasLake: true,
+            VegetationDensity: 0.74f,
+            ResourceRichness: 0.42f,
+            SoilDepth: 0.78f,
+            Groundwater: 0.88f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.82f,
+            TemperatureBand: 0.60f,
+            MoistureBand: 0.84f);
+        region.SetTile(0, 0, tile);
+        region.SetTile(1, 0, tile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        const int seamBandWidth = 4;
+        var comparison = EmbarkBoundaryContinuity.CompareBoundaryBand(left, right, isEastNeighbor: true, bandWidth: seamBandWidth);
+        var leftPlants = CountSurfacePlantsInXRange(left, left.Width - seamBandWidth, left.Width - 1);
+        var rightPlants = CountSurfacePlantsInXRange(right, 0, seamBandWidth - 1);
+        var bandTileCount = seamBandWidth * left.Height;
+        var leftPlantRatio = leftPlants / (float)bandTileCount;
+        var rightPlantRatio = rightPlants / (float)bandTileCount;
+
+        Assert.True(
+            leftPlants + rightPlants > 0,
+            "Expected wetland seam bands to contain some surface vegetation.");
+        Assert.True(
+            Math.Abs(leftPlantRatio - rightPlantRatio) <= 0.14f,
+            $"Expected wetland seam-band plant density to converge, got {leftPlantRatio:F2} vs {rightPlantRatio:F2}.");
+        Assert.True(
+            comparison.EcologyMismatchRatio <= 0.45f,
+            $"Expected wetland seam-band ecology mismatch ratio <= 0.45, got {comparison.EcologyMismatchRatio:F2}.");
+    }
+
+    [Fact]
+    public void Generate_AdjacentGrassAndSandCells_BlendSurfaceIntentAcrossEmbarkSeam()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 7418,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.TemperatePlains,
+            parentForestCover: 0.18f,
+            parentMountainCover: 0.08f,
+            parentRelief: 0.18f,
+            parentMoistureBand: 0.26f,
+            parentTemperatureBand: 0.58f);
+
+        var grassTile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.TemperatePlainsOpen,
+            SurfaceClassId: RegionSurfaceClassIds.Grass,
+            Slope: 24,
+            HasRiver: false,
+            HasLake: false,
+            VegetationDensity: 0.42f,
+            ResourceRichness: 0.38f,
+            SoilDepth: 0.54f,
+            Groundwater: 0.34f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.48f,
+            TemperatureBand: 0.56f,
+            MoistureBand: 0.34f);
+        var sandTile = grassTile with
+        {
+            SurfaceClassId = RegionSurfaceClassIds.Sand,
+            SoilDepth = 0.24f,
+            Groundwater = 0.14f,
+            MoistureBand = 0.14f,
+            VegetationDensity = 0.16f,
+            VegetationSuitability = 0.18f,
+        };
+
+        region.SetTile(0, 0, grassTile);
+        region.SetTile(1, 0, sandTile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        var comparison = EmbarkBoundaryContinuity.CompareBoundary(left, right, isEastNeighbor: true);
+        var leftWestSand = CountSurfaceTilesInXRange(left, GeneratedTileDefIds.Sand, 0, (left.Width / 4) - 1);
+        var leftEastSand = CountSurfaceTilesInXRange(left, GeneratedTileDefIds.Sand, left.Width - (left.Width / 4), left.Width - 1);
+        var rightWestSand = CountSurfaceTilesInXRange(right, GeneratedTileDefIds.Sand, 0, (right.Width / 4) - 1);
+        var rightEastSand = CountSurfaceTilesInXRange(right, GeneratedTileDefIds.Sand, right.Width - (right.Width / 4), right.Width - 1);
+
+        Assert.True(
+            comparison.SurfaceFamilyMismatchRatio <= 0.20f,
+            $"Expected contrasting neighboring surface intents to blend across the embark seam, got surface mismatch ratio {comparison.SurfaceFamilyMismatchRatio:F2}.");
+        Assert.True(
+            leftEastSand > leftWestSand,
+            $"Expected sand influence to increase toward the seam inside the grass-side embark ({leftEastSand} east-band sand vs {leftWestSand} west-band sand).\n");
+        Assert.True(
+            rightWestSand < rightEastSand,
+            $"Expected grass-side influence to reduce sand near the seam inside the sand-side embark ({rightWestSand} west-band sand vs {rightEastSand} east-band sand).\n");
     }
 
     [Fact]
@@ -893,6 +1238,58 @@ public sealed class LocalLayerGeneratorTests
     }
 
     [Fact]
+    public void Generate_AdjacentRockyCells_PreserveOutcropBandsAcrossEmbarkSeam()
+    {
+        var region = new GeneratedRegionMap(
+            seed: 4187,
+            width: 2,
+            height: 1,
+            worldCoord: new WorldCoord(0, 0),
+            parentMacroBiomeId: MacroBiomeIds.Highland,
+            parentForestCover: 0.08f,
+            parentMountainCover: 0.84f,
+            parentRelief: 0.76f,
+            parentMoistureBand: 0.30f,
+            parentTemperatureBand: 0.42f);
+        var tile = new GeneratedRegionTile(
+            BiomeVariantId: RegionBiomeVariantIds.RockyHighland,
+            SurfaceClassId: RegionSurfaceClassIds.Stone,
+            Slope: 188,
+            HasRiver: false,
+            HasLake: false,
+            VegetationDensity: 0.10f,
+            ResourceRichness: 0.82f,
+            SoilDepth: 0.18f,
+            Groundwater: 0.20f,
+            HasRoad: false,
+            HasSettlement: false,
+            VegetationSuitability: 0.14f,
+            TemperatureBand: 0.42f,
+            MoistureBand: 0.24f);
+        region.SetTile(0, 0, tile);
+        region.SetTile(1, 0, tile);
+
+        var settings = new LocalGenerationSettings(48, 48, 8, OutcropBias: 0.90f);
+        var generator = new LocalLayerGenerator();
+        var left = generator.Generate(region, new RegionCoord(0, 0, 0, 0), settings);
+        var right = generator.Generate(region, new RegionCoord(0, 0, 1, 0), settings);
+
+        const int seamBandWidth = 6;
+        var leftSeamStoneWalls = CountSurfaceTilesInXRange(left, GeneratedTileDefIds.StoneWall, left.Width - seamBandWidth, left.Width - 1);
+        var rightSeamStoneWalls = CountSurfaceTilesInXRange(right, GeneratedTileDefIds.StoneWall, 0, seamBandWidth - 1);
+        var leftStoneWalls = CountSurfaceTiles(left, GeneratedTileDefIds.StoneWall);
+        var rightStoneWalls = CountSurfaceTiles(right, GeneratedTileDefIds.StoneWall);
+        var bandTileCount = seamBandWidth * left.Height;
+        var leftSeamRatio = leftSeamStoneWalls / (float)bandTileCount;
+        var rightSeamRatio = rightSeamStoneWalls / (float)bandTileCount;
+
+        Assert.True(leftStoneWalls > 0 && rightStoneWalls > 0, "Expected rocky local maps to contain surface outcrops.");
+        Assert.True(
+            Math.Abs(leftSeamRatio - rightSeamRatio) <= 0.10f,
+            $"Expected seam-adjacent rocky outcrop bands to converge, got {leftSeamRatio:F2} vs {rightSeamRatio:F2}.");
+    }
+
+    [Fact]
     public void Generate_LocalHistoryContext_CarvesSettlementAndRoadContinuity_WithoutRegionBooleans()
     {
         var region = new GeneratedRegionMap(
@@ -991,12 +1388,57 @@ public sealed class LocalLayerGeneratorTests
         return count;
     }
 
+    private static int CountSurfaceTilesInXRange(GeneratedEmbarkMap map, string tileDefId, int startX, int endX)
+    {
+        var clampedStartX = Math.Clamp(startX, 0, map.Width - 1);
+        var clampedEndX = Math.Clamp(endX, clampedStartX, map.Width - 1);
+        var count = 0;
+        for (var x = clampedStartX; x <= clampedEndX; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (map.GetTile(x, y, 0).TileDefId == tileDefId)
+                count++;
+        }
+
+        return count;
+    }
+
     private static int CountSurfaceWaterAtX(GeneratedEmbarkMap map, int x)
     {
         var count = 0;
         for (var y = 0; y < map.Height; y++)
         {
             if (map.GetTile(x, y, 0).TileDefId == GeneratedTileDefIds.Water)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountSurfaceWaterInXRange(GeneratedEmbarkMap map, int startX, int endX)
+    {
+        var clampedStartX = Math.Clamp(startX, 0, map.Width - 1);
+        var clampedEndX = Math.Clamp(endX, clampedStartX, map.Width - 1);
+        var count = 0;
+        for (var x = clampedStartX; x <= clampedEndX; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (map.GetTile(x, y, 0).TileDefId == GeneratedTileDefIds.Water)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountSurfacePlantsInXRange(GeneratedEmbarkMap map, int startX, int endX)
+    {
+        var clampedStartX = Math.Clamp(startX, 0, map.Width - 1);
+        var clampedEndX = Math.Clamp(endX, clampedStartX, map.Width - 1);
+        var count = 0;
+        for (var x = clampedStartX; x <= clampedEndX; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (!string.IsNullOrWhiteSpace(map.GetTile(x, y, 0).PlantDefId))
                 count++;
         }
 
@@ -1036,35 +1478,5 @@ public sealed class LocalLayerGeneratorTests
         return weightedX / weight;
     }
 
-    private static string ResolveSurfaceFamily(string tileDefId)
-    {
-        if (tileDefId == GeneratedTileDefIds.Water)
-            return "water";
-        if (tileDefId == GeneratedTileDefIds.Magma)
-            return "magma";
-        if (tileDefId == GeneratedTileDefIds.Tree)
-            return "tree";
-        if (tileDefId == GeneratedTileDefIds.Sand)
-            return "sand";
-        if (tileDefId == GeneratedTileDefIds.Mud)
-            return "mud";
-        if (tileDefId == GeneratedTileDefIds.Snow)
-            return "snow";
-        if (tileDefId == GeneratedTileDefIds.Soil || tileDefId == GeneratedTileDefIds.Grass)
-            return "soil";
-        if (tileDefId == GeneratedTileDefIds.StoneFloor ||
-            tileDefId == GeneratedTileDefIds.GraniteWall ||
-            tileDefId == GeneratedTileDefIds.LimestoneWall ||
-            tileDefId == GeneratedTileDefIds.SandstoneWall ||
-            tileDefId == GeneratedTileDefIds.BasaltWall ||
-            tileDefId == GeneratedTileDefIds.ShaleWall ||
-            tileDefId == GeneratedTileDefIds.SlateWall ||
-            tileDefId == GeneratedTileDefIds.MarbleWall)
-        {
-            return "stone";
-        }
-
-        return tileDefId;
-    }
-
 }
+

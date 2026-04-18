@@ -31,7 +31,9 @@ public static class GameBootstrapper
 
         // ── World ─────────────────────────────────────────────────────────
         sim.RegisterSystem(new WorldMap());
+        sim.RegisterSystem(new ChunkActivationManager());
         sim.RegisterSystem(new MapGenerationService());
+        sim.RegisterSystem(new ChunkPreviewStreamingService());
         sim.RegisterSystem(new WorldHistoryRuntimeService());
         sim.RegisterSystem(new WorldMacroStateService());
         sim.RegisterSystem(new WorldLoreSystem());

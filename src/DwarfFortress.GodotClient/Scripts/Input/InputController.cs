@@ -4,6 +4,7 @@ using DwarfFortress.GameLogic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Systems;
+using DwarfFortress.GodotClient.Presentation;
 using Godot;
 
 namespace DwarfFortress.GodotClient.Input;
@@ -43,6 +44,7 @@ public partial class InputController : Node
     public int?      SelectedCreatureId { get; private set; }
     public int?      SelectedBuildingId { get; private set; }
     public int?      SelectedItemId     { get; private set; }
+    public HoverSelectionMode CurrentHoverSelectionMode => _externalHoverSelectionMode;
 
     // â”€â”€ Set by BuildMenu/StockpileDialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     public string?   PendingBuildingDefId  { get; set; }
@@ -306,13 +308,9 @@ public partial class InputController : Node
                 {
                     SelectArea(selection.from, selection.to);
                 }
-                else if (_externalHoverSelectionMode == HoverSelectionMode.RawTile)
-                {
-                    SelectRawTile(DragStart.Value.X, DragStart.Value.Y);
-                }
                 else
                 {
-                    TrySelectAt(DragStart.Value.X, DragStart.Value.Y);
+                    TrySelectAt(DragStart.Value.X, DragStart.Value.Y, _externalHoverSelectionMode);
                 }
                 break;
         }
@@ -335,6 +333,9 @@ public partial class InputController : Node
     }
 
     private void TrySelectAt(int x, int y)
+        => TrySelectAt(x, y, HoverSelectionMode.QueryTile);
+
+    private void TrySelectAt(int x, int y, HoverSelectionMode selectionMode)
     {
         if (_query is null)
         {
@@ -347,68 +348,29 @@ public partial class InputController : Node
             return;
         }
 
-        var tile = _query.QueryTile(new Vec3i(x, y, _currentZ));
-
-        var dwarf = tile.Dwarves.FirstOrDefault();
-        if (dwarf is not null)
+        var target = HoverSelectionResolver.ResolvePrimaryTarget(_query, new Vector2I(x, y), _currentZ, selectionMode);
+        switch (target.Kind)
         {
-            ClearAreaSelection();
-            SelectedDwarfId    = dwarf.Id;
-            SelectedCreatureId = null;
-            SelectedBuildingId = null;
-            SelectedItemId     = null;
-            SelectedTile       = new Vector2I(x, y);
-            TileSelectionCommitted?.Invoke(new Vec3i(x, y, _currentZ));
-            return;
-        }
+            case HoverWorldTargetKind.Dwarf when target.TargetId.HasValue && TrySelectDwarf(target.TargetId.Value):
+                return;
 
-        var creature = tile.Creatures.FirstOrDefault();
-        if (creature is not null)
-        {
-            ClearAreaSelection();
-            SelectedCreatureId = creature.Id;
-            SelectedDwarfId    = null;
-            SelectedBuildingId = null;
-            SelectedItemId     = null;
-            SelectedTile       = new Vector2I(x, y);
-            TileSelectionCommitted?.Invoke(new Vec3i(x, y, _currentZ));
-            return;
-        }
+            case HoverWorldTargetKind.Creature when target.TargetId.HasValue && TrySelectCreature(target.TargetId.Value):
+                return;
 
-        if (tile.Building is not null)
-        {
-            ClearAreaSelection();
-            SelectedBuildingId = tile.Building.Id;
-            SelectedDwarfId    = null;
-            SelectedCreatureId = null;
-            SelectedTile       = new Vector2I(x, y);
-            SelectedItemId     = null;
-            TileSelectionCommitted?.Invoke(new Vec3i(x, y, _currentZ));
-            return;
-        }
+            case HoverWorldTargetKind.Building when target.TargetId.HasValue && TrySelectBuilding(target.TargetId.Value):
+                return;
 
-        // Check for items on the ground
-        var item = tile.Items.FirstOrDefault();
-        if (item is not null)
-        {
-            ClearAreaSelection();
-            SelectedItemId     = item.Id;
-            SelectedDwarfId    = null;
-            SelectedCreatureId = null;
-            SelectedBuildingId = null;
-            SelectedTile       = new Vector2I(x, y);
-            TileSelectionCommitted?.Invoke(new Vec3i(x, y, _currentZ));
-            return;
-        }
+            case HoverWorldTargetKind.Item when target.TargetId.HasValue && TrySelectItem(target.TargetId.Value):
+                return;
 
-        // Nothing entity-like found â€” select the raw tile
-        ClearAreaSelection();
-        SelectedTile       = new Vector2I(x, y);
-        SelectedDwarfId    = null;
-        SelectedCreatureId = null;
-        SelectedBuildingId = null;
-        SelectedItemId     = null;
-        TileSelectionCommitted?.Invoke(new Vec3i(x, y, _currentZ));
+            case HoverWorldTargetKind.Tree:
+            case HoverWorldTargetKind.Plant:
+            case HoverWorldTargetKind.RawTile:
+            case HoverWorldTargetKind.None:
+            default:
+                SelectRawTile(x, y);
+                return;
+        }
     }
 
     private void SelectRawTile(int x, int y)

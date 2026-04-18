@@ -186,6 +186,48 @@ public sealed class DataServiceTests : IDisposable
         Assert.Equal(300f, reloaded[0].ConstructionTime);
     }
 
+    [Fact]
+    public void SaveBuildings_Preserves_Full_Building_Schema()
+    {
+        var buildings = Svc.LoadBuildings();
+        var smelter = buildings[0];
+        smelter.ResidenceCapacity = 3;
+        smelter.ProducedSmokeId = "smoke";
+        smelter.AutoStockpileAcceptedTags = ["food", "drink"];
+        smelter.ConstructionInputs =
+        [
+            new BuildingInput { Tags = ["stone"], Qty = 2, MaterialId = "iron" }
+        ];
+        smelter.DiscoveryInputs =
+        [
+            new BuildingInput { ItemDefId = "log", Qty = 1 }
+        ];
+        smelter.Entries =
+        [
+            new BuildingEntryModel { X = 0, Y = 0, OutwardDirection = "south" }
+        ];
+        smelter.VisualProfile = new BuildingVisualProfileModel
+        {
+            Archetype = "workshop",
+            Palette = "smelter",
+            HideRoofOnHover = true,
+        };
+
+        Svc.SaveBuildings(buildings);
+
+        var reloaded = Svc.LoadBuildings()[0];
+        Assert.Equal(3, reloaded.ResidenceCapacity);
+        Assert.Equal("smoke", reloaded.ProducedSmokeId);
+        Assert.Equal(["food", "drink"], reloaded.AutoStockpileAcceptedTags);
+        Assert.Equal(["stone"], reloaded.ConstructionInputs[0].Tags);
+        Assert.Equal("iron", reloaded.ConstructionInputs[0].MaterialId);
+        Assert.Equal("log", reloaded.DiscoveryInputs[0].ItemDefId);
+        Assert.Equal("south", reloaded.Entries[0].OutwardDirection);
+        Assert.NotNull(reloaded.VisualProfile);
+        Assert.Equal("workshop", reloaded.VisualProfile!.Archetype);
+        Assert.True(reloaded.VisualProfile.HideRoofOnHover);
+    }
+
     // ── JSON format ───────────────────────────────────────────────────────
 
     [Fact]

@@ -32,18 +32,15 @@ public sealed class CraftingTests
     {
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
 
-        CreateWorkshopLogs(items);
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(5, 5, 0)));
-
-        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0));
 
         items.CreateItem(ItemDefIds.Plank, "wood", new Vec3i(3, 1, 0));
         items.CreateItem(ItemDefIds.Plank, "wood", new Vec3i(4, 1, 0));
         sim.Context.Commands.Dispatch(new SetProductionOrderCommand(
-            WorkshopEntityId: workshop!.Id,
+            WorkshopEntityId: workshop.Id,
             RecipeDefId: "make_bed",
             Quantity: 1));
 
@@ -61,16 +58,13 @@ public sealed class CraftingTests
     {
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
 
-        CreateWorkshopLogs(items);
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(5, 5, 0)));
-
-        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0));
 
         var item = items.CreateItem(ItemDefIds.Plank, "wood", new Vec3i(2, 2, 0));
-        items.StoreItemInBuilding(item.Id, workshop!.Id, workshop.Origin);
+        items.StoreItemInBuilding(item.Id, workshop.Id, workshop.Origin);
 
         Assert.Equal(workshop.Id, item.ContainerBuildingId);
         Assert.Equal(workshop.Origin, item.Position.Position);
@@ -102,23 +96,16 @@ public sealed class CraftingTests
     {
         var (sim, map, _, js, items) = TestFixtures.BuildFullSim();
 
-        CreateWorkshopLogs(items);
-
-        // Place a carpenter workshop so RecipeSystem can resolve its position
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(5, 5, 0)));
-
-        // Find the placed building's ID
-        var bs        = sim.Context.Get<BuildingSystem>();
-        var workshop  = bs.GetByOrigin(new Vec3i(5, 5, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0));
 
         // Place a log so the recipe's ingredient is available
         items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(0, 0, 0));
 
         sim.Context.Commands.Dispatch(new SetProductionOrderCommand(
-            WorkshopEntityId: workshop!.Id,
+            WorkshopEntityId: workshop.Id,
             RecipeDefId:      "make_plank",
             Quantity:         1));
 
@@ -158,17 +145,13 @@ public sealed class CraftingTests
     {
         var (sim, _, _, js, items) = TestFixtures.BuildFullSim();
 
-        CreateWorkshopLogs(items);
-
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(5, 5, 0)));
-
-        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0));
 
         sim.Context.Commands.Dispatch(new SetProductionOrderCommand(
-            WorkshopEntityId: workshop!.Id,
+            WorkshopEntityId: workshop.Id,
             RecipeDefId: "make_bed",
             Quantity: 1));
 
@@ -189,19 +172,15 @@ public sealed class CraftingTests
         var dwarf = new Dwarf(er.NextId(), "Crafter", new Vec3i(5, 5, 0));
         er.Register(dwarf);
 
-        CreateWorkshopLogs(items);
-
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(5, 5, 0)));
-
-        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0));
 
         items.CreateItem(ItemDefIds.Log, "wood", new Vec3i(4, 5, 0));
 
         sim.Context.Commands.Dispatch(new SetProductionOrderCommand(
-            WorkshopEntityId: workshop!.Id,
+            WorkshopEntityId: workshop.Id,
             RecipeDefId: "make_plank",
             Quantity: 1));
 
@@ -223,21 +202,17 @@ public sealed class CraftingTests
 
         var dwarf = new Dwarf(er.NextId(), "Carpenter", new Vec3i(5, 5, 0));
         er.Register(dwarf);
-        CreateWorkshopLogs(items);
-
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(5, 5, 0)));
-
-        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0));
 
         items.CreateItem(ItemDefIds.Plank, "oak", new Vec3i(4, 5, 0));
         items.CreateItem(ItemDefIds.Plank, "pine", new Vec3i(4, 6, 0));
         items.CreateItem(ItemDefIds.Plank, "oak", new Vec3i(4, 7, 0));
 
         sim.Context.Commands.Dispatch(new SetProductionOrderCommand(
-            WorkshopEntityId: workshop!.Id,
+            WorkshopEntityId: workshop.Id,
             RecipeDefId: "make_bed",
             Quantity: 1));
 
@@ -258,22 +233,19 @@ public sealed class CraftingTests
         var dwarf = new Dwarf(er.NextId(), "Smelter", new Vec3i(6, 6, 0));
         er.Register(dwarf);
 
-        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(7, 6, 0));
-        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(8, 6, 0));
-        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(9, 6, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "smelter",
-            Origin: new Vec3i(6, 6, 0)));
-
-        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(6, 6, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.Smelter,
+            new Vec3i(6, 6, 0),
+            materialStart: new Vec3i(7, 6, 0),
+            materialId: MaterialIds.Granite);
 
         items.CreateItem(ItemDefIds.IronOre, "iron", new Vec3i(4, 6, 0));
         items.CreateItem(ItemDefIds.IronOre, "iron", new Vec3i(4, 7, 0));
         items.CreateItem(ItemDefIds.CoalOre, "coal", new Vec3i(4, 8, 0));
 
         sim.Context.Commands.Dispatch(new SetProductionOrderCommand(
-            WorkshopEntityId: workshop!.Id,
+            WorkshopEntityId: workshop.Id,
             RecipeDefId: "make_iron_bar",
             Quantity: 1));
 
@@ -293,11 +265,10 @@ public sealed class CraftingTests
     {
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
 
-        CreateWorkshopLogs(items);
-
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(5, 5, 0)));
+        TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0));
 
         Assert.NotNull(sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0)));
         Assert.DoesNotContain(items.GetAllItems(), item => item.DefId == ItemDefIds.Log);
@@ -308,15 +279,13 @@ public sealed class CraftingTests
     {
         var (sim, map, _, _, items) = TestFixtures.BuildFullSim();
 
-        CreateWorkshopLogs(items, "oak_wood");
+        var building = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0),
+            materialId: "oak_wood");
 
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
-            Origin: new Vec3i(5, 5, 0)));
-
-        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(5, 5, 0));
-        Assert.NotNull(building);
-        Assert.Equal("oak_wood", building!.MaterialId);
+        Assert.Equal("oak_wood", building.MaterialId);
         Assert.Equal("oak_wood", map.GetTile(new Vec3i(5, 5, 0)).MaterialId);
         Assert.Equal("oak_wood", map.GetTile(new Vec3i(6, 6, 0)).MaterialId);
     }
@@ -330,10 +299,11 @@ public sealed class CraftingTests
         dwarf.Needs.Sleep.SetLevel(0.05f);
         er.Register(dwarf);
 
-        items.CreateItem(ItemDefIds.Bed, "wood", new Vec3i(11, 10, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "bed",
-            Origin: new Vec3i(12, 10, 0)));
+        TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.Bed,
+            new Vec3i(12, 10, 0),
+            materialStart: new Vec3i(11, 10, 0));
 
         var job = new Job(1, JobDefIds.Sleep, dwarf.Position.Position, priority: 100);
         var steps = new SleepStrategy().GetSteps(job, dwarf.Id, sim.Context);
@@ -355,10 +325,11 @@ public sealed class CraftingTests
         dwarf.Needs.Sleep.SetLevel(0.05f);
         er.Register(dwarf);
 
-        items.CreateItem(ItemDefIds.Bed, "wood", new Vec3i(13, 10, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: BuildingDefIds.Bed,
-            Origin: new Vec3i(14, 10, 0)));
+        TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.Bed,
+            new Vec3i(14, 10, 0),
+            materialStart: new Vec3i(13, 10, 0));
 
         foreach (var pos in new[]
                  {
@@ -394,15 +365,16 @@ public sealed class CraftingTests
         var meal = items.CreateItem(ItemDefIds.Meal, "food", new Vec3i(9, 10, 0));
         meal.StockpileId = 1;
 
-        items.CreateItem(ItemDefIds.Table, "wood", new Vec3i(11, 10, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "table",
-            Origin: new Vec3i(12, 10, 0)));
-
-        items.CreateItem(ItemDefIds.Chair, "wood", new Vec3i(11, 11, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "chair",
-            Origin: new Vec3i(12, 11, 0)));
+        TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.Table,
+            new Vec3i(12, 10, 0),
+            materialStart: new Vec3i(11, 10, 0));
+        TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.Chair,
+            new Vec3i(12, 11, 0),
+            materialStart: new Vec3i(11, 11, 0));
 
         var job = new Job(1, JobDefIds.Eat, dwarf.Position.Position, priority: 100);
         var steps = new EatStrategy().GetSteps(job, dwarf.Id, sim.Context);
@@ -470,18 +442,4 @@ public sealed class CraftingTests
         Assert.Equal(0, map.GetTile(plantPos).PlantYieldLevel);
     }
 
-    private static void CreateWorkshopLogs(ItemSystem items, string materialId = "wood")
-    {
-        foreach (var pos in new[]
-                 {
-                     new Vec3i(1, 1, 0),
-                     new Vec3i(2, 1, 0),
-                     new Vec3i(1, 2, 0),
-                     new Vec3i(2, 2, 0),
-                     new Vec3i(1, 3, 0),
-                 })
-        {
-            items.CreateItem(ItemDefIds.Log, materialId, pos);
-        }
-    }
 }

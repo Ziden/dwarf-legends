@@ -204,7 +204,8 @@ public sealed class SleepSystem : IGameSystem
 
         var dwarfPos = dwarf.Position.Position;
         return buildingSystem.GetAll()
-            .Any(b => b.BuildingDefId == BuildingDefIds.Bed &&
+            .Any(b => b.IsComplete &&
+                      b.BuildingDefId == BuildingDefIds.Bed &&
                       b.Origin.ManhattanDistanceTo(dwarfPos) <= 2);
     }
 
@@ -414,6 +415,8 @@ public sealed class SleepSystem : IGameSystem
             foreach (var building in buildingSystem.GetAll())
             {
                 if (building.Origin.Z == pos.Z &&
+                    building.IsComplete &&
+                    building.IsWorkshop &&
                     building.Origin.ManhattanDistanceTo(pos) <= 3)
                 {
                     score += 3;

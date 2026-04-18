@@ -345,7 +345,7 @@ public static class WorldLoreGenerator
         state.History.Add(new HistoricalEventLoreState
         {
             Year = year,
-            Type = "treaty",
+            Type = HistoricalEventTypeIds.Treaty,
             Summary = $"{sides[0].Name} and {sides[1].Name} signed a border accord.",
             FactionAId = sides[0].Id,
             FactionBId = sides[1].Id,
@@ -377,7 +377,7 @@ public static class WorldLoreGenerator
         state.History.Add(new HistoricalEventLoreState
         {
             Year = year,
-            Type = "raid",
+            Type = HistoricalEventTypeIds.Raid,
             Summary = $"{attacker.Name} raided {target.Name}.",
             FactionAId = attacker.Id,
             SiteId = target.Id,
@@ -432,7 +432,7 @@ public static class WorldLoreGenerator
         state.History.Add(new HistoricalEventLoreState
         {
             Year = year,
-            Type = "founding",
+            Type = HistoricalEventTypeIds.Founding,
             Summary = $"{founder.Name} established a new trade outpost.",
             FactionAId = founder.Id,
         });
@@ -456,7 +456,7 @@ public static class WorldLoreGenerator
         state.History.Add(new HistoricalEventLoreState
         {
             Year = year,
-            Type = "skirmish",
+            Type = HistoricalEventTypeIds.Skirmish,
             Summary = $"{sides[0].Name} clashed with {sides[1].Name} over caravan rights.",
             FactionAId = sides[0].Id,
             FactionBId = sides[1].Id,
@@ -479,7 +479,7 @@ public static class WorldLoreGenerator
         state.History.Add(new HistoricalEventLoreState
         {
             Year = year,
-            Type = "crisis",
+            Type = HistoricalEventTypeIds.Crisis,
             Summary = text,
             SiteId = site.Id,
         });

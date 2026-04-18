@@ -155,7 +155,7 @@ public sealed class DiscoverySystem : IGameSystem
             return false;
 
         var itemSystem = _ctx.TryGet<ItemSystem>();
-        return itemSystem is not null && itemSystem.CanFulfillInputs(inputs);
+        return itemSystem is not null && itemSystem.CanFulfillInputs(inputs, ItemAvailabilityScope.Owned);
     }
 
     private bool IsInputEncountered(RecipeInput input)

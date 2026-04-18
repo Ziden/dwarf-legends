@@ -98,6 +98,8 @@ public static class TileInspectionFormatter
 
         sb.AppendLine($"[{Humanize(tile.TileDefId)}]");
         sb.AppendLine($"({tile.X}, {tile.Y}, z:{tile.Z})");
+        if (tile.IsPreview)
+            sb.AppendLine("  Read-only streamed preview");
         if (tile.MaterialId is not null)
             sb.AppendLine($"  {Humanize(tile.MaterialId)}");
         if (tile.IsDamp)
@@ -186,13 +188,15 @@ public static class TileInspectionFormatter
 
     private static string FormatTileSummary(TileView tile)
     {
+        string summary;
         if (!string.IsNullOrWhiteSpace(tile.PlantDefId) && tile.PlantGrowthStage >= 2)
-            return $"{Humanize(tile.PlantDefId!)} on {Humanize(tile.TileDefId)}";
+            summary = $"{Humanize(tile.PlantDefId!)} on {Humanize(tile.TileDefId)}";
+        else if (!string.IsNullOrWhiteSpace(tile.MaterialId))
+            summary = Humanize(tile.MaterialId!);
+        else
+            summary = Humanize(tile.TileDefId);
 
-        if (!string.IsNullOrWhiteSpace(tile.MaterialId))
-            return Humanize(tile.MaterialId!);
-
-        return Humanize(tile.TileDefId);
+        return tile.IsPreview ? $"{summary} (preview)" : summary;
     }
 
     private static string BuildPlantSummary(TileView tile)

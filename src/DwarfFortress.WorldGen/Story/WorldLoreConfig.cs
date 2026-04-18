@@ -51,37 +51,37 @@ public sealed class WorldLoreConfig
             [
                 new()
                 {
-                    Id = "fortress",
+                    Id = SiteKindIds.Fortress,
                     OwnerRule = SiteOwnerRules.TradeFocused,
                     Summary = "A fortified settlement controlling nearby routes.",
                 },
                 new()
                 {
-                    Id = "hamlet",
+                    Id = SiteKindIds.Hamlet,
                     OwnerRule = SiteOwnerRules.TradeFocused,
                     Summary = "A small settlement surviving through local trade.",
                 },
                 new()
                 {
-                    Id = "ruin",
+                    Id = SiteKindIds.Ruin,
                     OwnerRule = SiteOwnerRules.Random,
                     Summary = "A collapsed site where old records are still recoverable.",
                 },
                 new()
                 {
-                    Id = "shrine",
+                    Id = SiteKindIds.Shrine,
                     OwnerRule = SiteOwnerRules.TradeFocused,
                     Summary = "A sacred place tied to old oaths and taboos.",
                 },
                 new()
                 {
-                    Id = "cave",
+                    Id = SiteKindIds.Cave,
                     OwnerRule = SiteOwnerRules.Hostile,
                     Summary = "A dangerous site whose tunnels are only partly mapped.",
                 },
                 new()
                 {
-                    Id = "watchtower",
+                    Id = SiteKindIds.Watchtower,
                     OwnerRule = SiteOwnerRules.TradeFocused,
                     Summary = "A military outpost surveying the frontier.",
                 },

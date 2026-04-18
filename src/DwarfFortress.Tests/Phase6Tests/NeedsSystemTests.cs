@@ -1,6 +1,8 @@
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Entities.Components;
+using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Jobs.Strategies;
 using DwarfFortress.GameLogic.Systems;
@@ -377,5 +379,68 @@ public sealed class NeedsSystemTests
 
         Assert.Equal(dwarves.Count, criticalTimes.Count);
         Assert.True(criticalTimes.Values.Distinct().Count() > 1);
+    }
+
+    [Fact]
+    public void Tick_Records_Needs_Search_Spans_In_Profiler()
+    {
+        var (sim, _, er, _, _) = TestFixtures.BuildFullSim();
+        var dwarf = new Dwarf(er.NextId(), "ProfilerUrist", new Vec3i(4, 4, 0));
+        dwarf.Needs.Thirst.SetLevel(0.01f);
+        er.Register(dwarf);
+
+        sim.Tick(0.1f);
+
+        var frame = sim.Profiler.LatestFrame;
+        Assert.NotNull(frame);
+        var system = Assert.Single(frame!.Systems.Where(sample => sample.SystemId == SystemIds.NeedsSystem));
+
+        Assert.True(HasSpan(system.Spans, "needs_tick"));
+        Assert.True(HasSpan(system.Spans, "needs_dwarves"));
+        Assert.True(HasSpan(system.Spans, "check_thirst"));
+        Assert.True(HasSpan(system.Spans, "search_drink_job"));
+        Assert.True(HasSpan(system.Spans, "drink_item_search"));
+    }
+
+    [Fact]
+    public void Tick_Throttles_Repeated_Failed_Drink_Searches_Until_Retry_Window_Expires()
+    {
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
+
+        foreach (var drink in items.GetAllItems().Where(item => item.DefId == ItemDefIds.Drink).ToList())
+            items.DestroyItem(drink.Id);
+
+        var dwarf = new Dwarf(er.NextId(), "ParchedUrist", new Vec3i(4, 4, 0));
+        dwarf.Needs.Thirst.SetLevel(0.01f);
+        er.Register(dwarf);
+
+        sim.Tick(0.1f);
+        var firstFrame = sim.Profiler.LatestFrame;
+        Assert.NotNull(firstFrame);
+        var firstSystem = Assert.Single(firstFrame!.Systems.Where(sample => sample.SystemId == SystemIds.NeedsSystem));
+        Assert.True(HasSpan(firstSystem.Spans, "search_drink_job"));
+
+        sim.Tick(0.1f);
+        var throttledFrame = sim.Profiler.LatestFrame;
+        Assert.NotNull(throttledFrame);
+        var throttledSystem = Assert.Single(throttledFrame!.Systems.Where(sample => sample.SystemId == SystemIds.NeedsSystem));
+        Assert.False(HasSpan(throttledSystem.Spans, "search_drink_job"));
+
+        sim.Tick(1.0f);
+        var retryFrame = sim.Profiler.LatestFrame;
+        Assert.NotNull(retryFrame);
+        var retrySystem = Assert.Single(retryFrame!.Systems.Where(sample => sample.SystemId == SystemIds.NeedsSystem));
+        Assert.True(HasSpan(retrySystem.Spans, "search_drink_job"));
+    }
+
+    private static bool HasSpan(IReadOnlyList<ProfilerSpanSample> spans, string spanName)
+    {
+        foreach (var span in spans)
+        {
+            if (span.Name == spanName || HasSpan(span.Children, spanName))
+                return true;
+        }
+
+        return false;
     }
 }

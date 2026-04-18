@@ -5,9 +5,9 @@ namespace DwarfFortress.GodotClient.Rendering;
 
 public static class GroundTileSmoothingProfile
 {
-    public static TileTransitionRuleProfile<TileRenderData, GroundVisualData> Create(Func<string?, string?>? resolveGroundFromMaterial)
+    public static TileTransitionRuleProfile<GroundVisualData, GroundVisualData> Create()
         => new(
-            ResolveNeighborValue: tile => TerrainGroundResolver.ResolveGroundVisual(tile, resolveGroundFromMaterial),
+            ResolveNeighborValue: static ground => ground,
             CanSmoothBase: static ground => ground.IsNaturalBlendTile,
             ShouldBlendNeighbor: ShouldBlendNeighbor,
             ResolveCorner: ResolveCorner);

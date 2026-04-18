@@ -22,6 +22,7 @@ public sealed class HousingSystem : IGameSystem
     {
         _ctx = ctx;
         ctx.EventBus.On<BuildingPlacedEvent>(_ => _dirty = true);
+        ctx.EventBus.On<BuildingConstructionCompletedEvent>(_ => _dirty = true);
         ctx.EventBus.On<BuildingRemovedEvent>(_ => _dirty = true);
         ctx.EventBus.On<EntitySpawnedEvent>(OnEntitySpawned);
         ctx.EventBus.On<EntityKilledEvent>(_ => _dirty = true);
@@ -75,6 +76,7 @@ public sealed class HousingSystem : IGameSystem
             return;
 
         var houses = buildingSystem.GetAll()
+            .Where(building => building.IsComplete)
             .Select(building => (Building: building, Def: dataManager.Buildings.GetOrNull(building.BuildingDefId)))
             .Where(pair => pair.Def is { ResidenceCapacity: > 0 })
             .Select(pair => new HouseInfo(pair.Building, pair.Def!))

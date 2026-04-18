@@ -17,6 +17,12 @@ public record struct ItemMovedEvent    (int ItemId, Vec3i OldPos, Vec3i NewPos);
 public record struct ItemPickedUpEvent (int ItemId, string ItemDefId, int CarrierEntityId, Vec3i Position, Vec3i PreviousPosition = default, ItemCarryMode CarryMode = ItemCarryMode.None);
 public record struct ItemDroppedEvent  (int ItemId, string ItemDefId, int CarrierEntityId, Vec3i Position, Vec3i PreviousPosition = default, int ContainerBuildingId = -1);
 
+public enum ItemAvailabilityScope
+{
+    Accessible,
+    Owned,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -449,42 +455,45 @@ public sealed class ItemSystem : IGameSystem
     public IEnumerable<Item> GetUsableItems() =>
         _items.Values.Where(IsUsableItem);
 
+    public IEnumerable<Item> GetFulfillmentCandidates(ItemAvailabilityScope scope = ItemAvailabilityScope.Accessible)
+        => _items.Values.Where(item => IsFulfillmentCandidate(item, scope));
+
     public IEnumerable<Item> GetUnstoredUsableItems() =>
         GetUsableItems().Where(item => item.StockpileId < 0);
 
     public IEnumerable<Item> GetUnclaimedItems() => GetUnstoredUsableItems();
 
-    public bool CanFulfillInputs(IReadOnlyList<RecipeInput> inputs)
+    public bool CanFulfillInputs(IReadOnlyList<RecipeInput> inputs, ItemAvailabilityScope scope = ItemAvailabilityScope.Accessible)
     {
         var data = _ctx?.TryGet<DataManager>();
         return data is not null &&
-               RecipeResolver.TryMatchInputs(data, inputs, GetUsableItems().ToList(), out _);
+               RecipeResolver.TryMatchInputs(data, inputs, GetFulfillmentCandidates(scope).ToList(), out _);
     }
 
-    public bool CanFulfillRecipe(RecipeDef recipe)
+    public bool CanFulfillRecipe(RecipeDef recipe, ItemAvailabilityScope scope = ItemAvailabilityScope.Accessible)
     {
         var data = _ctx?.TryGet<DataManager>();
         if (data is null)
             return false;
 
-        return RecipeResolver.TryMatchRecipe(data, recipe, GetUsableItems().ToList(), out _, out _);
+        return RecipeResolver.TryMatchRecipe(data, recipe, GetFulfillmentCandidates(scope).ToList(), out _, out _);
     }
 
-    public bool TryReserveInputs(IReadOnlyList<RecipeInput> inputs, List<int> reservedIds)
+    public bool TryReserveInputs(IReadOnlyList<RecipeInput> inputs, List<int> reservedIds, ItemAvailabilityScope scope = ItemAvailabilityScope.Accessible)
     {
         var data = _ctx?.TryGet<DataManager>();
         if (data is null ||
-            !RecipeResolver.TryMatchInputs(data, inputs, GetUsableItems().ToList(), out var matchedItems))
+            !RecipeResolver.TryMatchInputs(data, inputs, GetFulfillmentCandidates(scope).ToList(), out var matchedItems))
             return false;
 
         return ClaimMatchedItems(matchedItems, reservedIds);
     }
 
-    public bool TryReserveRecipeInputs(RecipeDef recipe, List<int> reservedIds)
+    public bool TryReserveRecipeInputs(RecipeDef recipe, List<int> reservedIds, ItemAvailabilityScope scope = ItemAvailabilityScope.Accessible)
     {
         var data = _ctx?.TryGet<DataManager>();
         if (data is null ||
-            !RecipeResolver.TryMatchRecipe(data, recipe, GetUsableItems().ToList(), out var matchedItems, out _))
+            !RecipeResolver.TryMatchRecipe(data, recipe, GetFulfillmentCandidates(scope).ToList(), out var matchedItems, out _))
         {
             return false;
         }
@@ -503,15 +512,18 @@ public sealed class ItemSystem : IGameSystem
         return true;
     }
 
-    public bool TryConsumeInputs(IReadOnlyList<RecipeInput> inputs)
-        => TryConsumeInputs(inputs, out _);
+    public bool TryConsumeInputs(IReadOnlyList<RecipeInput> inputs, ItemAvailabilityScope scope = ItemAvailabilityScope.Accessible)
+        => TryConsumeInputs(inputs, out _, scope);
 
-    public bool TryConsumeInputs(IReadOnlyList<RecipeInput> inputs, out List<Item> consumedItems)
+    public bool TryConsumeInputs(
+        IReadOnlyList<RecipeInput> inputs,
+        out List<Item> consumedItems,
+        ItemAvailabilityScope scope = ItemAvailabilityScope.Accessible)
     {
         consumedItems = new List<Item>();
         var data = _ctx?.TryGet<DataManager>();
         if (data is null ||
-            !RecipeResolver.TryMatchInputs(data, inputs, GetUsableItems().ToList(), out var matchedItems))
+            !RecipeResolver.TryMatchInputs(data, inputs, GetFulfillmentCandidates(scope).ToList(), out var matchedItems))
         {
             return false;
         }
@@ -636,6 +648,26 @@ public sealed class ItemSystem : IGameSystem
 
     private static bool IsUsableItem(Item item)
         => !item.IsClaimed && item.CarriedByEntityId < 0 && item.ContainerItemId < 0;
+
+    private bool IsFulfillmentCandidate(Item item, ItemAvailabilityScope scope)
+        => scope switch
+        {
+            ItemAvailabilityScope.Accessible => IsAccessibleFulfillmentCandidate(item),
+            ItemAvailabilityScope.Owned => IsOwnedFulfillmentCandidate(item),
+            _ => false,
+        };
+
+    private bool IsAccessibleFulfillmentCandidate(Item item)
+        => !item.IsClaimed &&
+           item.CarriedByEntityId < 0 &&
+           (item.ContainerItemId < 0 || IsStoredInBox(item));
+
+    private bool IsOwnedFulfillmentCandidate(Item item)
+        => IsAccessibleFulfillmentCandidate(item) &&
+           (item.StockpileId >= 0 || IsStoredInBox(item));
+
+    private bool IsStoredInBox(Item item)
+        => item.ContainerItemId >= 0 && ResolveBoxContainer(item.ContainerItemId) is not null;
 
     private bool ClaimMatchedItems(IReadOnlyList<Item> matchedItems, List<int> reservedIds)
     {

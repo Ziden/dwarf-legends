@@ -6,6 +6,7 @@ using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
+using DwarfFortress.GameLogic.Tests.Fakes;
 using DwarfFortress.GameLogic.World;
 using Xunit;
 
@@ -403,13 +404,11 @@ public sealed class WorldQuerySystemTests
         er.Register(dwarf);
 
         var source = new Vec3i(5, 5, 0);
-        items.CreateItem("log", "wood", new Vec3i(7, 5, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: "carpenter_workshop",
-            Origin: new Vec3i(8, 5, 0)));
-
-        var workshop = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(8, 5, 0));
-        Assert.NotNull(workshop);
+        var workshop = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(8, 5, 0),
+            materialStart: new Vec3i(7, 5, 0));
 
         var item = items.CreateItem("log", "wood", source);
         items.PickUpItem(item.Id, dwarf.Id, dwarf.Position.Position);
@@ -437,15 +436,13 @@ public sealed class WorldQuerySystemTests
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
         var queries = sim.Context.Get<WorldQuerySystem>();
 
-        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(2, 2, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
-            Origin: new Vec3i(8, 5, 0)));
+        var building = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(8, 5, 0),
+            materialStart: new Vec3i(2, 2, 0));
 
-        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(8, 5, 0));
-        Assert.NotNull(building);
-
-        var byId = queries.GetBuildingView(building!.Id);
+        var byId = queries.GetBuildingView(building.Id);
         var byTile = queries.QueryTile(building.Origin + new Vec3i(1, 1, 0));
 
         Assert.NotNull(byId);
@@ -460,15 +457,14 @@ public sealed class WorldQuerySystemTests
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
         var queries = sim.Context.Get<WorldQuerySystem>();
 
-        items.CreateItem(ItemDefIds.Log, "oak_wood", new Vec3i(2, 2, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
-            Origin: new Vec3i(8, 5, 0)));
+        var building = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(8, 5, 0),
+            materialStart: new Vec3i(2, 2, 0),
+            materialId: "oak_wood");
 
-        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(8, 5, 0));
-        Assert.NotNull(building);
-
-        var view = queries.GetBuildingView(building!.Id);
+        var view = queries.GetBuildingView(building.Id);
 
         Assert.NotNull(view);
         Assert.Equal("oak_wood", view!.MaterialId);
@@ -492,6 +488,27 @@ public sealed class WorldQuerySystemTests
 
         Assert.NotNull(view);
         Assert.Equal("oak", view!.TreeSpeciesId);
+    }
+
+    [Fact]
+    public void WorldQuerySystem_TileView_Falls_Back_To_ReadOnly_Preview_For_Streamed_Chunks()
+    {
+        var logger = new TestLogger();
+        var simulation = GameBootstrapper.Build(logger, new FolderDataSource("data"));
+        simulation.Context.Commands.Dispatch(new StartFortressCommand(Seed: 29, Width: 24, Height: 24, Depth: 4));
+
+        var map = simulation.Context.Get<WorldMap>();
+        var queries = simulation.Context.Get<WorldQuerySystem>();
+        var previewPos = new Vec3i(map.Width + 4, map.Height + 4, 0);
+
+        var tile = queries.QueryTile(previewPos);
+
+        Assert.NotNull(tile.Tile);
+        Assert.True(tile.Tile!.IsPreview);
+        Assert.True(tile.Tile.IsVisible);
+        Assert.Empty(tile.Dwarves);
+        Assert.Empty(tile.Items);
+        Assert.Null(tile.Building);
     }
 
     [Fact]

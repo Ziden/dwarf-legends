@@ -323,8 +323,8 @@ public sealed class JobSystem : IGameSystem
 
             if (candidate is null) continue;
 
-            // Check low courage attribute (courage <= 2) near water - refuse job if target is near water
-            if (AttributeEffectSystem.FearsWater(candidate, _ctx?.TryGet<DataManager>()) && IsJobNearWater(job))
+            // Water fear is for risky labor near water, not self-preservation.
+            if (ShouldRefuseNearWater(candidate, job))
             {
                 _eventBus?.Emit(new Systems.JobRefusedEvent(candidate.Id, job.Id, AttributeIds.Courage,
                     $"{candidate.FirstName} is too afraid to work near water."));
@@ -485,6 +485,14 @@ public sealed class JobSystem : IGameSystem
         string.Equals(jobDefId, JobDefIds.Eat, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(jobDefId, JobDefIds.Drink, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(jobDefId, JobDefIds.Sleep, StringComparison.OrdinalIgnoreCase);
+
+    private bool ShouldRefuseNearWater(Dwarf dwarf, Job job)
+    {
+        if (IsSurvivalJob(job.JobDefId))
+            return false;
+
+        return AttributeEffectSystem.FearsWater(dwarf, _ctx?.TryGet<DataManager>()) && IsJobNearWater(job);
+    }
 
     private bool IsJobNearWater(Job job)
     {

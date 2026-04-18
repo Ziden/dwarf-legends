@@ -68,20 +68,46 @@ public sealed class WorldQuerySystem : IGameSystem
     public TileView? GetTileView(Vec3i pos)
     {
         var map = _ctx!.Get<WorldMap>();
-        if (pos.X < 0 || pos.Y < 0 || pos.Z < 0 || pos.X >= map.Width || pos.Y >= map.Height || pos.Z >= map.Depth)
+        if (IsInLiveMapBounds(map, pos))
+        {
+            var tile = map.GetTile(pos);
+            if (tile.TileDefId == TileDefIds.Empty)
+                return null;
+
+            var isVisible = MiningLineOfSight.IsTileVisible(map, pos);
+            var isDamp = MiningHazardAnalysis.IsDampWall(map, pos);
+            var isWarm = MiningHazardAnalysis.IsWarmWall(map, pos);
+            var oreItemDefId = tile.OreItemDefId;
+            if (!string.IsNullOrWhiteSpace(oreItemDefId) && !MiningLineOfSight.IsOreVisible(map, pos))
+                oreItemDefId = null;
+
+            return CreateTileView(pos, tile, isVisible, isDamp, isWarm, oreItemDefId, isPreview: false);
+        }
+
+        var previewStreaming = _ctx.TryGet<ChunkPreviewStreamingService>();
+        if (previewStreaming?.TryGetTileForRendering(pos, out var previewTile) != true || previewTile.TileDefId == TileDefIds.Empty)
             return null;
 
-        var tile = map.GetTile(pos);
-        if (tile.TileDefId == TileDefIds.Empty)
-            return null;
-        var isVisible = MiningLineOfSight.IsTileVisible(map, pos);
-        var isDamp = MiningHazardAnalysis.IsDampWall(map, pos);
-        var isWarm = MiningHazardAnalysis.IsWarmWall(map, pos);
-        var oreItemDefId = tile.OreItemDefId;
-        if (!string.IsNullOrWhiteSpace(oreItemDefId) && !MiningLineOfSight.IsOreVisible(map, pos))
-            oreItemDefId = null;
+        return CreateTileView(pos, previewTile, isVisible: true, isDamp: false, isWarm: false, oreItemDefId: null, isPreview: true);
+    }
 
-        return new TileView(
+    private static bool IsInLiveMapBounds(WorldMap map, Vec3i pos)
+        => pos.X >= 0
+            && pos.Y >= 0
+            && pos.Z >= 0
+            && pos.X < map.Width
+            && pos.Y < map.Height
+            && pos.Z < map.Depth;
+
+    private static TileView CreateTileView(
+        Vec3i pos,
+        TileData tile,
+        bool isVisible,
+        bool isDamp,
+        bool isWarm,
+        string? oreItemDefId,
+        bool isPreview)
+        => new(
             pos.X,
             pos.Y,
             pos.Z,
@@ -99,12 +125,12 @@ public sealed class WorldQuerySystem : IGameSystem
             isDamp,
             isWarm,
             oreItemDefId,
-                tile.PlantDefId,
-                tile.PlantGrowthStage,
-                tile.PlantYieldLevel,
-                tile.PlantSeedLevel,
-            isVisible);
-    }
+            tile.PlantDefId,
+            tile.PlantGrowthStage,
+            tile.PlantYieldLevel,
+            tile.PlantSeedLevel,
+            isVisible,
+            isPreview);
 
     public DwarfView? GetDwarfView(int id)
     {
@@ -346,6 +372,7 @@ public sealed class WorldQuerySystem : IGameSystem
                 building.BuildingDefId,
                 building.Origin,
                 building.IsWorkshop,
+                building.IsComplete,
                 storedItemCount,
                 building.MaterialId,
                 building.Rotation,
@@ -385,13 +412,28 @@ public sealed class WorldQuerySystem : IGameSystem
 
     public TileQueryResult QueryTile(Vec3i pos)
     {
+        var map = _ctx!.Get<WorldMap>();
+        var tileView = GetTileView(pos);
+        if (!IsInLiveMapBounds(map, pos))
+        {
+            return new TileQueryResult(
+                pos,
+                tileView,
+                Array.Empty<DwarfView>(),
+                Array.Empty<CreatureView>(),
+                Array.Empty<ItemView>(),
+                Array.Empty<ContainerEntityView>(),
+                null,
+                null);
+        }
+
         var spatial = _ctx!.Get<SpatialIndexSystem>();
         var itemSystem = _ctx.TryGet<ItemSystem>();
         var stockpile = _ctx.TryGet<StockpileManager>()?.GetContaining(pos);
 
         return new TileQueryResult(
             pos,
-            GetTileView(pos),
+            tileView,
             spatial.GetDwarvesAt(pos).Select(id => GetDwarfView(id)).Where(v => v is not null).Select(v => v!).ToArray(),
             spatial.GetCreaturesAt(pos).Select(id => GetCreatureView(id)).Where(v => v is not null).Select(v => v!).ToArray(),
             (itemSystem?.GetItemsAt(pos) ?? Enumerable.Empty<Item>())

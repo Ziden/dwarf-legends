@@ -11,7 +11,8 @@
 		],
 		"constructionInputs": [{ "tags": ["log"], "qty": 5 }],
 		"constructionTime": 10.0,
-		"isWorkshop": true
+		"isWorkshop": true,
+		"visualProfile": { "archetype": "workshop", "palette": "carpenter" }
 	},
 	{
 		"id": "smelter",
@@ -25,7 +26,8 @@
 		],
 		"constructionInputs": [{ "tags": ["stone"], "qty": 3 }],
 		"constructionTime": 12.0,
-		"isWorkshop": true
+		"isWorkshop": true,
+		"visualProfile": { "archetype": "workshop", "palette": "smelter" }
 	},
 	{
 		"id": "kitchen",
@@ -39,7 +41,8 @@
 		],
 		"constructionInputs": [{ "tags": ["stone"], "qty": 2 }, { "tags": ["bucket"], "qty": 1 }],
 		"constructionTime": 8.0,
-		"isWorkshop": true
+		"isWorkshop": true,
+		"visualProfile": { "archetype": "workshop", "palette": "kitchen" }
 	},
 	{
 		"id": "still",
@@ -53,7 +56,8 @@
 		],
 		"constructionInputs": [{ "tags": ["stone"], "qty": 2 }, { "tags": ["barrel"], "qty": 1 }],
 		"constructionTime": 8.0,
-		"isWorkshop": true
+		"isWorkshop": true,
+		"visualProfile": { "archetype": "workshop", "palette": "still" }
 	},
 	{
 		"id": "bed",
@@ -90,25 +94,20 @@
 	},
 	{
 		"id": "house",
-		"displayName": "House",
+		"displayName": "Hut",
 		"tags": ["structure", "wooden", "housing", "stockpile"],
 		"footprint": [
 			{ "x": 0, "y": 0, "tile": "wood_floor" },
 			{ "x": 1, "y": 0, "tile": "wood_floor" },
-			{ "x": 2, "y": 0, "tile": "wood_floor" },
 			{ "x": 0, "y": 1, "tile": "wood_floor" },
-			{ "x": 1, "y": 1, "tile": "wood_floor" },
-			{ "x": 2, "y": 1, "tile": "wood_floor" },
-			{ "x": 0, "y": 2, "tile": "wood_floor" },
-			{ "x": 1, "y": 2, "tile": "wood_floor" },
-			{ "x": 2, "y": 2, "tile": "wood_floor" }
+			{ "x": 1, "y": 1, "tile": "wood_floor" }
 		],
-		"constructionInputs": [{ "tags": ["log"], "qty": 1 }],
+		"constructionInputs": [{ "tags": ["log"], "qty": 2 }],
 		"constructionTime": 20.0,
 		"isWorkshop": false,
 		"residenceCapacity": 3,
-		"entryOffsets": [{ "x": 1, "y": 2 }],
+		"entries": [{ "x": 1, "y": 1, "outwardDirection": "south" }],
 		"autoStockpileAcceptedTags": ["food", "drink"],
-		"structureVisualId": "house_wood_3x3"
+		"visualProfile": { "archetype": "hut", "palette": "warm_wood", "hideRoofOnHover": true }
 	}
 ]

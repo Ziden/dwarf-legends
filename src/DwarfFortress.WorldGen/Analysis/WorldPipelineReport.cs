@@ -12,6 +12,11 @@ public sealed record WorldPipelineReport(
     float WorldRoadEdgeMismatchRatio,
     float RegionRiverEdgeMismatchRatio,
     float RegionRoadEdgeMismatchRatio,
+    int LocalBoundarySampleCount,
+    float LocalSurfaceBoundaryMismatchRatio,
+    float LocalWaterBoundaryMismatchRatio,
+    float LocalEcologyBoundaryMismatchRatio,
+    float LocalTreeBoundaryMismatchRatio,
     float RegionParentMacroAlignmentRatio,
     float RegionVegetationGroundwaterCorrelation,
     float RegionVegetationSuitabilityCorrelation,
@@ -36,7 +41,12 @@ public sealed record WorldPipelineReport(
     bool AridCoverageAchieved,
     float LocalTreeSuitabilityCorrelation,
     float AvgLocalTreeDensity,
-    IReadOnlyList<DepthBudgetResult> Budgets)
+    IReadOnlyList<DepthBudgetResult> Budgets,
+    int LocalBoundaryBandSampleCount = 0,
+    float LocalSurfaceBoundaryBandMismatchRatio = 0f,
+    float LocalWaterBoundaryBandMismatchRatio = 0f,
+    float LocalEcologyBoundaryBandMismatchRatio = 0f,
+    float LocalTreeBoundaryBandMismatchRatio = 0f)
 {
     public int AdditionalSeedsUsed => EvaluatedSeedCount > SeedCount ? EvaluatedSeedCount - SeedCount : 0;
     public bool Passed => Budgets.Count > 0 && Budgets.All(b => b.Passed);

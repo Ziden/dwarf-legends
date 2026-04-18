@@ -250,7 +250,7 @@ public sealed class FortressBootstrapTests
     }
 
     [Fact]
-    public void StartFortressCommand_Starter_Log_Makes_House_Buildable_And_Carpenter_Discovered()
+    public void StartFortressCommand_Starter_Log_Unlocks_Hut_And_Carpenter()
     {
         var (sim, _, _, _, _) = TestFixtures.BuildFullSim();
 
@@ -258,7 +258,7 @@ public sealed class FortressBootstrapTests
 
         var discovery = sim.Context.Get<DiscoverySystem>();
 
-        Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(BuildingDefIds.House));
+        Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(BuildingDefIds.House));
         Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.House));
         Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.CarpenterWorkshop));
         Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(BuildingDefIds.CarpenterWorkshop));

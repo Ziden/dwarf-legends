@@ -12,9 +12,10 @@ public enum BuildingRotation
     Clockwise270 = 3,
 }
 
-public static class StructureVisualIds
+public static class BuildingVisualArchetypes
 {
-    public const string HouseWood3x3 = "house_wood_3x3";
+    public const string Hut = "hut";
+    public const string Workshop = "workshop";
 }
 
 public readonly record struct RotatedBuildingTile(Vec2i Offset, BuildingTile Tile);
@@ -75,15 +76,15 @@ public static class BuildingPlacementGeometry
 
     public static IReadOnlyList<BuildingEntryPoint> GetEntryPoints(BuildingDef definition, Vec3i origin, BuildingRotation rotation)
     {
-        if (definition.EntryOffsets.Count == 0)
+        if (definition.Entries.Count == 0)
             return [];
 
         var originalBounds = GetOriginalBounds(definition);
-        return definition.EntryOffsets
-            .Select(offset =>
+        return definition.Entries
+            .Select(entry =>
             {
-                var rotatedOffset = RotateOffset(offset, originalBounds, rotation);
-                var outwardDirection2D = RotateDirection(GetBoundaryDirection(offset, originalBounds), rotation);
+                var rotatedOffset = RotateOffset(entry.Offset, originalBounds, rotation);
+                var outwardDirection2D = RotateDirection(entry.OutwardDirection, rotation);
                 return new BuildingEntryPoint(
                     new Vec3i(origin.X + rotatedOffset.X, origin.Y + rotatedOffset.Y, origin.Z),
                     outwardDirection2D.ToVec3i());
@@ -205,17 +206,4 @@ public static class BuildingPlacementGeometry
         };
     }
 
-    private static Vec2i GetBoundaryDirection(Vec2i offset, BuildingBounds bounds)
-    {
-        if (offset.Y == bounds.MaxY)
-            return Vec2i.South;
-        if (offset.Y == bounds.MinY)
-            return Vec2i.North;
-        if (offset.X == bounds.MinX)
-            return Vec2i.West;
-        if (offset.X == bounds.MaxX)
-            return Vec2i.East;
-
-        return Vec2i.South;
-    }
 }

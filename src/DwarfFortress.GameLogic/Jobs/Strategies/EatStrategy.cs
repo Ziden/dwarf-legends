@@ -249,7 +249,7 @@ public sealed class EatStrategy : IJobStrategy
 
         foreach (var b in buildings)
         {
-            if (b.BuildingDefId != BuildingDefIds.Table || b.Origin.Z != dwarfPos.Z)
+            if (!b.IsComplete || b.BuildingDefId != BuildingDefIds.Table || b.Origin.Z != dwarfPos.Z)
                 continue;
 
             var dist = b.Origin.ManhattanDistanceTo(dwarfPos);
@@ -268,7 +268,7 @@ public sealed class EatStrategy : IJobStrategy
         {
             foreach (var b in buildings)
             {
-                if (b.BuildingDefId != BuildingDefIds.Chair || b.Origin.Z != dwarfPos.Z)
+                if (!b.IsComplete || b.BuildingDefId != BuildingDefIds.Chair || b.Origin.Z != dwarfPos.Z)
                     continue;
 
                 if (nearestTableInRadius.Origin.ManhattanDistanceTo(b.Origin) == 1)

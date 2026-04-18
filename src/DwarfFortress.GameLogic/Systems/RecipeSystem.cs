@@ -103,13 +103,16 @@ public sealed class RecipeSystem : IGameSystem
             {
                 using var createJobScope = _profiler?.Measure("create_craft_job") ?? default;
                 var buildingSystem = _ctx!.TryGet<BuildingSystem>();
-                var origin = buildingSystem?.GetById(workshopId)?.Origin;
-                if (origin is null)
+                var workshop = buildingSystem?.GetById(workshopId);
+                if (workshop is null)
                 {
                     _ctx.Logger?.Warn($"[RecipeSystem] Workshop entity {workshopId} not found — skipping craft job.");
                     continue;
                 }
-                jobSystem.CreateJob(Jobs.JobDefIds.Craft, origin.Value, priority: 3, entityId: workshopId);
+                if (!workshop.IsComplete)
+                    continue;
+
+                jobSystem.CreateJob(Jobs.JobDefIds.Craft, workshop.Origin, priority: 3, entityId: workshopId);
             }
         }
     }
@@ -204,8 +207,11 @@ public sealed class RecipeSystem : IGameSystem
         var itemSystem = _ctx!.TryGet<ItemSystem>();
         var dm         = _ctx!.Get<DataManager>();
         var registry   = _ctx!.Get<EntityRegistry>();
+        var buildingSystem = _ctx!.TryGet<BuildingSystem>();
+        var workshop = buildingSystem?.GetById(workshopId);
 
         if (!registry.TryGetById<Dwarf>(dwarfId, out var dwarf) || dwarf is null) return false;
+        if (workshop is null || !workshop.IsComplete) return false;
         if (!dm.Recipes.Contains(order.RecipeId)) return false;
 
         var recipe = dm.Recipes.Get(order.RecipeId);
@@ -219,9 +225,7 @@ public sealed class RecipeSystem : IGameSystem
             itemSystem.DestroyItem(input.Id);
 
         // Spawn outputs at the workshop's world position
-        var buildingSystem  = _ctx!.TryGet<BuildingSystem>();
-        var workshopOrigin  = buildingSystem?.GetById(workshopId)?.Origin
-                              ?? dwarf.Components.Get<PositionComponent>().Position;
+        var workshopOrigin = workshop.Origin;
         var outputIds = new List<int>();
         foreach (var output in resolvedOutputs)
             for (int i = 0; i < output.Quantity; i++)
@@ -249,7 +253,7 @@ public sealed class RecipeSystem : IGameSystem
                 .Where(item => item is not null)
                 .Select(item => item!)
                 .ToList()
-            : itemSystem.GetUsableItems().ToList();
+            : itemSystem.GetFulfillmentCandidates().ToList();
 
         return RecipeResolver.TryMatchRecipe(data, recipe, candidateItems, out matchedInputs, out resolvedOutputs);
     }

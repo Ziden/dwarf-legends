@@ -1,3 +1,4 @@
+using DwarfFortress.WorldGen.Generation;
 using DwarfFortress.WorldGen.Ids;
 
 namespace DwarfFortress.WorldGen.Regions;
@@ -22,7 +23,8 @@ public readonly record struct GeneratedRegionTile(
     float TemperatureBand = 0.5f,
     float MoistureBand = 0.5f,
     float FlowAccumulationBand = 0f,
-    string SurfaceClassId = RegionSurfaceClassIds.Grass)
+    string SurfaceClassId = RegionSurfaceClassIds.Grass,
+    EcologyEdgeDescriptors EcologyEdges = default)
 {
     public static GeneratedRegionTile Empty => new(
         BiomeVariantId: RegionBiomeVariantIds.TemperatePlainsOpen,
@@ -44,5 +46,6 @@ public readonly record struct GeneratedRegionTile(
         VegetationSuitability: 0.5f,
         TemperatureBand: 0.5f,
         MoistureBand: 0.5f,
-        FlowAccumulationBand: 0f);
+        FlowAccumulationBand: 0f,
+        EcologyEdges: EcologyEdgeDescriptors.Neutral);
 }

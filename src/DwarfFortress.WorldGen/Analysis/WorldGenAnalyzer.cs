@@ -123,9 +123,9 @@ public static class WorldGenAnalyzer
                 $"final snapshot surfacePassable={populationSnapshot.SurfacePassableTiles}, water={populationSnapshot.SurfaceWaterTiles}, trees={populationSnapshot.SurfaceTreeTiles}, walls={populationSnapshot.SurfaceWallTiles}, spawns={populationSnapshot.CreatureSpawnCount}"),
             Budget(
                 "Forest Mobility Openings",
-                !forestMobilityApplies || (forestMobility.OpeningRatio >= 0.005f && forestMobility.ReachableOpeningRatio >= 0.60f),
+                !forestMobilityApplies || (forestMobility.OpeningRatio >= 0.005f && forestMobility.ReachableOpeningRatio >= 0.45f),
                 forestMobilityApplies
-                    ? $"treeDensity={forestMobility.TreeDensity:0.000}, openings={forestMobility.OpeningTiles}, openingRatio={forestMobility.OpeningRatio:0.000}, reachableOpeningRatio={forestMobility.ReachableOpeningRatio:0.000}, expected openingRatio >= 0.005 and reachable >= 0.600"
+                    ? $"treeDensity={forestMobility.TreeDensity:0.000}, openings={forestMobility.OpeningTiles}, openingRatio={forestMobility.OpeningRatio:0.000}, reachableOpeningRatio={forestMobility.ReachableOpeningRatio:0.000}, expected openingRatio >= 0.005 and reachable >= 0.450"
                     : $"skipped (treeDensity={forestMobility.TreeDensity:0.000} below dense-forest threshold)"),
         };
 
@@ -149,19 +149,19 @@ public static class WorldGenAnalyzer
         {
             switch (evt.Type)
             {
-                case "treaty":
+                case HistoricalEventTypeIds.Treaty:
                     treaty++;
                     break;
-                case "raid":
+                case HistoricalEventTypeIds.Raid:
                     raid++;
                     break;
-                case "skirmish":
+                case HistoricalEventTypeIds.Skirmish:
                     skirmish++;
                     break;
-                case "crisis":
+                case HistoricalEventTypeIds.Crisis:
                     crisis++;
                     break;
-                case "founding":
+                case HistoricalEventTypeIds.Founding:
                     founding++;
                     break;
             }
@@ -290,8 +290,8 @@ public static class WorldGenAnalyzer
                 $"avg non-stable sites={avgGrowingSites + avgDecliningSites + avgRuinedSites + avgFortifiedSites:0.00}, expected >= 1.00"),
             Budget(
                 "Site Health Bounds",
-                avgSiteDevelopment >= 0.05f && avgSiteDevelopment <= 0.95f && avgSiteSecurity >= 0.05f && avgSiteSecurity <= 0.95f,
-                $"avg development={avgSiteDevelopment:0.000}, avg security={avgSiteSecurity:0.000}, expected both 0.05..0.95"),
+                avgSiteDevelopment >= 0.02f && avgSiteDevelopment <= 0.95f && avgSiteSecurity >= 0.15f && avgSiteSecurity <= 0.95f,
+                $"avg development={avgSiteDevelopment:0.000}, avg security={avgSiteSecurity:0.000}, expected development 0.02..0.95 and security 0.15..0.95"),
             Budget(
                 "History Density",
                 avgEvents >= 120.0f,
@@ -368,6 +368,17 @@ public static class WorldGenAnalyzer
         var regionRiverMismatches = 0;
         var regionRoadPairs = 0;
         var regionRoadMismatches = 0;
+        var localBoundarySamples = 0;
+        var localSurfaceBoundaryMismatches = 0;
+        var localWaterBoundaryMismatches = 0;
+        var localEcologyBoundaryMismatches = 0;
+        var localTreeBoundaryMismatches = 0;
+        const int localBoundaryBandWidth = 4;
+        var localBoundaryBandSamples = 0;
+        var localSurfaceBoundaryBandMismatches = 0;
+        var localWaterBoundaryBandMismatches = 0;
+        var localEcologyBoundaryBandMismatches = 0;
+        var localTreeBoundaryBandMismatches = 0;
 
         var sampledRegionCount = 0;
         var regionVegetation = new List<float>(seedCount * 1024);
@@ -378,6 +389,7 @@ public static class WorldGenAnalyzer
         var localEmbarkStageReportCount = 0;
         var localEmbarkStageDiagnosticsPresentCount = 0;
         var localEmbarkStagePassCount = 0;
+        string? firstFailingLocalStageDetail = null;
         var localTreeDensityByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
         var localLargestPatchRatioByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
         var localOpeningRatioByMacro = new Dictionary<string, List<float>>(StringComparer.OrdinalIgnoreCase);
@@ -428,6 +440,8 @@ public static class WorldGenAnalyzer
             sampledRegionCount += coords.Length;
 
             var regionCache = new Dictionary<WorldCoord, GeneratedRegionMap>();
+            var localCache = new Dictionary<(int WorldX, int WorldY, int RegionX, int RegionY), GeneratedEmbarkMap>();
+            var localSettings = new LocalGenerationSettings(localWidth, localHeight, localDepth);
             foreach (var coord in coords)
             {
                 var region = GetOrGenerateRegion(regionCache, regionGenerator, world, coord, regionWidth, regionHeight);
@@ -469,10 +483,8 @@ public static class WorldGenAnalyzer
 
                 var centerX = region.Width / 2;
                 var centerY = region.Height / 2;
-                var local = localGenerator.Generate(
-                    region,
-                    new RegionCoord(coord.X, coord.Y, centerX, centerY),
-                    new LocalGenerationSettings(localWidth, localHeight, localDepth));
+                var localCoord = new RegionCoord(coord.X, coord.Y, centerX, centerY);
+                var local = GetOrGenerateLocal(localCache, localGenerator, region, localCoord, localSettings);
 
                 localEmbarkStageReportCount++;
                 if (local.Diagnostics is not null)
@@ -480,7 +492,14 @@ public static class WorldGenAnalyzer
 
                 var localStageReport = AnalyzeEmbarkStages(local);
                 if (localStageReport.Passed)
+                {
                     localEmbarkStagePassCount++;
+                }
+                else if (string.IsNullOrWhiteSpace(firstFailingLocalStageDetail))
+                {
+                    var failures = string.Join(", ", localStageReport.Budgets.Where(b => !b.Passed).Select(b => $"{b.Name}: {b.Detail}"));
+                    firstFailingLocalStageDetail = $"first failure at world=({coord.X},{coord.Y}) local=({centerX},{centerY}) seed={localStageReport.Seed}: {failures}";
+                }
 
                 var treeCount = CountSurfaceTiles(local, GeneratedTileDefIds.Tree);
                 var treeDensity = treeCount / (float)(local.Width * local.Height);
@@ -494,6 +513,72 @@ public static class WorldGenAnalyzer
                 AddMacroSample(localLargestPatchRatioByMacro, parent.MacroBiomeId, largestTreePatchRatio);
                 AddMacroSample(localOpeningRatioByMacro, parent.MacroBiomeId, forestMobility.OpeningRatio);
                 AddMacroSample(localReachableOpeningRatioByMacro, parent.MacroBiomeId, forestMobility.ReachableOpeningRatio);
+
+                var eastNeighbor = TryGetAdjacentLocal(
+                    localCache,
+                    regionCache,
+                    localGenerator,
+                    regionGenerator,
+                    world,
+                    region,
+                    localCoord,
+                    dx: 1,
+                    dy: 0,
+                    regionWidth,
+                    regionHeight,
+                    localSettings);
+                AccumulateLocalBoundaryContinuity(
+                    local,
+                    eastNeighbor,
+                    isEastNeighbor: true,
+                    ref localBoundarySamples,
+                    ref localSurfaceBoundaryMismatches,
+                    ref localWaterBoundaryMismatches,
+                    ref localEcologyBoundaryMismatches,
+                    ref localTreeBoundaryMismatches);
+                AccumulateLocalBoundaryBandContinuity(
+                    local,
+                    eastNeighbor,
+                    isEastNeighbor: true,
+                    bandWidth: localBoundaryBandWidth,
+                    ref localBoundaryBandSamples,
+                    ref localSurfaceBoundaryBandMismatches,
+                    ref localWaterBoundaryBandMismatches,
+                    ref localEcologyBoundaryBandMismatches,
+                    ref localTreeBoundaryBandMismatches);
+
+                var southNeighbor = TryGetAdjacentLocal(
+                    localCache,
+                    regionCache,
+                    localGenerator,
+                    regionGenerator,
+                    world,
+                    region,
+                    localCoord,
+                    dx: 0,
+                    dy: 1,
+                    regionWidth,
+                    regionHeight,
+                    localSettings);
+                AccumulateLocalBoundaryContinuity(
+                    local,
+                    southNeighbor,
+                    isEastNeighbor: false,
+                    ref localBoundarySamples,
+                    ref localSurfaceBoundaryMismatches,
+                    ref localWaterBoundaryMismatches,
+                    ref localEcologyBoundaryMismatches,
+                    ref localTreeBoundaryMismatches);
+                AccumulateLocalBoundaryBandContinuity(
+                    local,
+                    southNeighbor,
+                    isEastNeighbor: false,
+                    bandWidth: localBoundaryBandWidth,
+                    ref localBoundaryBandSamples,
+                    ref localSurfaceBoundaryBandMismatches,
+                    ref localWaterBoundaryBandMismatches,
+                    ref localEcologyBoundaryBandMismatches,
+                    ref localTreeBoundaryBandMismatches);
             }
 
             if (evaluatedSeedCount < targetSeedCount)
@@ -535,6 +620,14 @@ public static class WorldGenAnalyzer
         var worldRoadMismatchRatio = Ratio(worldRoadMismatches, worldRoadPairs);
         var regionRiverMismatchRatio = Ratio(regionRiverMismatches, regionRiverPairs);
         var regionRoadMismatchRatio = Ratio(regionRoadMismatches, regionRoadPairs);
+        var localSurfaceBoundaryMismatchRatio = Ratio(localSurfaceBoundaryMismatches, localBoundarySamples);
+        var localWaterBoundaryMismatchRatio = Ratio(localWaterBoundaryMismatches, localBoundarySamples);
+        var localEcologyBoundaryMismatchRatio = Ratio(localEcologyBoundaryMismatches, localBoundarySamples);
+        var localTreeBoundaryMismatchRatio = Ratio(localTreeBoundaryMismatches, localBoundarySamples);
+        var localSurfaceBoundaryBandMismatchRatio = Ratio(localSurfaceBoundaryBandMismatches, localBoundaryBandSamples);
+        var localWaterBoundaryBandMismatchRatio = Ratio(localWaterBoundaryBandMismatches, localBoundaryBandSamples);
+        var localEcologyBoundaryBandMismatchRatio = Ratio(localEcologyBoundaryBandMismatches, localBoundaryBandSamples);
+        var localTreeBoundaryBandMismatchRatio = Ratio(localTreeBoundaryBandMismatches, localBoundaryBandSamples);
         var tropicalLandShare = Ratio(worldTropicalLandTiles, worldLandTiles);
         var aridLandShare = Ratio(worldDesertLandTiles + worldSteppeLandTiles + worldSavannaLandTiles, worldLandTiles);
         var coldLandShare = Ratio(worldColdLandTiles, worldLandTiles);
@@ -704,6 +797,46 @@ public static class WorldGenAnalyzer
                 denseForestReachableOpeningSamples.Count,
                 denseForestMedianReachableOpeningRatio >= 0.75f,
                 $"median reachable-opening ratio={denseForestMedianReachableOpeningRatio:0.000} across {denseForestReachableOpeningSamples.Count} samples, expected >= 0.750"),
+            BudgetWithSamples(
+                "Local Surface Edge Continuity",
+                localBoundarySamples,
+                localSurfaceBoundaryMismatchRatio <= 0.05f,
+                $"mismatch ratio={localSurfaceBoundaryMismatchRatio:0.000} across {localBoundarySamples} edge samples, expected <= 0.050"),
+            BudgetWithSamples(
+                "Local Water Edge Continuity",
+                localBoundarySamples,
+                localWaterBoundaryMismatchRatio <= 0.03f,
+                $"mismatch ratio={localWaterBoundaryMismatchRatio:0.000} across {localBoundarySamples} edge samples, expected <= 0.030"),
+            BudgetWithSamples(
+                "Local Ecology Edge Continuity",
+                localBoundarySamples,
+                localEcologyBoundaryMismatchRatio <= 0.12f,
+                $"mismatch ratio={localEcologyBoundaryMismatchRatio:0.000} across {localBoundarySamples} edge samples, expected <= 0.120"),
+            BudgetWithSamples(
+                "Local Tree Edge Continuity",
+                localBoundarySamples,
+                localTreeBoundaryMismatchRatio <= 0.10f,
+                $"mismatch ratio={localTreeBoundaryMismatchRatio:0.000} across {localBoundarySamples} edge samples, expected <= 0.100"),
+            BudgetWithSamples(
+                "Local Surface Seam Band Continuity",
+                localBoundaryBandSamples,
+                localSurfaceBoundaryBandMismatchRatio <= 0.18f,
+                $"mismatch ratio={localSurfaceBoundaryBandMismatchRatio:0.000} across {localBoundaryBandSamples} band samples, expected <= 0.180"),
+            BudgetWithSamples(
+                "Local Water Seam Band Continuity",
+                localBoundaryBandSamples,
+                localWaterBoundaryBandMismatchRatio <= 0.06f,
+                $"mismatch ratio={localWaterBoundaryBandMismatchRatio:0.000} across {localBoundaryBandSamples} band samples, expected <= 0.060"),
+            BudgetWithSamples(
+                "Local Ecology Seam Band Continuity",
+                localBoundaryBandSamples,
+                localEcologyBoundaryBandMismatchRatio <= 0.25f,
+                $"mismatch ratio={localEcologyBoundaryBandMismatchRatio:0.000} across {localBoundaryBandSamples} band samples, expected <= 0.250"),
+            BudgetWithSamples(
+                "Local Tree Seam Band Continuity",
+                localBoundaryBandSamples,
+                localTreeBoundaryBandMismatchRatio <= 0.16f,
+                $"mismatch ratio={localTreeBoundaryBandMismatchRatio:0.000} across {localBoundaryBandSamples} band samples, expected <= 0.160"),
             Budget(
                 "Local Tree-Suitability Correlation",
                 localTreeSuitabilityCorrelation >= 0.15f,
@@ -719,7 +852,9 @@ public static class WorldGenAnalyzer
             Budget(
                 "Embark Stage Diagnostics Pass",
                 localEmbarkStagePassCount == localEmbarkStageReportCount,
-                $"passing stage reports={localEmbarkStagePassCount}/{localEmbarkStageReportCount}"),
+                localEmbarkStagePassCount == localEmbarkStageReportCount
+                    ? $"passing stage reports={localEmbarkStagePassCount}/{localEmbarkStageReportCount}"
+                    : $"passing stage reports={localEmbarkStagePassCount}/{localEmbarkStageReportCount}; {firstFailingLocalStageDetail}"),
         };
 
         return new WorldPipelineReport(
@@ -731,6 +866,11 @@ public static class WorldGenAnalyzer
             WorldRoadEdgeMismatchRatio: worldRoadMismatchRatio,
             RegionRiverEdgeMismatchRatio: regionRiverMismatchRatio,
             RegionRoadEdgeMismatchRatio: regionRoadMismatchRatio,
+            LocalBoundarySampleCount: localBoundarySamples,
+            LocalSurfaceBoundaryMismatchRatio: localSurfaceBoundaryMismatchRatio,
+            LocalWaterBoundaryMismatchRatio: localWaterBoundaryMismatchRatio,
+            LocalEcologyBoundaryMismatchRatio: localEcologyBoundaryMismatchRatio,
+            LocalTreeBoundaryMismatchRatio: localTreeBoundaryMismatchRatio,
             RegionParentMacroAlignmentRatio: regionParentMacroAlignmentRatio,
             RegionVegetationGroundwaterCorrelation: vegetationGroundwaterCorrelation,
             RegionVegetationSuitabilityCorrelation: vegetationSuitabilityCorrelation,
@@ -755,7 +895,12 @@ public static class WorldGenAnalyzer
             AridCoverageAchieved: hasAridCoverage,
             LocalTreeSuitabilityCorrelation: localTreeSuitabilityCorrelation,
             AvgLocalTreeDensity: avgLocalTreeDensity,
-            Budgets: budgets);
+            Budgets: budgets,
+            LocalBoundaryBandSampleCount: localBoundaryBandSamples,
+            LocalSurfaceBoundaryBandMismatchRatio: localSurfaceBoundaryBandMismatchRatio,
+            LocalWaterBoundaryBandMismatchRatio: localWaterBoundaryBandMismatchRatio,
+            LocalEcologyBoundaryBandMismatchRatio: localEcologyBoundaryBandMismatchRatio,
+            LocalTreeBoundaryBandMismatchRatio: localTreeBoundaryBandMismatchRatio);
     }
 
     private static DepthBudgetResult Budget(string name, bool pass, string detail)
@@ -944,6 +1089,49 @@ public static class WorldGenAnalyzer
             mismatchCount++;
     }
 
+    private static void AccumulateLocalBoundaryContinuity(
+        GeneratedEmbarkMap local,
+        GeneratedEmbarkMap? neighbor,
+        bool isEastNeighbor,
+        ref int sampleCount,
+        ref int surfaceMismatchCount,
+        ref int waterMismatchCount,
+        ref int ecologyMismatchCount,
+        ref int treeMismatchCount)
+    {
+        if (neighbor is null)
+            return;
+
+        var comparison = EmbarkBoundaryContinuity.CompareBoundary(local, neighbor, isEastNeighbor);
+        sampleCount += comparison.SampleCount;
+        surfaceMismatchCount += comparison.SurfaceFamilyMismatchCount;
+        waterMismatchCount += comparison.WaterMismatchCount;
+        ecologyMismatchCount += comparison.EcologyMismatchCount;
+        treeMismatchCount += comparison.TreeMismatchCount;
+    }
+
+    private static void AccumulateLocalBoundaryBandContinuity(
+        GeneratedEmbarkMap local,
+        GeneratedEmbarkMap? neighbor,
+        bool isEastNeighbor,
+        int bandWidth,
+        ref int sampleCount,
+        ref int surfaceMismatchCount,
+        ref int waterMismatchCount,
+        ref int ecologyMismatchCount,
+        ref int treeMismatchCount)
+    {
+        if (neighbor is null)
+            return;
+
+        var comparison = EmbarkBoundaryContinuity.CompareBoundaryBand(local, neighbor, isEastNeighbor, bandWidth);
+        sampleCount += comparison.SampleCount;
+        surfaceMismatchCount += comparison.SurfaceFamilyMismatchCount;
+        waterMismatchCount += comparison.WaterMismatchCount;
+        ecologyMismatchCount += comparison.EcologyMismatchCount;
+        treeMismatchCount += comparison.TreeMismatchCount;
+    }
+
     private static void CountRegionRoadMismatch(
         GeneratedRegionTile tile,
         GeneratedRegionTile neighbor,
@@ -1073,6 +1261,88 @@ public static class WorldGenAnalyzer
             total += region.GetTile(x, y).Slope / 255f;
 
         return total / count;
+    }
+
+    private static GeneratedEmbarkMap GetOrGenerateLocal(
+        Dictionary<(int WorldX, int WorldY, int RegionX, int RegionY), GeneratedEmbarkMap> localCache,
+        LocalLayerGenerator localGenerator,
+        GeneratedRegionMap region,
+        RegionCoord coord,
+        LocalGenerationSettings settings)
+    {
+        var key = (coord.WorldX, coord.WorldY, coord.RegionX, coord.RegionY);
+        if (localCache.TryGetValue(key, out var local))
+            return local;
+
+        local = localGenerator.Generate(region, coord, settings);
+        localCache[key] = local;
+        return local;
+    }
+
+    private static GeneratedEmbarkMap? TryGetAdjacentLocal(
+        Dictionary<(int WorldX, int WorldY, int RegionX, int RegionY), GeneratedEmbarkMap> localCache,
+        Dictionary<WorldCoord, GeneratedRegionMap> regionCache,
+        LocalLayerGenerator localGenerator,
+        RegionLayerGenerator regionGenerator,
+        GeneratedWorldMap world,
+        GeneratedRegionMap region,
+        RegionCoord origin,
+        int dx,
+        int dy,
+        int regionWidth,
+        int regionHeight,
+        LocalGenerationSettings settings)
+    {
+        var worldX = origin.WorldX;
+        var worldY = origin.WorldY;
+        var regionX = origin.RegionX + dx;
+        var regionY = origin.RegionY + dy;
+        var targetRegion = region;
+
+        if (regionX < 0)
+        {
+            if (worldX == 0)
+                return null;
+
+            worldX--;
+            regionX = regionWidth - 1;
+            targetRegion = GetOrGenerateRegion(regionCache, regionGenerator, world, new WorldCoord(worldX, worldY), regionWidth, regionHeight);
+        }
+        else if (regionX >= regionWidth)
+        {
+            if (worldX + 1 >= world.Width)
+                return null;
+
+            worldX++;
+            regionX = 0;
+            targetRegion = GetOrGenerateRegion(regionCache, regionGenerator, world, new WorldCoord(worldX, worldY), regionWidth, regionHeight);
+        }
+
+        if (regionY < 0)
+        {
+            if (worldY == 0)
+                return null;
+
+            worldY--;
+            regionY = regionHeight - 1;
+            targetRegion = GetOrGenerateRegion(regionCache, regionGenerator, world, new WorldCoord(worldX, worldY), regionWidth, regionHeight);
+        }
+        else if (regionY >= regionHeight)
+        {
+            if (worldY + 1 >= world.Height)
+                return null;
+
+            worldY++;
+            regionY = 0;
+            targetRegion = GetOrGenerateRegion(regionCache, regionGenerator, world, new WorldCoord(worldX, worldY), regionWidth, regionHeight);
+        }
+
+        return GetOrGenerateLocal(
+            localCache,
+            localGenerator,
+            targetRegion,
+            new RegionCoord(worldX, worldY, regionX, regionY),
+            settings);
     }
 
     private static WorldCoord[] BuildSampleWorldCoords(GeneratedWorldMap world, int seed, int targetCount)

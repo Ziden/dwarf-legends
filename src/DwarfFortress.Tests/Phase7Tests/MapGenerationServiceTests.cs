@@ -46,6 +46,42 @@ public sealed class MapGenerationServiceTests
     }
 
     [Fact]
+    public void GetOrCreateLocal_ContinuityContract_AffectsCacheIdentity()
+    {
+        var localGenerator = new CapturingLocalLayerGenerator();
+        var service = new MapGenerationService(localGenerator: localGenerator);
+        var generationSettings = MapGenerationSettings.Default;
+        var regionCoord = new RegionCoord(0, 0, 0, 0);
+        var baseSettings = new LocalGenerationSettings(48, 48, 8);
+        var contractA = new LocalContinuityContract(
+            BiomeOverrideId: MacroBiomeIds.ConiferForest,
+            NoiseOriginX: 0,
+            NoiseOriginY: 0,
+            ContinuitySeed: 4101);
+        var contractB = contractA with { NoiseOriginX = 48 };
+
+        var localA = service.GetOrCreateLocal(
+            seed: 88,
+            regionCoord: regionCoord,
+            settings: baseSettings with { ContinuityContract = contractA },
+            generationSettings: generationSettings);
+        var localB = service.GetOrCreateLocal(
+            seed: 88,
+            regionCoord: regionCoord,
+            settings: baseSettings with { ContinuityContract = contractB },
+            generationSettings: generationSettings);
+        var localBAgain = service.GetOrCreateLocal(
+            seed: 88,
+            regionCoord: regionCoord,
+            settings: baseSettings with { ContinuityContract = contractB },
+            generationSettings: generationSettings);
+
+        Assert.NotSame(localA, localB);
+        Assert.Same(localB, localBAgain);
+        Assert.Equal(contractB, localGenerator.LastSettings!.Value.ContinuityContract);
+    }
+
+    [Fact]
     public void GenerateAndApplyEmbark_PopulatesWorldMap_And_TracksContext()
     {
         var map = new WorldMap();
@@ -271,6 +307,8 @@ public sealed class MapGenerationServiceTests
     private sealed class CapturingLocalLayerGenerator : ILocalLayerGenerator
     {
         public LocalHistoryContext? LastHistoryContext { get; private set; }
+        public LocalGenerationSettings? LastSettings { get; private set; }
+        public int GenerateCallCount { get; private set; }
 
         public GeneratedEmbarkMap Generate(
             GeneratedRegionMap region,
@@ -278,6 +316,8 @@ public sealed class MapGenerationServiceTests
             LocalGenerationSettings settings,
             LocalHistoryContext? historyContext = null)
         {
+            GenerateCallCount++;
+            LastSettings = settings;
             LastHistoryContext = historyContext;
             return new GeneratedEmbarkMap(settings.Width, settings.Height, settings.Depth);
         }

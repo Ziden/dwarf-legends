@@ -52,6 +52,9 @@ public partial class WorldGenViewerRoot : Node2D
         ParentMoistureDelta,
         RiverContinuity,
         RoadContinuity,
+        LocalSurfaceContinuity,
+        LocalWaterContinuity,
+        LocalEcologyContinuity,
         RiverOrder,
         HistoryTerritory,
     }
@@ -90,6 +93,10 @@ public partial class WorldGenViewerRoot : Node2D
     private GeneratedWorldMap? _worldMap;
     private GeneratedRegionMap? _regionMap;
     private GeneratedEmbarkMap? _localMap;
+    private GeneratedEmbarkMap? _northLocal;
+    private GeneratedEmbarkMap? _eastLocal;
+    private GeneratedEmbarkMap? _southLocal;
+    private GeneratedEmbarkMap? _westLocal;
     private GeneratedRegionMap? _northRegion;
     private GeneratedRegionMap? _eastRegion;
     private GeneratedRegionMap? _southRegion;
@@ -195,6 +202,9 @@ public partial class WorldGenViewerRoot : Node2D
         _overlayModeSelect.AddItem("Parent Moisture Delta");
         _overlayModeSelect.AddItem("River Continuity");
         _overlayModeSelect.AddItem("Road Continuity");
+        _overlayModeSelect.AddItem("Local Surface Continuity");
+        _overlayModeSelect.AddItem("Local Water Continuity");
+        _overlayModeSelect.AddItem("Local Ecology Continuity");
         _overlayModeSelect.AddItem("River Order");
         _overlayModeSelect.AddItem("History Territory");
         _overlayModeSelect.Selected = (int)_overlayMode;
@@ -1155,6 +1165,9 @@ public partial class WorldGenViewerRoot : Node2D
             OverlayMode.ParentMoistureDelta => "Parent Moisture Delta",
             OverlayMode.RiverContinuity => "River Continuity",
             OverlayMode.RoadContinuity => "Road Continuity",
+            OverlayMode.LocalSurfaceContinuity => "Local Surface Continuity",
+            OverlayMode.LocalWaterContinuity => "Local Water Continuity",
+            OverlayMode.LocalEcologyContinuity => "Local Ecology Continuity",
             OverlayMode.RiverOrder => "River Order",
             OverlayMode.HistoryTerritory => "History Territory",
             _ => "None",
@@ -1181,12 +1194,106 @@ public partial class WorldGenViewerRoot : Node2D
                 DrawRect(rect, PixelArtFactory.GetWorldGenRiverColor(0.08f + tile.FluidLevel / 18f));
             else if (tile.IsAquifer)
                 DrawRect(rect, PixelArtFactory.GetAquiferOverlayColor(0.20f));
+
+            DrawLocalOverlay(rect, x, y, tile);
         }
 
         DrawLocalCreatureSpawnMarkers(origin);
 
         if (_infoLabel is not null)
             _infoLabel.Text = $"Local map z={_currentZ}/{_localDepth - 1}. Click a tile for details.";
+    }
+
+    private void DrawLocalOverlay(Rect2 rect, int x, int y, GeneratedTile tile)
+    {
+        var targetMismatch = _overlayMode switch
+        {
+            OverlayMode.LocalSurfaceContinuity => EmbarkBoundaryMismatchKind.SurfaceFamily,
+            OverlayMode.LocalWaterContinuity => EmbarkBoundaryMismatchKind.Water,
+            OverlayMode.LocalEcologyContinuity => EmbarkBoundaryMismatchKind.Ecology | EmbarkBoundaryMismatchKind.Tree,
+            _ => EmbarkBoundaryMismatchKind.None,
+        };
+
+        if (targetMismatch == EmbarkBoundaryMismatchKind.None)
+            return;
+        if (!TryGetLocalBoundaryMismatchKinds(x, y, tile, out var mismatchKinds))
+            return;
+
+        if ((mismatchKinds & targetMismatch) != 0)
+            DrawRect(rect, PixelArtFactory.GetWorldGenMismatchColor(0.45f));
+        else
+            DrawRect(rect, PixelArtFactory.GetWorldGenResolvedColor(0.20f));
+    }
+
+    private bool TryGetLocalBoundaryMismatchKinds(int x, int y, GeneratedTile tile, out EmbarkBoundaryMismatchKind mismatchKinds)
+    {
+        mismatchKinds = EmbarkBoundaryMismatchKind.None;
+        if (_localMap is null || !EmbarkBoundaryContinuity.IsBoundaryCell(_localMap, x, y))
+            return false;
+
+        var comparable = false;
+
+        if (y == 0 && _northLocal is not null)
+        {
+            comparable = true;
+            mismatchKinds |= EmbarkBoundaryContinuity.CompareTiles(tile, _northLocal.GetTile(x, _northLocal.Height - 1, _currentZ));
+        }
+
+        if (x == _localWidth - 1 && _eastLocal is not null)
+        {
+            comparable = true;
+            mismatchKinds |= EmbarkBoundaryContinuity.CompareTiles(tile, _eastLocal.GetTile(0, y, _currentZ));
+        }
+
+        if (y == _localHeight - 1 && _southLocal is not null)
+        {
+            comparable = true;
+            mismatchKinds |= EmbarkBoundaryContinuity.CompareTiles(tile, _southLocal.GetTile(x, 0, _currentZ));
+        }
+
+        if (x == 0 && _westLocal is not null)
+        {
+            comparable = true;
+            mismatchKinds |= EmbarkBoundaryContinuity.CompareTiles(tile, _westLocal.GetTile(_westLocal.Width - 1, y, _currentZ));
+        }
+
+        return comparable;
+    }
+
+    private int CountLocalComparableBoundaryTiles()
+    {
+        if (_localMap is null)
+            return 0;
+
+        var comparable = 0;
+        for (var y = 0; y < _localHeight; y++)
+        for (var x = 0; x < _localWidth; x++)
+        {
+            var tile = _localMap.GetTile(x, y, _currentZ);
+            if (TryGetLocalBoundaryMismatchKinds(x, y, tile, out _))
+                comparable++;
+        }
+
+        return comparable;
+    }
+
+    private int CountLocalContinuityWarnings(EmbarkBoundaryMismatchKind mismatchKind)
+    {
+        if (_localMap is null)
+            return 0;
+
+        var warnings = 0;
+        for (var y = 0; y < _localHeight; y++)
+        for (var x = 0; x < _localWidth; x++)
+        {
+            var tile = _localMap.GetTile(x, y, _currentZ);
+            if (!TryGetLocalBoundaryMismatchKinds(x, y, tile, out var mismatchKinds))
+                continue;
+            if ((mismatchKinds & mismatchKind) != 0)
+                warnings++;
+        }
+
+        return warnings;
     }
 
     private void DrawLocalCreatureSpawnMarkers(Vector2 origin)
@@ -1400,6 +1507,61 @@ public partial class WorldGenViewerRoot : Node2D
         }
         if (_zLabel is not null)
             _zLabel.Text = $"Z Layer: {_currentZ}";
+
+        GenerateNeighborLocals();
+    }
+
+    private void GenerateNeighborLocals()
+    {
+        _northLocal = GenerateNeighborLocal(0, -1);
+        _eastLocal = GenerateNeighborLocal(1, 0);
+        _southLocal = GenerateNeighborLocal(0, 1);
+        _westLocal = GenerateNeighborLocal(-1, 0);
+    }
+
+    private GeneratedEmbarkMap? GenerateNeighborLocal(int dx, int dy)
+    {
+        if (_regionMap is null)
+            return null;
+
+        var worldX = _selectedWorldX;
+        var worldY = _selectedWorldY;
+        var regionX = _selectedRegionX + dx;
+        var regionY = _selectedRegionY + dy;
+        GeneratedRegionMap? targetRegion = _regionMap;
+
+        if (regionX < 0)
+        {
+            targetRegion = _westRegion;
+            worldX--;
+            regionX = _regionWidth - 1;
+        }
+        else if (regionX >= _regionWidth)
+        {
+            targetRegion = _eastRegion;
+            worldX++;
+            regionX = 0;
+        }
+
+        if (regionY < 0)
+        {
+            targetRegion = _northRegion;
+            worldY--;
+            regionY = _regionHeight - 1;
+        }
+        else if (regionY >= _regionHeight)
+        {
+            targetRegion = _southRegion;
+            worldY++;
+            regionY = 0;
+        }
+
+        if (targetRegion is null)
+            return null;
+
+        var coord = new RegionCoord(worldX, worldY, regionX, regionY);
+        var settings = new LocalGenerationSettings(_localWidth, _localHeight, _localDepth);
+        return _localGenerator.Generate(targetRegion, coord, settings);
     }
 
     private void GenerateHistoryTimeline()
@@ -1974,8 +2136,6 @@ public partial class WorldGenViewerRoot : Node2D
         var showLocalDepth = mode == ViewMode.Local;
         _zLabel!.Visible = showLocalDepth;
         _zSlider!.Visible = showLocalDepth;
-        if (_overlayModeSelect is not null)
-            _overlayModeSelect.Disabled = mode == ViewMode.Local;
         UpdateParentDeltaControlsVisibility();
 
         RefreshStats();
@@ -2144,6 +2304,16 @@ public partial class WorldGenViewerRoot : Node2D
         Stat("Mountain->Region Slope", $"{_pipelineReport.WorldMountainRegionSlopeCorrelation:F3}");
         Stat("Region River Mismatch", $"{_pipelineReport.RegionRiverEdgeMismatchRatio:F3}");
         Stat("Region Road Mismatch", $"{_pipelineReport.RegionRoadEdgeMismatchRatio:F3}");
+        Stat("Local Boundary Samples", _pipelineReport.LocalBoundarySampleCount.ToString());
+        Stat("Local Surface Mismatch", $"{_pipelineReport.LocalSurfaceBoundaryMismatchRatio:F3}");
+        Stat("Local Water Mismatch", $"{_pipelineReport.LocalWaterBoundaryMismatchRatio:F3}");
+        Stat("Local Ecology Mismatch", $"{_pipelineReport.LocalEcologyBoundaryMismatchRatio:F3}");
+        Stat("Local Tree Mismatch", $"{_pipelineReport.LocalTreeBoundaryMismatchRatio:F3}");
+        Stat("Local Band Samples", _pipelineReport.LocalBoundaryBandSampleCount.ToString());
+        Stat("Local Band Surface", $"{_pipelineReport.LocalSurfaceBoundaryBandMismatchRatio:F3}");
+        Stat("Local Band Water", $"{_pipelineReport.LocalWaterBoundaryBandMismatchRatio:F3}");
+        Stat("Local Band Ecology", $"{_pipelineReport.LocalEcologyBoundaryBandMismatchRatio:F3}");
+        Stat("Local Band Tree", $"{_pipelineReport.LocalTreeBoundaryBandMismatchRatio:F3}");
         Stat("Local Avg Tree Density", $"{_pipelineReport.AvgLocalTreeDensity:F3}");
         Stat("Dense Forest Canopy", $"{_pipelineReport.DenseForestMedianTreeDensity:F3} ({_pipelineReport.DenseForestSampleCount} samples)");
         Stat("Tropical Canopy", $"{_pipelineReport.TropicalMedianTreeDensity:F3} ({_pipelineReport.TropicalSampleCount} samples)");
@@ -2492,6 +2662,12 @@ public partial class WorldGenViewerRoot : Node2D
         Stat("Wildlife (Surface)", surfaceWildlife.ToString());
         Stat("Wildlife (Caves)", caveWildlife.ToString());
         Stat("Wildlife Species", wildlifeSpecies.Count.ToString());
+        Stat("Boundary Samples", CountLocalComparableBoundaryTiles().ToString());
+        Stat("Surface Continuity", CountLocalContinuityWarnings(EmbarkBoundaryMismatchKind.SurfaceFamily).ToString());
+        Stat("Water Continuity", CountLocalContinuityWarnings(EmbarkBoundaryMismatchKind.Water).ToString());
+        Stat("Ecology Continuity", CountLocalContinuityWarnings(EmbarkBoundaryMismatchKind.Ecology | EmbarkBoundaryMismatchKind.Tree).ToString());
+        if (_currentZ == 0)
+            Stat("Unsafe Borders", EmbarkBoundaryContinuity.CountUnsafeBorderCells(_localMap, z: 0).ToString());
 
         if (stageReport is null)
             return;

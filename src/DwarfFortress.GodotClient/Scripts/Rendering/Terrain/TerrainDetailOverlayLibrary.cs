@@ -6,7 +6,7 @@ namespace DwarfFortress.GodotClient.Rendering;
 
 public static class TerrainDetailOverlayLibrary
 {
-    private const int InitialTextureArrayCapacity = 32;
+    private const int InitialTextureArrayCapacity = 64;
 
     private static readonly object Sync = new();
     private static readonly Dictionary<TerrainDetailRecipe, TerrainDetailEntry> Entries = new();
@@ -14,6 +14,7 @@ public static class TerrainDetailOverlayLibrary
 
     private static Texture2DArray? _textureArray;
     private static int _textureArrayCapacity;
+    private static int _textureArrayRebuildCount;
 
     public static bool TryGetOrCreateArrayLayer(TileRenderData tile, int x, int y, int z, out int layer)
     {
@@ -33,6 +34,37 @@ public static class TerrainDetailOverlayLibrary
     {
         lock (Sync)
             return _textureArray;
+    }
+
+    public static int GetLayerCount()
+    {
+        lock (Sync)
+            return ArrayLayerImages.Count;
+    }
+
+    public static int GetCapacity()
+    {
+        lock (Sync)
+            return _textureArrayCapacity;
+    }
+
+    public static int GetArrayRebuildCount()
+    {
+        lock (Sync)
+            return _textureArrayRebuildCount;
+    }
+
+    public static void Reset()
+    {
+        lock (Sync)
+        {
+            Entries.Clear();
+            ArrayLayerImages.Clear();
+            _textureArray?.Dispose();
+            _textureArray = null;
+            _textureArrayCapacity = 0;
+            _textureArrayRebuildCount = 0;
+        }
     }
 
     private static TerrainDetailRecipe? BuildRecipe(TileRenderData tile, int x, int y, int z)
@@ -87,6 +119,7 @@ public static class TerrainDetailOverlayLibrary
 
         var nextTextureArray = new Texture2DArray();
         nextTextureArray.CreateFromImages(images);
+        _textureArrayRebuildCount++;
 
         var previousTextureArray = _textureArray;
         _textureArray = nextTextureArray;

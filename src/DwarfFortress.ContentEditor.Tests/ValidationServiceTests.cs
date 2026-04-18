@@ -101,6 +101,36 @@ public sealed class ValidationServiceTests : IDisposable
         Assert.DoesNotContain(errors, e => e.Message.Contains("iron_bar"));
     }
 
+    [Fact]
+    public void Validate_DetectsMissingBuildingFootprintTile()
+    {
+        var buildings = _fixture.DataService.LoadBuildings();
+        buildings[0].Footprint[0].Tile = "ghost_floor";
+        _fixture.DataService.SaveBuildings(buildings);
+
+        var errors = CreateSvc().Validate();
+
+        Assert.Contains(errors, e =>
+            e.Category == "buildings" &&
+            e.ItemId == "smelter" &&
+            e.Message.Contains("ghost_floor"));
+    }
+
+    [Fact]
+    public void Validate_DetectsBuildingEntryOutsideFootprint()
+    {
+        var buildings = _fixture.DataService.LoadBuildings();
+        buildings[0].Entries.Add(new BuildingEntryModel { X = 3, Y = 3, OutwardDirection = "south" });
+        _fixture.DataService.SaveBuildings(buildings);
+
+        var errors = CreateSvc().Validate();
+
+        Assert.Contains(errors, e =>
+            e.Category == "buildings" &&
+            e.ItemId == "smelter" &&
+            e.Message.Contains("outside the footprint"));
+    }
+
     // ── Error accumulation ─────────────────────────────────────────────────
 
     [Fact]

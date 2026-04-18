@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.World;
 using Godot;
@@ -42,25 +43,19 @@ public sealed class WorldChunkSliceMesher
         Liquid,
     }
 
-    public ChunkSliceMeshBuild? BuildSliceMesh(
+    internal ChunkSliceMeshBuild? BuildSliceMesh(
         WorldChunkRenderSnapshot snapshot,
-        WorldMap map,
         int currentZ,
-        Func<int, int, int, TileRenderData?> tryGetTileRenderData,
-        Func<string?, string?>? resolveGroundFromMaterial)
+        Func<int, int, int, WorldTileData?> tryGetTile,
+        WorldChunkSliceRenderCache sliceRenderCache)
     {
         var localZ = currentZ - snapshot.Origin.Z;
         if (!Chunk.IsLocalInBounds(0, 0, localZ))
             return null;
 
-        var topSurfaceTool = new SurfaceTool();
-        topSurfaceTool.Begin(Mesh.PrimitiveType.Triangles);
-
-        var sideSurfaceTool = new SurfaceTool();
-        sideSurfaceTool.Begin(Mesh.PrimitiveType.Triangles);
-
-        var detailSurfaceTool = new SurfaceTool();
-        detailSurfaceTool.Begin(Mesh.PrimitiveType.Triangles);
+        var topSurfaceBuilder = new TexturedSurfaceBuilder();
+        var sideSurfaceBuilder = new ColoredSurfaceBuilder();
+        var detailSurfaceBuilder = new TexturedSurfaceBuilder();
 
         var hasTopGeometry = false;
         var hasSideGeometry = false;
@@ -74,18 +69,16 @@ public sealed class WorldChunkSliceMesher
 
             hasTopGeometry = true;
             var result = AddTileGeometry(
-                topSurfaceTool,
-                sideSurfaceTool,
-                detailSurfaceTool,
-                map,
+                topSurfaceBuilder,
+                sideSurfaceBuilder,
+                detailSurfaceBuilder,
                 snapshot,
                 localX,
                 localY,
-                localZ,
                 tile,
                 currentZ,
-                tryGetTileRenderData,
-                resolveGroundFromMaterial);
+                tryGetTile,
+                sliceRenderCache);
             hasSideGeometry |= result.HasSideGeometry;
             hasDetailGeometry |= result.HasDetailGeometry;
         }
@@ -95,38 +88,43 @@ public sealed class WorldChunkSliceMesher
 
         var mesh = new ArrayMesh();
         var topSurfaceIndex = mesh.GetSurfaceCount();
-        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, topSurfaceTool.CommitToArrays());
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, topSurfaceBuilder.BuildMeshArrays());
 
         int? sideSurfaceIndex = null;
         if (hasSideGeometry)
         {
             sideSurfaceIndex = mesh.GetSurfaceCount();
-            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, sideSurfaceTool.CommitToArrays());
+            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, sideSurfaceBuilder.BuildMeshArrays());
         }
 
         int? detailSurfaceIndex = null;
         if (hasDetailGeometry)
         {
             detailSurfaceIndex = mesh.GetSurfaceCount();
-            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, detailSurfaceTool.CommitToArrays());
+            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, detailSurfaceBuilder.BuildMeshArrays());
         }
 
-        return new ChunkSliceMeshBuild(mesh, topSurfaceIndex, sideSurfaceIndex, detailSurfaceIndex);
+        return new ChunkSliceMeshBuild(
+            mesh,
+            topSurfaceIndex,
+            sideSurfaceIndex,
+            detailSurfaceIndex,
+            topSurfaceBuilder.VertexCount,
+            sideSurfaceBuilder.VertexCount,
+            detailSurfaceBuilder.VertexCount);
     }
 
     private static TileGeometryResult AddTileGeometry(
-        SurfaceTool topSurfaceTool,
-        SurfaceTool sideSurfaceTool,
-        SurfaceTool detailSurfaceTool,
-        WorldMap map,
+        TexturedSurfaceBuilder topSurfaceBuilder,
+        ColoredSurfaceBuilder sideSurfaceBuilder,
+        TexturedSurfaceBuilder detailSurfaceBuilder,
         WorldChunkRenderSnapshot snapshot,
         int localX,
         int localY,
-        int localZ,
         WorldTileData tile,
         int currentZ,
-        Func<int, int, int, TileRenderData?> tryGetTileRenderData,
-        Func<string?, string?>? resolveGroundFromMaterial)
+        Func<int, int, int, WorldTileData?> tryGetTile,
+        WorldChunkSliceRenderCache sliceRenderCache)
     {
         var tileColor = ResolveTileColor(tile);
         var tileHeight = ResolveTileHeight(tile);
@@ -136,39 +134,33 @@ public sealed class WorldChunkSliceMesher
         var worldX = snapshot.Origin.X + localX;
         var worldY = snapshot.Origin.Y + localY;
         var warpStyle = ResolveSurfaceWarpStyle(tile);
-        var northWest = ResolveCornerVertex(snapshot, map, worldX, worldY, currentZ, tileHeight, tileSize, warpStyle);
-        var northEast = ResolveCornerVertex(snapshot, map, worldX + 1, worldY, currentZ, tileHeight, tileSize, warpStyle);
-        var southEast = ResolveCornerVertex(snapshot, map, worldX + 1, worldY + 1, currentZ, tileHeight, tileSize, warpStyle);
-        var southWest = ResolveCornerVertex(snapshot, map, worldX, worldY + 1, currentZ, tileHeight, tileSize, warpStyle);
+        var northWest = ResolveCornerVertex(snapshot, tryGetTile, worldX, worldY, currentZ, tileHeight, tileSize, warpStyle);
+        var northEast = ResolveCornerVertex(snapshot, tryGetTile, worldX + 1, worldY, currentZ, tileHeight, tileSize, warpStyle);
+        var southEast = ResolveCornerVertex(snapshot, tryGetTile, worldX + 1, worldY + 1, currentZ, tileHeight, tileSize, warpStyle);
+        var southWest = ResolveCornerVertex(snapshot, tryGetTile, worldX, worldY + 1, currentZ, tileHeight, tileSize, warpStyle);
 
-        var tileRenderData = tryGetTileRenderData(worldX, worldY, currentZ)
-            ?? new TileRenderData(tile.TileDefId, tile.MaterialId, tile.FluidType, tile.FluidLevel, tile.FluidMaterialId, tile.OreItemDefId, tile.PlantDefId, tile.PlantGrowthStage, tile.PlantYieldLevel, tile.PlantSeedLevel);
-        var textureLayer = TileSurfaceLibrary.GetOrCreateArrayLayer(
-            tileRenderData,
-            worldX,
-            worldY,
-            currentZ,
-            tryGetTileRenderData,
-            resolveGroundFromMaterial);
-        var hasDetailLayer = TerrainDetailOverlayLibrary.TryGetOrCreateArrayLayer(tileRenderData, worldX, worldY, currentZ, out var detailLayer);
+        var hasVisual = sliceRenderCache.TryGet(localX, localY, out var tileVisual);
+        var textureLayer = hasVisual ? tileVisual.TerrainLayer : 0;
+        var hasDetailLayer = hasVisual && tileVisual.HasDetailLayer;
+        var detailLayer = hasVisual ? tileVisual.DetailLayer : -1;
         var renderDetailSides = hasDetailLayer && ShouldRenderTerrainDetailSideOverlay(tile);
         var hasSideGeometry = false;
         var hasDetailGeometry = false;
 
-        var northNeighborHeight = ResolveNeighborHeight(map, worldX, worldY - 1, currentZ);
-        var eastNeighborHeight = ResolveNeighborHeight(map, worldX + 1, worldY, currentZ);
-        var southNeighborHeight = ResolveNeighborHeight(map, worldX, worldY + 1, currentZ);
-        var westNeighborHeight = ResolveNeighborHeight(map, worldX - 1, worldY, currentZ);
-        var northBase = ResolveFaceBaseVertices(snapshot, map, worldX, worldY - 1, currentZ, worldX, worldY, worldX + 1, worldY, tileSize, northWest, northEast);
-        var eastBase = ResolveFaceBaseVertices(snapshot, map, worldX + 1, worldY, currentZ, worldX + 1, worldY, worldX + 1, worldY + 1, tileSize, northEast, southEast);
-        var southBase = ResolveFaceBaseVertices(snapshot, map, worldX, worldY + 1, currentZ, worldX + 1, worldY + 1, worldX, worldY + 1, tileSize, southEast, southWest);
-        var westBase = ResolveFaceBaseVertices(snapshot, map, worldX - 1, worldY, currentZ, worldX, worldY + 1, worldX, worldY, tileSize, southWest, northWest);
+        var northNeighborHeight = ResolveNeighborHeight(tryGetTile, worldX, worldY - 1, currentZ);
+        var eastNeighborHeight = ResolveNeighborHeight(tryGetTile, worldX + 1, worldY, currentZ);
+        var southNeighborHeight = ResolveNeighborHeight(tryGetTile, worldX, worldY + 1, currentZ);
+        var westNeighborHeight = ResolveNeighborHeight(tryGetTile, worldX - 1, worldY, currentZ);
+        var northBase = ResolveFaceBaseVertices(snapshot, tryGetTile, worldX, worldY - 1, currentZ, worldX, worldY, worldX + 1, worldY, tileSize, northWest, northEast);
+        var eastBase = ResolveFaceBaseVertices(snapshot, tryGetTile, worldX + 1, worldY, currentZ, worldX + 1, worldY, worldX + 1, worldY + 1, tileSize, northEast, southEast);
+        var southBase = ResolveFaceBaseVertices(snapshot, tryGetTile, worldX, worldY + 1, currentZ, worldX + 1, worldY + 1, worldX, worldY + 1, tileSize, southEast, southWest);
+        var westBase = ResolveFaceBaseVertices(snapshot, tryGetTile, worldX - 1, worldY, currentZ, worldX, worldY + 1, worldX, worldY, tileSize, southWest, northWest);
 
-        AddTopQuad(topSurfaceTool, northWest, northEast, southEast, southWest, textureLayer);
+        AddTopQuad(topSurfaceBuilder, northWest, northEast, southEast, southWest, textureLayer);
         if (hasDetailLayer)
         {
             AddTexturedQuad(
-                detailSurfaceTool,
+                detailSurfaceBuilder,
                 northWest + (Vector3.Up * TerrainDetailTopOffset),
                 northEast + (Vector3.Up * TerrainDetailTopOffset),
                 southEast + (Vector3.Up * TerrainDetailTopOffset),
@@ -177,54 +169,34 @@ public sealed class WorldChunkSliceMesher
             hasDetailGeometry = true;
         }
 
-        hasSideGeometry |= AddSideFace(sideSurfaceTool, northBase.A, northBase.B, northWest, northEast, tileHeight, northNeighborHeight, sideColor);
-        hasSideGeometry |= AddSideFace(sideSurfaceTool, eastBase.A, eastBase.B, northEast, southEast, tileHeight, eastNeighborHeight, sideColor);
-        hasSideGeometry |= AddSideFace(sideSurfaceTool, southBase.A, southBase.B, southEast, southWest, tileHeight, southNeighborHeight, sideColor);
-        hasSideGeometry |= AddSideFace(sideSurfaceTool, westBase.A, westBase.B, southWest, northWest, tileHeight, westNeighborHeight, sideColor);
+        hasSideGeometry |= AddSideFace(sideSurfaceBuilder, northBase.A, northBase.B, northWest, northEast, tileHeight, northNeighborHeight, sideColor);
+        hasSideGeometry |= AddSideFace(sideSurfaceBuilder, eastBase.A, eastBase.B, northEast, southEast, tileHeight, eastNeighborHeight, sideColor);
+        hasSideGeometry |= AddSideFace(sideSurfaceBuilder, southBase.A, southBase.B, southEast, southWest, tileHeight, southNeighborHeight, sideColor);
+        hasSideGeometry |= AddSideFace(sideSurfaceBuilder, westBase.A, westBase.B, southWest, northWest, tileHeight, westNeighborHeight, sideColor);
 
         if (renderDetailSides)
         {
-            hasDetailGeometry |= AddDetailSideFace(detailSurfaceTool, northBase.A, northBase.B, northWest, northEast, tileHeight, northNeighborHeight, new Vector3(0f, 0f, -TerrainDetailSideOffset), detailLayer);
-            hasDetailGeometry |= AddDetailSideFace(detailSurfaceTool, eastBase.A, eastBase.B, northEast, southEast, tileHeight, eastNeighborHeight, new Vector3(TerrainDetailSideOffset, 0f, 0f), detailLayer);
-            hasDetailGeometry |= AddDetailSideFace(detailSurfaceTool, southBase.A, southBase.B, southEast, southWest, tileHeight, southNeighborHeight, new Vector3(0f, 0f, TerrainDetailSideOffset), detailLayer);
-            hasDetailGeometry |= AddDetailSideFace(detailSurfaceTool, westBase.A, westBase.B, southWest, northWest, tileHeight, westNeighborHeight, new Vector3(-TerrainDetailSideOffset, 0f, 0f), detailLayer);
+            hasDetailGeometry |= AddDetailSideFace(detailSurfaceBuilder, northBase.A, northBase.B, northWest, northEast, tileHeight, northNeighborHeight, new Vector3(0f, 0f, -TerrainDetailSideOffset), detailLayer);
+            hasDetailGeometry |= AddDetailSideFace(detailSurfaceBuilder, eastBase.A, eastBase.B, northEast, southEast, tileHeight, eastNeighborHeight, new Vector3(TerrainDetailSideOffset, 0f, 0f), detailLayer);
+            hasDetailGeometry |= AddDetailSideFace(detailSurfaceBuilder, southBase.A, southBase.B, southEast, southWest, tileHeight, southNeighborHeight, new Vector3(0f, 0f, TerrainDetailSideOffset), detailLayer);
+            hasDetailGeometry |= AddDetailSideFace(detailSurfaceBuilder, westBase.A, westBase.B, southWest, northWest, tileHeight, westNeighborHeight, new Vector3(-TerrainDetailSideOffset, 0f, 0f), detailLayer);
         }
 
         return new TileGeometryResult(hasSideGeometry, hasDetailGeometry);
     }
 
-    private static void AddTopQuad(SurfaceTool surfaceTool, Vector3 a, Vector3 b, Vector3 c, Vector3 d, int textureLayer)
+    private static void AddTopQuad(TexturedSurfaceBuilder surfaceBuilder, Vector3 a, Vector3 b, Vector3 c, Vector3 d, int textureLayer)
     {
-        AddTexturedQuad(surfaceTool, a, b, c, d, textureLayer);
+        AddTexturedQuad(surfaceBuilder, a, b, c, d, textureLayer);
     }
 
-    private static void AddTexturedQuad(SurfaceTool surfaceTool, Vector3 a, Vector3 b, Vector3 c, Vector3 d, int textureLayer)
+    private static void AddTexturedQuad(TexturedSurfaceBuilder surfaceBuilder, Vector3 a, Vector3 b, Vector3 c, Vector3 d, int textureLayer)
     {
-        var layer = new Vector2(textureLayer, 0f);
-
-        surfaceTool.SetUV(new Vector2(0f, 0f));
-        surfaceTool.SetUV2(layer);
-        surfaceTool.AddVertex(a);
-        surfaceTool.SetUV(new Vector2(1f, 0f));
-        surfaceTool.SetUV2(layer);
-        surfaceTool.AddVertex(b);
-        surfaceTool.SetUV(new Vector2(1f, 1f));
-        surfaceTool.SetUV2(layer);
-        surfaceTool.AddVertex(c);
-
-        surfaceTool.SetUV(new Vector2(0f, 0f));
-        surfaceTool.SetUV2(layer);
-        surfaceTool.AddVertex(a);
-        surfaceTool.SetUV(new Vector2(1f, 1f));
-        surfaceTool.SetUV2(layer);
-        surfaceTool.AddVertex(c);
-        surfaceTool.SetUV(new Vector2(0f, 1f));
-        surfaceTool.SetUV2(layer);
-        surfaceTool.AddVertex(d);
+        surfaceBuilder.AddQuad(a, b, c, d, textureLayer);
     }
 
     private static bool AddSideFace(
-        SurfaceTool surfaceTool,
+        ColoredSurfaceBuilder surfaceBuilder,
         Vector3 baseA,
         Vector3 baseB,
         Vector3 topA,
@@ -236,12 +208,12 @@ public sealed class WorldChunkSliceMesher
         if (neighborHeight >= tileHeight - MinExposedSideHeight)
             return false;
 
-        AddQuad(surfaceTool, baseA, baseB, topB, topA, color);
+        AddQuad(surfaceBuilder, baseA, baseB, topB, topA, color);
         return true;
     }
 
     private static bool AddDetailSideFace(
-        SurfaceTool surfaceTool,
+        TexturedSurfaceBuilder surfaceBuilder,
         Vector3 baseA,
         Vector3 baseB,
         Vector3 topA,
@@ -254,13 +226,13 @@ public sealed class WorldChunkSliceMesher
         if (neighborHeight >= tileHeight - MinExposedSideHeight)
             return false;
 
-        AddTexturedQuad(surfaceTool, baseA + offset, baseB + offset, topB + offset, topA + offset, textureLayer);
+        AddTexturedQuad(surfaceBuilder, baseA + offset, baseB + offset, topB + offset, topA + offset, textureLayer);
         return true;
     }
 
     private static (Vector3 A, Vector3 B) ResolveFaceBaseVertices(
         WorldChunkRenderSnapshot snapshot,
-        WorldMap map,
+        Func<int, int, int, WorldTileData?> tryGetTile,
         int neighborTileX,
         int neighborTileY,
         int worldZ,
@@ -272,34 +244,29 @@ public sealed class WorldChunkSliceMesher
         Vector3 fallbackA,
         Vector3 fallbackB)
     {
-        var neighborPosition = new Vec3i(neighborTileX, neighborTileY, worldZ);
-        if (!map.IsInBounds(neighborPosition))
+        var neighbor = tryGetTile(neighborTileX, neighborTileY, worldZ);
+        if (neighbor is not { } resolvedNeighbor || resolvedNeighbor.TileDefId == TileDefIds.Empty)
             return (new Vector3(fallbackA.X, 0f, fallbackA.Z), new Vector3(fallbackB.X, 0f, fallbackB.Z));
 
-        var neighbor = map.GetTile(neighborPosition);
-        if (neighbor.TileDefId == TileDefIds.Empty)
-            return (new Vector3(fallbackA.X, 0f, fallbackA.Z), new Vector3(fallbackB.X, 0f, fallbackB.Z));
-
-        var neighborHeight = ResolveTileHeight(neighbor);
-        var neighborWarpStyle = ResolveSurfaceWarpStyle(neighbor);
+        var neighborHeight = ResolveTileHeight(resolvedNeighbor);
+        var neighborWarpStyle = ResolveSurfaceWarpStyle(resolvedNeighbor);
         return (
-            ResolveCornerVertex(snapshot, map, cornerAX, cornerAY, worldZ, neighborHeight, tileSize, neighborWarpStyle),
-            ResolveCornerVertex(snapshot, map, cornerBX, cornerBY, worldZ, neighborHeight, tileSize, neighborWarpStyle));
+            ResolveCornerVertex(snapshot, tryGetTile, cornerAX, cornerAY, worldZ, neighborHeight, tileSize, neighborWarpStyle),
+            ResolveCornerVertex(snapshot, tryGetTile, cornerBX, cornerBY, worldZ, neighborHeight, tileSize, neighborWarpStyle));
     }
 
-    private static float ResolveNeighborHeight(WorldMap map, int worldX, int worldY, int worldZ)
+    private static float ResolveNeighborHeight(Func<int, int, int, WorldTileData?> tryGetTile, int worldX, int worldY, int worldZ)
     {
-        var position = new Vec3i(worldX, worldY, worldZ);
-        if (!map.IsInBounds(position))
+        var neighbor = tryGetTile(worldX, worldY, worldZ);
+        if (neighbor is not { } resolvedNeighbor)
             return 0f;
 
-        var neighbor = map.GetTile(position);
-        return neighbor.TileDefId == TileDefIds.Empty ? 0f : ResolveTileHeight(neighbor);
+        return resolvedNeighbor.TileDefId == TileDefIds.Empty ? 0f : ResolveTileHeight(resolvedNeighbor);
     }
 
     private static Vector3 ResolveCornerVertex(
         WorldChunkRenderSnapshot snapshot,
-        WorldMap map,
+        Func<int, int, int, WorldTileData?> tryGetTile,
         int gridWorldX,
         int gridWorldY,
         int worldZ,
@@ -312,7 +279,7 @@ public sealed class WorldChunkSliceMesher
         if (warpStyle == SurfaceWarpStyle.None)
             return new Vector3(baseX, tileHeight, baseZ);
 
-        var sample = SampleCorner(map, gridWorldX, gridWorldY, worldZ);
+        var sample = SampleCorner(tryGetTile, gridWorldX, gridWorldY, worldZ);
         var horizontalOffset = ResolveCornerHorizontalOffset(sample, gridWorldX, gridWorldY, worldZ);
         var verticalOffset = warpStyle switch
         {
@@ -355,7 +322,7 @@ public sealed class WorldChunkSliceMesher
         return tile.TileDefId is TileDefIds.StoneFloor or TileDefIds.Obsidian;
     }
 
-    private static CornerSample SampleCorner(WorldMap map, int gridWorldX, int gridWorldY, int worldZ)
+    private static CornerSample SampleCorner(Func<int, int, int, WorldTileData?> tryGetTile, int gridWorldX, int gridWorldY, int worldZ)
     {
         var flatSurfaceCount = 0;
         var caveSurfaceCount = 0;
@@ -364,10 +331,10 @@ public sealed class WorldChunkSliceMesher
         var waterCentroid = Vector2.Zero;
         var magmaCentroid = Vector2.Zero;
 
-        SampleCornerTile(map, gridWorldX - 1, gridWorldY - 1, worldZ, new Vector2(-0.5f, -0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
-        SampleCornerTile(map, gridWorldX, gridWorldY - 1, worldZ, new Vector2(0.5f, -0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
-        SampleCornerTile(map, gridWorldX - 1, gridWorldY, worldZ, new Vector2(-0.5f, 0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
-        SampleCornerTile(map, gridWorldX, gridWorldY, worldZ, new Vector2(0.5f, 0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
+        SampleCornerTile(tryGetTile, gridWorldX - 1, gridWorldY - 1, worldZ, new Vector2(-0.5f, -0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
+        SampleCornerTile(tryGetTile, gridWorldX, gridWorldY - 1, worldZ, new Vector2(0.5f, -0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
+        SampleCornerTile(tryGetTile, gridWorldX - 1, gridWorldY, worldZ, new Vector2(-0.5f, 0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
+        SampleCornerTile(tryGetTile, gridWorldX, gridWorldY, worldZ, new Vector2(0.5f, 0.5f), ref flatSurfaceCount, ref caveSurfaceCount, ref waterCount, ref magmaCount, ref waterCentroid, ref magmaCentroid);
 
         if (waterCount > 0)
             waterCentroid /= waterCount;
@@ -378,7 +345,7 @@ public sealed class WorldChunkSliceMesher
     }
 
     private static void SampleCornerTile(
-        WorldMap map,
+        Func<int, int, int, WorldTileData?> tryGetTile,
         int worldX,
         int worldY,
         int worldZ,
@@ -390,27 +357,26 @@ public sealed class WorldChunkSliceMesher
         ref Vector2 waterCentroid,
         ref Vector2 magmaCentroid)
     {
-        var position = new Vec3i(worldX, worldY, worldZ);
-        if (!map.IsInBounds(position))
+        var tile = tryGetTile(worldX, worldY, worldZ);
+        if (tile is not { } resolvedTile)
             return;
 
-        var tile = map.GetTile(position);
-        if (tile.TileDefId == TileDefIds.Empty)
+        if (resolvedTile.TileDefId == TileDefIds.Empty)
             return;
 
-        if (SupportsFlatSurfaceWarp(tile))
+        if (SupportsFlatSurfaceWarp(resolvedTile))
         {
             flatSurfaceCount++;
-            if (IsCaveLikeFlatSurface(tile, worldZ))
+            if (IsCaveLikeFlatSurface(resolvedTile, worldZ))
                 caveSurfaceCount++;
         }
 
-        if (IsWaterTile(tile))
+        if (IsWaterTile(resolvedTile))
         {
             waterCount++;
             waterCentroid += center;
         }
-        else if (IsMagmaTile(tile))
+        else if (IsMagmaTile(resolvedTile))
         {
             magmaCount++;
             magmaCentroid += center;
@@ -562,30 +528,91 @@ public sealed class WorldChunkSliceMesher
             || !tile.IsPassable;
     }
 
-    private static void AddQuad(SurfaceTool surfaceTool, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color color)
+    private static void AddQuad(ColoredSurfaceBuilder surfaceBuilder, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color color)
     {
-        surfaceTool.SetColor(color);
-        surfaceTool.AddVertex(a);
-        surfaceTool.SetColor(color);
-        surfaceTool.AddVertex(b);
-        surfaceTool.SetColor(color);
-        surfaceTool.AddVertex(c);
-
-        surfaceTool.SetColor(color);
-        surfaceTool.AddVertex(a);
-        surfaceTool.SetColor(color);
-        surfaceTool.AddVertex(c);
-        surfaceTool.SetColor(color);
-        surfaceTool.AddVertex(d);
+        surfaceBuilder.AddQuad(a, b, c, d, color);
     }
 
     public readonly record struct ChunkSliceMeshBuild(
         ArrayMesh Mesh,
         int TopSurfaceIndex,
         int? SideSurfaceIndex,
-        int? DetailSurfaceIndex);
+        int? DetailSurfaceIndex,
+        int TopVertexCount,
+        int SideVertexCount,
+        int DetailVertexCount);
 
     private readonly record struct TileGeometryResult(
         bool HasSideGeometry,
         bool HasDetailGeometry);
+
+    private sealed class TexturedSurfaceBuilder
+    {
+        private readonly List<Vector3> _vertices = new();
+        private readonly List<Vector2> _uv = new();
+        private readonly List<Vector2> _uv2 = new();
+
+        public int VertexCount => _vertices.Count;
+
+        public void AddQuad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int textureLayer)
+        {
+            var layer = new Vector2(textureLayer, 0f);
+            AddVertex(a, new Vector2(0f, 0f), layer);
+            AddVertex(b, new Vector2(1f, 0f), layer);
+            AddVertex(c, new Vector2(1f, 1f), layer);
+            AddVertex(a, new Vector2(0f, 0f), layer);
+            AddVertex(c, new Vector2(1f, 1f), layer);
+            AddVertex(d, new Vector2(0f, 1f), layer);
+        }
+
+        public Godot.Collections.Array BuildMeshArrays()
+        {
+            var arrays = new Godot.Collections.Array();
+            arrays.Resize((int)Mesh.ArrayType.Max);
+            arrays[(int)Mesh.ArrayType.Vertex] = _vertices.ToArray();
+            arrays[(int)Mesh.ArrayType.TexUV] = _uv.ToArray();
+            arrays[(int)Mesh.ArrayType.TexUV2] = _uv2.ToArray();
+            return arrays;
+        }
+
+        private void AddVertex(Vector3 vertex, Vector2 uv, Vector2 uv2)
+        {
+            _vertices.Add(vertex);
+            _uv.Add(uv);
+            _uv2.Add(uv2);
+        }
+    }
+
+    private sealed class ColoredSurfaceBuilder
+    {
+        private readonly List<Vector3> _vertices = new();
+        private readonly List<Color> _colors = new();
+
+        public int VertexCount => _vertices.Count;
+
+        public void AddQuad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color color)
+        {
+            AddVertex(a, color);
+            AddVertex(b, color);
+            AddVertex(c, color);
+            AddVertex(a, color);
+            AddVertex(c, color);
+            AddVertex(d, color);
+        }
+
+        public Godot.Collections.Array BuildMeshArrays()
+        {
+            var arrays = new Godot.Collections.Array();
+            arrays.Resize((int)Mesh.ArrayType.Max);
+            arrays[(int)Mesh.ArrayType.Vertex] = _vertices.ToArray();
+            arrays[(int)Mesh.ArrayType.Color] = _colors.ToArray();
+            return arrays;
+        }
+
+        private void AddVertex(Vector3 vertex, Color color)
+        {
+            _vertices.Add(vertex);
+            _colors.Add(color);
+        }
+    }
 }

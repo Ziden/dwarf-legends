@@ -35,7 +35,7 @@ public static class WorldGenerator
         }
     }
 
-    private static TileData ToTileData(GeneratedTile tile) => new()
+    public static TileData ToTileData(GeneratedTile tile) => new()
     {
         TileDefId = tile.TileDefId,
         MaterialId = tile.MaterialId,

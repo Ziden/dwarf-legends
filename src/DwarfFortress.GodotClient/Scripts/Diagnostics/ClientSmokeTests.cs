@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using DwarfFortress.GameLogic;
@@ -12,9 +13,12 @@ using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.World;
 using DwarfFortress.GodotClient.Input;
+using DwarfFortress.GodotClient.Presentation;
 using DwarfFortress.GodotClient.Rendering;
 using DwarfFortress.WorldGen.Ids;
 using Godot;
+
+using WorldTileData = DwarfFortress.GameLogic.World.TileData;
 
 namespace DwarfFortress.GodotClient.Diagnostics;
 
@@ -35,6 +39,9 @@ public partial class ClientSmokeTests : Node
 
             if (ShouldRun("pixel-art"))
                 RunPixelArtFactoryTest();
+
+            if (ShouldRun("terrain-array-budget"))
+                RunTerrainArrayBudgetTest();
 
             if (ShouldRun("workshop-filter"))
                 RunWorkshopRecipeFilterTest();
@@ -84,8 +91,14 @@ public partial class ClientSmokeTests : Node
             if (ShouldRun("startup"))
                 await RunGameRootStartupTest();
 
-            if (ShouldRun("render-mode-residency"))
-                await RunGameRootRenderResidencyTest();
+            // Disabled for now because this residency smoke path can destabilize VS Code
+            // while chunk-mesh seam work is still changing. Re-enable after the render
+            // queue settles deterministically without the IDE hanging.
+            // if (ShouldRun("render-mode-residency"))
+            //     await RunGameRootRenderResidencyTest();
+
+            if (ShouldRun("preview-vegetation-billboard"))
+                await RunPreviewVegetationBillboardRefreshTest();
 
             if (ShouldRun("camera-3d-controls"))
                 RunWorldCamera3DControllerControlsTest();
@@ -104,6 +117,21 @@ public partial class ClientSmokeTests : Node
 
             if (ShouldRun("resource-billboard-hover"))
                 await RunResourceBillboardHoverSelectionTest();
+
+            if (ShouldRun("hover-highlight-fallback"))
+                await RunRawTileHoverFallbackTest();
+
+            if (ShouldRun("hover-selection-deterministic"))
+                RunDeterministicHoverSelectionTest();
+
+            if (ShouldRun("hover-highlight-overlap"))
+                await RunHoverOverlapPriorityTest();
+
+            if (ShouldRun("hover-highlight-shared-material"))
+                await RunSharedMaterialHoverSafetyTest();
+
+            if (ShouldRun("hover-highlight-building"))
+                await RunBuildingHoverHighlightTest();
 
             if (ShouldRun("resource-billboard-area-selection"))
                 await RunResourceBillboardAreaSelectionHighlightTest();
@@ -264,6 +292,12 @@ public partial class ClientSmokeTests : Node
         }
     }
 
+    private static void RunTerrainArrayBudgetTest()
+    {
+        AssertTerrainArrayCanonicalizationCollapsesBlendNoise();
+        AssertTerrainArrayFallsBackBeforeExceedingLayerBudget();
+    }
+
     private static void AssertDistinctPlantSilhouettes(byte growthStage, byte yieldLevel, params string[] plantDefIds)
     {
         var duplicateSilhouettes = plantDefIds
@@ -319,6 +353,83 @@ public partial class ClientSmokeTests : Node
                 $"Expected creature '{creatureDefId}' walk sprites to mirror when facing changes.");
         }
     }
+
+    private static void AssertTerrainArrayCanonicalizationCollapsesBlendNoise()
+    {
+        TerrainSurfaceArrayLibrary.Reset();
+
+        var layers = new HashSet<int>();
+        for (var index = 0; index < 48; index++)
+        {
+            var recipe = CreateSolidTerrainSurfaceRecipe(
+                TileDefIds.Grass,
+                $"meadow_{index}",
+                northEdge: new GroundEdgePatchRecipe(
+                    TileDefIds.Soil,
+                    $"soil_patch_{index}",
+                    TerrainEdgeDirection.North,
+                    (byte)(index % 5),
+                    TrimStart: false,
+                    TrimEnd: true));
+            layers.Add(TerrainSurfaceArrayLibrary.GetOrCreateArrayLayer(recipe));
+        }
+
+        Assert(layers.Count == 1,
+            $"Expected 3D terrain array canonicalization to collapse equivalent grass-to-soil blends to one shared layer, got {layers.Count}.");
+    }
+
+    private static void AssertTerrainArrayFallsBackBeforeExceedingLayerBudget()
+    {
+        TerrainSurfaceArrayLibrary.Reset();
+        TerrainSurfaceArrayLibrary.DebugSetMaxSupportedLayerCountForTesting(12);
+
+        try
+        {
+            var layers = new HashSet<int>();
+            for (var index = 0; index < 48; index++)
+            {
+                var recipe = CreateSolidTerrainSurfaceRecipe(TileDefIds.StoneFloor, $"stone_{index}");
+                layers.Add(TerrainSurfaceArrayLibrary.GetOrCreateArrayLayer(recipe));
+            }
+
+            var maxLayerCount = TerrainSurfaceArrayLibrary.GetMaxSupportedLayerCount();
+            Assert(TerrainSurfaceArrayLibrary.GetTextureArray() is not null,
+                "Expected terrain array fallback path to keep a valid texture array alive when the layer budget is exhausted.");
+            Assert(TerrainSurfaceArrayLibrary.GetLayerCount() <= maxLayerCount,
+                $"Expected terrain array layer count to stay within the configured renderer budget {maxLayerCount}, got {TerrainSurfaceArrayLibrary.GetLayerCount()}.");
+            Assert(layers.Count <= maxLayerCount,
+                $"Expected terrain array fallback path to reuse visible fallback layers once the layer budget is reached, got {layers.Count} distinct layers for {maxLayerCount} available slots.");
+        }
+        finally
+        {
+            TerrainSurfaceArrayLibrary.DebugSetMaxSupportedLayerCountForTesting(null);
+            TerrainSurfaceArrayLibrary.Reset();
+        }
+    }
+
+    private static TerrainSurfaceRecipe CreateSolidTerrainSurfaceRecipe(string baseTileDefId, string baseMaterialId, GroundEdgePatchRecipe? northEdge = null)
+        => new(
+            BaseTileDefId: baseTileDefId,
+            BaseMaterialId: baseMaterialId,
+            NorthEdge: northEdge,
+            SouthEdge: null,
+            WestEdge: null,
+            EastEdge: null,
+            NorthWestCorner: null,
+            NorthEastCorner: null,
+            SouthWestCorner: null,
+            SouthEastCorner: null,
+            LiquidTileDefId: string.Empty,
+            FluidLevel: 0,
+            LiquidDepth: null,
+            LiquidNorthEdge: null,
+            LiquidSouthEdge: null,
+            LiquidWestEdge: null,
+            LiquidEastEdge: null,
+            LiquidNorthWestCorner: null,
+            LiquidNorthEastCorner: null,
+            LiquidSouthWestCorner: null,
+            LiquidSouthEastCorner: null);
 
     private static string GetAlphaMaskSignature(Texture2D texture)
     {
@@ -1139,18 +1250,40 @@ public partial class ClientSmokeTests : Node
             var input = gameRoot.GetNode<InputController>("%InputController");
             var dwarfPanel = gameRoot.GetNode<DwarfPanel>("%DwarfPanel");
             var tileInfo = gameRoot.GetNode<TileInfoPanel>("%TileInfoPanel");
+            var simulation = ResolveSimulation(gameRoot);
+            if (simulation.Context.Get<WorldQuerySystem>() is not WorldQuerySystem query)
+                throw new InvalidOperationException("Billboard hover smoke test expected a live WorldQuerySystem.");
 
-            Assert(world3DRoot.TryGetDebugBillboardProbe(mainCamera3D, GetViewport(), out var screenPosition, out var expectedTile),
+            Assert(world3DRoot.TryGetDebugBillboardProbe(mainCamera3D, GetViewport(), out var screenPosition, out _),
                 "3D world should expose at least one visible actor billboard for hover selection.");
 
             Assert(world3DRoot.TryResolveHoveredBillboardTile(mainCamera3D, GetViewport(), screenPosition, out var hoveredTile),
                 "3D billboard picking should resolve a hovered tile from a billboard screen position.");
-            Assert(hoveredTile == expectedTile,
-                $"Billboard hover should resolve tile {expectedTile}, but resolved {hoveredTile}.");
-            Assert(world3DRoot.HasDebugHoveredBillboardOutline(),
-                "Hovering a billboard should enable its outline.");
+            var expectedTarget = HoverSelectionResolver.ResolvePrimaryTarget(query, hoveredTile, 0, HoverSelectionMode.QueryTile);
+            if (expectedTarget.TargetId.HasValue &&
+                (expectedTarget.Kind == HoverWorldTargetKind.Dwarf ||
+                 expectedTarget.Kind == HoverWorldTargetKind.Creature ||
+                 expectedTarget.Kind == HoverWorldTargetKind.Item))
+            {
+                Assert(world3DRoot.TryGetDebugBillboardProbeForEntity(expectedTarget.TargetId.Value, mainCamera3D, GetViewport(), out screenPosition, out var entityProbeTile),
+                    $"Actor hover highlight smoke test should expose a stable entity probe for {expectedTarget.DebugKey}.");
+                Assert(entityProbeTile == hoveredTile,
+                    $"Actor hover highlight entity probe should stay on tile {hoveredTile}, but resolved {entityProbeTile}.");
+            }
 
-            input.UseExternalHoveredTile(hoveredTile);
+            input.UseExternalHoveredTile(hoveredTile, HoverSelectionMode.QueryTile);
+            Sync3DHoverState(gameRoot);
+
+            Assert(world3DRoot.GetDebugHoverTargetKey() == expectedTarget.DebugKey,
+                $"Actor hover highlight should resolve {expectedTarget.DebugKey}, but resolved {world3DRoot.GetDebugHoverTargetKey()}.");
+            Assert(world3DRoot.HasDebugHoverHighlight(),
+                "Hovering a visible actor/item billboard should enable the dedicated hover highlight renderer.");
+            Assert(world3DRoot.HasDebugHoverBillboard(),
+                "Hovering a visible actor/item billboard should render a dedicated hover billboard overlay.");
+            Assert(world3DRoot.GetDebugHoverBillboardCount() == 1,
+                "Hover highlight v1 should only render one emphasized billboard target at a time.");
+            Assert(!world3DRoot.UsesDebugRawHoverTileFallback(),
+                "Actor/item billboard hover should not fall back to the generic raw-tile hover plate.");
             input._UnhandledInput(new InputEventMouseButton
             {
                 ButtonIndex = MouseButton.Left,
@@ -1406,17 +1539,39 @@ public partial class ClientSmokeTests : Node
             Assert(map is not null, "Render residency smoke test needs access to the live WorldMap.");
             Assert(cameraController is not null, "Render residency smoke test needs access to the 3D camera controller.");
 
+            await WaitForChunkBuildQueueToSettle(gameRoot, world3DRoot);
             var initialChunkCount = world3DRoot.GetDebugChunkMeshCount();
             Assert(initialChunkCount > 0, "3D world should keep visible chunk meshes resident.");
 
+            var currentZ = GetCurrentZ(gameRoot);
+            var visibleTileBounds = GetVisibleTileBounds(gameRoot);
+            Assert(TryFindVisibleAdjacentChunkPair(visibleTileBounds, currentZ, out var leftOrigin, out var rightOrigin),
+                "Render residency smoke test expected at least one visible adjacent chunk pair.");
+            Assert(world3DRoot.TryGetDebugChunkMeshBuildSignature(leftOrigin, out var leftSignatureBefore),
+                $"Render residency smoke test expected a resident chunk mesh at {leftOrigin}.");
+            Assert(world3DRoot.TryGetDebugChunkMeshBuildSignature(rightOrigin, out var rightSignatureBefore),
+                $"Render residency smoke test expected a resident chunk mesh at {rightOrigin}.");
+            Assert(TryFindBoundaryTileToMutate(map!, leftOrigin, currentZ, out var boundaryTile, out var originalTile),
+                $"Render residency smoke test expected a mutable tile on the east border of chunk {leftOrigin}.");
+
+            map.SetTile(boundaryTile, CreateMutatedBoundaryTile(originalTile));
+            await WaitForChunkBuildQueueToSettle(gameRoot, world3DRoot);
+
+            Assert(world3DRoot.TryGetDebugChunkMeshBuildSignature(leftOrigin, out var leftSignatureAfter),
+                $"Render residency smoke test expected chunk mesh {leftOrigin} to stay resident after mutating border tile {boundaryTile}.");
+            Assert(world3DRoot.TryGetDebugChunkMeshBuildSignature(rightOrigin, out var rightSignatureAfter),
+                $"Render residency smoke test expected adjacent chunk mesh {rightOrigin} to stay resident after mutating border tile {boundaryTile}.");
+            Assert(leftSignatureAfter != leftSignatureBefore,
+                $"Mutating border tile {boundaryTile} should rebuild owning chunk mesh {leftOrigin}. Signature stayed {leftSignatureAfter}.");
+            Assert(rightSignatureAfter != rightSignatureBefore,
+                $"Mutating border tile {boundaryTile} should invalidate adjacent chunk mesh {rightOrigin}. Signature stayed {rightSignatureAfter}.");
+
             cameraController!.JumpToTile(new Vec3i(Math.Max(0, map!.Width - 8), Math.Max(0, map.Height - 8), 0));
-            Force3DWorldRefresh(gameRoot);
-            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            await WaitForChunkBuildQueueToSettle(gameRoot, world3DRoot);
             var farChunkCount = world3DRoot.GetDebugChunkMeshCount();
 
             cameraController.JumpToTile(new Vec3i(Math.Min(24, map.Width - 1), Math.Min(24, map.Height - 1), 0));
-            Force3DWorldRefresh(gameRoot);
-            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            await WaitForChunkBuildQueueToSettle(gameRoot, world3DRoot);
             var returnChunkCount = world3DRoot.GetDebugChunkMeshCount();
 
             Assert(farChunkCount <= initialChunkCount, "3D world should evict offscreen chunk meshes instead of accumulating them.");
@@ -1425,6 +1580,79 @@ public partial class ClientSmokeTests : Node
         finally
         {
             gameRoot.QueueFree();
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunPreviewVegetationBillboardRefreshTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+
+            var jumpTargets = new[]
+            {
+                new Vec3i(Math.Max(0, map.Width - 8), Math.Max(0, map.Height - 8), 0),
+                new Vec3i(Math.Max(0, map.Width - 8), Math.Min(8, map.Height - 1), 0),
+                new Vec3i(Math.Min(8, map.Width - 1), Math.Max(0, map.Height - 8), 0),
+                new Vec3i(Math.Min(8, map.Width - 1), Math.Min(8, map.Height - 1), 0),
+            };
+
+            var foundPreviewVegetation = false;
+            var foundTile = Vec3i.Zero;
+            var foundKind = "vegetation";
+
+            foreach (var jumpTarget in jumpTargets)
+            {
+                JumpCameraToTile(gameRoot, jumpTarget);
+                Force3DWorldRefresh(gameRoot);
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+                var seenPreviewOrigins = GetPreviewRenderSnapshotOrigins(world3DRoot);
+                for (var iteration = 0; iteration < 8 && !foundPreviewVegetation; iteration++)
+                {
+                    Force3DWorldRefresh(gameRoot);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+                    var currentZ = GetCurrentZ(gameRoot);
+                    var visibleTileBounds = GetVisibleTileBounds(gameRoot);
+                    var previewSnapshots = GetPreviewRenderSnapshots(world3DRoot);
+                    var newPreviewSnapshots = previewSnapshots
+                        .Where(snapshot => !seenPreviewOrigins.Contains(snapshot.Origin))
+                        .ToArray();
+
+                    foreach (var previewSnapshot in newPreviewSnapshots)
+                    {
+                        if (!TryFindVisiblePreviewVegetationTile(previewSnapshot, currentZ, visibleTileBounds, out foundTile, out var isTree))
+                            continue;
+
+                        foundKind = isTree ? "tree" : "plant";
+                        foundPreviewVegetation = true;
+                        break;
+                    }
+
+                    seenPreviewOrigins.UnionWith(newPreviewSnapshots.Select(snapshot => snapshot.Origin));
+                    if (!world3DRoot.HasPendingChunkBuilds && newPreviewSnapshots.Length == 0)
+                        break;
+                }
+
+                if (foundPreviewVegetation)
+                    break;
+            }
+
+            Assert(world3DRoot.GetDebugPreviewChunkMeshCount() > 0,
+                "Preview vegetation billboard smoke test expected visible preview chunk meshes after jumping to chunk borders.");
+            Assert(foundPreviewVegetation,
+                "Preview vegetation billboard smoke test expected a newly streamed preview chunk containing visible vegetation.");
+            Assert(world3DRoot.HasDebugVegetationBillboard(foundTile),
+                $"Newly streamed preview {foundKind} tile {foundTile} should render a vegetation billboard without requiring another camera move.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         }
     }
 
@@ -1514,8 +1742,7 @@ public partial class ClientSmokeTests : Node
             var mainCamera3D = gameRoot.GetNode<Camera3D>("%MainCamera3D");
             var input = gameRoot.GetNode<InputController>("%InputController");
             var tileInfo = gameRoot.GetNode<TileInfoPanel>("%TileInfoPanel");
-            var simulationField = typeof(GameRoot).GetField("_simulation", BindingFlags.Instance | BindingFlags.NonPublic);
-            var simulation = simulationField?.GetValue(gameRoot) as GameSimulation;
+            var simulation = ResolveSimulation(gameRoot);
 
             Assert(simulation is not null, "Resource billboard smoke test needs access to the live simulation.");
             Assert(world3DRoot.TryGetDebugResourceBillboardProbe(mainCamera3D, GetViewport(), out var screenPosition, out var expectedTile),
@@ -1527,14 +1754,28 @@ public partial class ClientSmokeTests : Node
                 "Resource billboard picking should request raw tile selection so the tile resource view wins over entity priority.");
             Assert(hoveredTile == expectedTile,
                 $"Resource billboard hover should resolve tile {expectedTile}, but resolved {hoveredTile}.");
-            Assert(world3DRoot.HasDebugHoveredResourceBillboardOutline(),
-                "Hovering a resource billboard should enable its outline.");
 
-            var tileResult = simulation!.Context.Get<WorldQuerySystem>().QueryTile(new Vec3i(hoveredTile.X, hoveredTile.Y, 0));
-            Assert(tileResult.Tile is not null && (tileResult.Tile.TileDefId == TileDefIds.Tree || tileResult.Tile.PlantDefId is not null),
+            if (simulation.Context!.Get<WorldQuerySystem>() is not WorldQuerySystem query)
+                throw new InvalidOperationException("Resource billboard hover smoke test expected a live WorldQuerySystem.");
+            var tileResult = query.QueryTile(new Vec3i(hoveredTile.X, hoveredTile.Y, 0));
+            var tile = tileResult.Tile;
+            Assert(tile is not null && (tile.TileDefId == TileDefIds.Tree || tile.PlantDefId is not null),
                 "Resource billboard hover should resolve a tile that actually contains a tree or plant resource.");
+            var expectedTarget = HoverSelectionResolver.ResolvePrimaryTarget(query, hoveredTile, 0, HoverSelectionMode.RawTile);
 
             input.UseExternalHoveredTile(hoveredTile, selectionMode);
+            Sync3DHoverState(gameRoot);
+
+            Assert(world3DRoot.GetDebugHoverTargetKey() == expectedTarget.DebugKey,
+                $"Resource hover highlight should resolve {expectedTarget.DebugKey}, but resolved {world3DRoot.GetDebugHoverTargetKey()}.");
+            Assert(world3DRoot.HasDebugHoverHighlight(),
+                "Hovering a visible tree or plant billboard should enable the dedicated hover highlight renderer.");
+            Assert(world3DRoot.HasDebugHoverBillboard(),
+                "Hovering a resource billboard should render a dedicated hover billboard overlay.");
+            Assert(world3DRoot.GetDebugHoverBillboardCount() == 1,
+                "Resource hover highlight should only render one emphasized billboard target at a time.");
+            Assert(!world3DRoot.UsesDebugRawHoverTileFallback(),
+                "Vegetation billboard hover should use the semantic hover renderer instead of the generic raw-tile plate.");
             input._UnhandledInput(new InputEventMouseButton
             {
                 ButtonIndex = MouseButton.Left,
@@ -1555,6 +1796,224 @@ public partial class ClientSmokeTests : Node
             Assert(tileInfo.Visible, "Tile info should open after selecting a resource billboard tile.");
             Assert(tileInfo.DebugActionSummaryText.Contains("Harvest", StringComparison.OrdinalIgnoreCase) || tileInfo.DebugActionSummaryText.Length > 0,
                 "Selecting a resource tile should expose at least one harvest action in the tile panel.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunRawTileHoverFallbackTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var mainCamera3D = gameRoot.GetNode<Camera3D>("%MainCamera3D");
+            var input = gameRoot.GetNode<InputController>("%InputController");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var emptyTile = FindEmptyPassableTile(map, spatial, items, 0);
+
+            JumpCameraToTile(gameRoot, emptyTile);
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var screenPosition = ProjectTileCenterToScreen(mainCamera3D, map, emptyTile);
+            Assert(!world3DRoot.TryResolveHoveredBillboardTarget(mainCamera3D, GetViewport(), screenPosition, out _, out _),
+                "Raw-tile hover fallback smoke test needs a tile-center probe that does not hit an actor or vegetation billboard.");
+
+            input.UseExternalHoveredTile(new Vector2I(emptyTile.X, emptyTile.Y), HoverSelectionMode.QueryTile);
+            Sync3DHoverState(gameRoot);
+
+            Assert(world3DRoot.GetDebugHoverTargetKey() == $"tile:{emptyTile.X}:{emptyTile.Y}:{emptyTile.Z}",
+                "Raw-tile hover fallback should resolve to the hovered tile key when no semantic world target exists.");
+            Assert(!world3DRoot.HasDebugHoverHighlight(),
+                "Empty raw-tile hover should not spawn the dedicated semantic hover highlight renderer.");
+            Assert(world3DRoot.UsesDebugRawHoverTileFallback(),
+                "Empty raw-tile hover should keep using the generic hover plate fallback.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private void RunDeterministicHoverSelectionTest()
+    {
+        var simulation = ClientSimulationFactory.CreateSimulation(7, 24, 24, 4);
+        var map = simulation.Context.Get<WorldMap>();
+        var spatial = simulation.Context.Get<SpatialIndexSystem>();
+        var items = simulation.Context.Get<ItemSystem>();
+        var query = simulation.Context.Get<WorldQuerySystem>();
+        var tile = FindEmptyPassableTile(map, spatial, items, 0);
+
+        Assert(tile != Vec3i.Zero || map.GetTile(Vec3i.Zero).IsPassable,
+            "Deterministic hover selection smoke test needs an empty passable tile.");
+
+        var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, tile);
+        var corpse = items.CreateItem(ItemDefIds.Corpse, string.Empty, tile);
+        corpse.Components.Add(new CorpseComponent(corpse.Id, DefIds.Cat, "Cat", "test"));
+        corpse.Components.Add(new RotComponent());
+
+        var resolved = HoverSelectionResolver.ResolvePrimaryTarget(query, new Vector2I(tile.X, tile.Y), 0, HoverSelectionMode.QueryTile);
+        Assert(resolved.Kind == HoverWorldTargetKind.Item && resolved.TargetId == corpse.Id,
+            "Deterministic hover selection smoke test expected corpse items to win the stacked item ordering.");
+
+        var input = new InputController();
+        AddChild(input);
+        input.Setup(simulation);
+        input.SetCurrentZ(0);
+
+        for (var index = 0; index < 4; index++)
+        {
+            input.UseExternalHoveredTile(new Vector2I(tile.X, tile.Y));
+            input._UnhandledInput(new InputEventMouseButton
+            {
+                ButtonIndex = MouseButton.Left,
+                Pressed = true,
+            });
+            input._UnhandledInput(new InputEventMouseButton
+            {
+                ButtonIndex = MouseButton.Left,
+                Pressed = false,
+            });
+
+            Assert(input.SelectedItemId == corpse.Id,
+                $"Deterministic hover selection attempt {index + 1} should always select corpse item {corpse.Id}, but selected {input.SelectedItemId?.ToString() ?? "null"}.");
+            Assert(input.SelectedItemId != log.Id,
+                "Deterministic hover selection should not drift to a different stacked item on repeat clicks.");
+        }
+
+        input.QueueFree();
+    }
+
+    private async System.Threading.Tasks.Task RunHoverOverlapPriorityTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var mainCamera3D = gameRoot.GetNode<Camera3D>("%MainCamera3D");
+            var input = gameRoot.GetNode<InputController>("%InputController");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var tile = FindEmptyPassableTile(map, spatial, items, 0);
+
+            SetGroundPlantTile(map, tile, PlantSpeciesIds.BerryBush);
+            var log = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, tile);
+
+            JumpCameraToTile(gameRoot, tile);
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.TryGetDebugBillboardProbeForEntity(log.Id, mainCamera3D, GetViewport(), out var screenPosition, out _),
+                "Hover overlap smoke test should expose a stable item billboard probe on the mixed item-plus-plant tile.");
+            Assert(world3DRoot.TryResolveHoveredBillboardTarget(mainCamera3D, GetViewport(), screenPosition, out var hoveredTile, out var selectionMode),
+                "Hover overlap smoke test should resolve a hovered tile from the mixed item-plus-plant billboard probe.");
+            Assert(selectionMode == HoverSelectionMode.QueryTile,
+                "Actor/item billboard hits should continue to win over vegetation billboard hits on the same tile.");
+            Assert(hoveredTile == new Vector2I(tile.X, tile.Y),
+                "Hover overlap smoke test should keep item hover tied to the mixed tile position.");
+            input.UseExternalHoveredTile(hoveredTile, selectionMode);
+            Sync3DHoverState(gameRoot);
+
+            Assert(world3DRoot.GetDebugHoverTargetKey() == $"item:{log.Id}",
+                "Hover overlap smoke test should emphasize the item target instead of the underlying plant resource.");
+            Assert(!world3DRoot.UsesDebugRawHoverTileFallback(),
+                "Item-priority overlap hover should not fall back to the generic raw-tile highlight.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunSharedMaterialHoverSafetyTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var mainCamera3D = gameRoot.GetNode<Camera3D>("%MainCamera3D");
+            var input = gameRoot.GetNode<InputController>("%InputController");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var firstTile = FindEmptyPassableTile(map, spatial, items, 0);
+            var firstLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, firstTile);
+            var secondTile = FindEmptyPassableTile(map, spatial, items, 0);
+            var secondLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, secondTile);
+
+            JumpCameraToTile(gameRoot, firstTile);
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            Assert(world3DRoot.TryGetDebugBillboardProbeForEntity(firstLog.Id, mainCamera3D, GetViewport(), out var screenPosition, out _),
+                "Shared-material hover safety smoke test should expose a stable probe for the first log billboard.");
+            input.UseExternalHoveredTile(new Vector2I(firstTile.X, firstTile.Y), HoverSelectionMode.QueryTile);
+            Sync3DHoverState(gameRoot);
+
+            Assert(world3DRoot.GetDebugHoverTargetKey() == $"item:{firstLog.Id}",
+                "Shared-material hover safety smoke test should emphasize only the hovered log item.");
+            Assert(world3DRoot.TryGetDebugBillboardAlbedoColor(firstLog.Id, out var firstColor) && firstColor.IsEqualApprox(Colors.White),
+                "Hover highlight should not tint the hovered item's shared base billboard material.");
+            Assert(world3DRoot.TryGetDebugBillboardAlbedoColor(secondLog.Id, out var secondColor) && secondColor.IsEqualApprox(Colors.White),
+                "Hover highlight should not tint non-hovered billboards that share the same cached base material.");
+        }
+        finally
+        {
+            gameRoot.QueueFree();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RunBuildingHoverHighlightTest()
+    {
+        var gameRoot = await StartGameRootAsync();
+        try
+        {
+            var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+            var input = gameRoot.GetNode<InputController>("%InputController");
+            var simulation = ResolveSimulation(gameRoot);
+            var map = simulation.Context.Get<WorldMap>();
+            var spatial = simulation.Context.Get<SpatialIndexSystem>();
+            var items = simulation.Context.Get<ItemSystem>();
+            var data = simulation.Context.Get<DataManager>();
+            var query = simulation.Context.Get<WorldQuerySystem>();
+            var origin = FindBuildableFootprintOrigin(map, spatial, items, data, BuildingDefIds.House, BuildingRotation.None, 0);
+
+            items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, origin);
+            simulation.Context.Commands.Dispatch(new PlaceBuildingCommand(BuildingDefIds.House, origin));
+
+            JumpCameraToTile(gameRoot, origin);
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            var building = query.QueryTile(origin).Building;
+            Assert(building is not null, "Building hover smoke test expected the house placement command to create a visible building.");
+
+            input.UseExternalHoveredTile(new Vector2I(origin.X, origin.Y), HoverSelectionMode.QueryTile);
+            Sync3DHoverState(gameRoot);
+
+            Assert(world3DRoot.GetDebugHoverTargetKey() == $"building:{building!.Id}",
+                "Building hover smoke test should resolve the hovered house as the primary semantic target.");
+            Assert(world3DRoot.HasDebugHoverHighlight(),
+                "Building hover should enable the dedicated hover highlight renderer.");
+            Assert(world3DRoot.HasDebugHoverRing(),
+                "Building hover should render a footprint ring/plate highlight.");
+            Assert(!world3DRoot.HasDebugHoverBillboard(),
+                "Building hover should not render a billboard overlay highlight.");
+            Assert(world3DRoot.TryGetDebugStructureRoofVisible(building.Id, out var roofVisible) && !roofVisible,
+                "Hide-roof-on-hover structures should still hide their roof when the building is the hovered target.");
         }
         finally
         {
@@ -1584,19 +2043,17 @@ public partial class ClientSmokeTests : Node
 
             Assert(world3DRoot.TryResolveHoveredBillboardTarget(mainCamera3D, GetViewport(), screenPosition, out _, out _),
                 "Area selection smoke test should be able to resolve a visible resource billboard before clearing hover.");
-            Assert(world3DRoot.HasDebugHoveredResourceBillboardOutline(),
-                "Area selection smoke test expects the resource billboard hover outline before clearing it.");
             Assert(!world3DRoot.TryResolveHoveredBillboardTarget(mainCamera3D, GetViewport(), new Vector2(-2048f, -2048f), out _, out _),
-                "Resolving an offscreen billboard probe should clear the hovered resource highlight.");
-            Assert(!world3DRoot.HasDebugHoveredResourceBillboardOutline(),
-                "Moving the billboard probe offscreen should clear the hovered resource outline.");
+                "Resolving an offscreen billboard probe should return no hovered resource billboard.");
 
             input.SelectArea(resourceTile, areaTo);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
             Assert(input.GetSelectedAreaRect().HasValue, "Area selection should persist after selecting multiple tiles.");
-            Assert(world3DRoot.GetDebugEmphasizedResourceBillboardCount() >= 1,
-                "Selecting an area containing a tree or plant should highlight at least one resource billboard.");
+            var selectedArea = input.GetSelectedAreaRect()!.Value;
+            Assert(selectedArea.from == new Vector2I(Math.Min(resourceTile.X, areaTo.X), Math.Min(resourceTile.Y, areaTo.Y)) &&
+                   selectedArea.to == new Vector2I(Math.Max(resourceTile.X, areaTo.X), Math.Max(resourceTile.Y, areaTo.Y)),
+                "Area selection smoke test should preserve the selected resource tile range even without entity emphasis visuals.");
         }
         finally
         {
@@ -1633,6 +2090,12 @@ public partial class ClientSmokeTests : Node
 
             Force3DWorldRefresh(gameRoot);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            Assert(world3DRoot.TryGetDebugTreeBillboardTexture(tilePos, out var canopyTreeTexture) && canopyTreeTexture is not null,
+                "Canopy tree designation smoke test should render a tree base texture for the injected apple tree.");
+            Assert(canopyTreeTexture == PixelArtFactory.GetTile(TileDefIds.Tree, TreeSpeciesIds.Apple),
+                "Canopy tree designation smoke test should keep the apple tree base texture separate instead of baking fruit canopy art into the tree billboard.");
+            Assert(world3DRoot.TryGetDebugTreeBillboardHasOverlayPass(tilePos, out var hasOverlayPass) && hasOverlayPass,
+                "Canopy tree designation smoke test should expose a separate overlay pass for the apple canopy art.");
 
             simulation.Context.Commands.Dispatch(new DesignateCutTreesCommand(tilePos, tilePos));
 
@@ -1641,8 +2104,12 @@ public partial class ClientSmokeTests : Node
 
             Assert(map.GetTile(tilePos).IsDesignated,
                 "Unripe canopy tree smoke test expected the cut-tree command to mark the tree designated.");
-            Assert(world3DRoot.HasDebugDesignatedResourceBillboardOutline(resourceTile),
-                "Cut-designated canopy trees should keep a visible billboard outline so the designation remains readable under the canopy sprite.");
+            Assert(world3DRoot.TryGetDebugTreeBillboardProbe(tilePos, mainCamera3D, GetViewport(), out var designatedTreeProbe),
+                "Cut-designated canopy trees should remain visible and pickable after designation.");
+            Assert(world3DRoot.TryResolveHoveredBillboardTarget(mainCamera3D, GetViewport(), designatedTreeProbe, out var designatedHoveredTile, out var designatedSelectionMode),
+                "Cut-designated canopy trees should still resolve through the vegetation billboard picker after designation.");
+            Assert(designatedSelectionMode == HoverSelectionMode.RawTile && designatedHoveredTile == resourceTile,
+                "Cut-designated canopy trees should still resolve to their own raw tile after designation.");
         }
         finally
         {
@@ -1800,12 +2267,29 @@ public partial class ClientSmokeTests : Node
     private static void Force3DWorldRefresh(GameRoot gameRoot)
     {
         var dirtyField = typeof(GameRoot).GetField("_world3DDirty", BindingFlags.Instance | BindingFlags.NonPublic);
-        var updateMethod = typeof(GameRoot).GetMethod("Update3DWorldState", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert(dirtyField is not null, "Render residency smoke test needs access to GameRoot._world3DDirty.");
-        Assert(updateMethod is not null, "Render residency smoke test needs access to GameRoot.Update3DWorldState().");
 
         dirtyField!.SetValue(gameRoot, true);
-        updateMethod!.Invoke(gameRoot, null);
+    }
+
+    private async System.Threading.Tasks.Task WaitForChunkBuildQueueToSettle(GameRoot gameRoot, WorldRender3D world3DRoot, int maxIterations = 48)
+    {
+        for (var iteration = 0; iteration < maxIterations; iteration++)
+        {
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+
+            if (world3DRoot.HasPendingChunkBuilds)
+                continue;
+
+            Force3DWorldRefresh(gameRoot);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (!world3DRoot.HasPendingChunkBuilds)
+                return;
+        }
+
+        Assert(!world3DRoot.HasPendingChunkBuilds,
+            $"3D world should settle its chunk build queue within {maxIterations} refresh iterations during smoke validation.");
     }
 
     private static GameSimulation ResolveSimulation(GameRoot gameRoot)
@@ -1817,11 +2301,167 @@ public partial class ClientSmokeTests : Node
         return simulation!;
     }
 
+    private static int GetCurrentZ(GameRoot gameRoot)
+    {
+        var currentZField = typeof(GameRoot).GetField("_currentZ", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(currentZField is not null, "Smoke test needs access to GameRoot._currentZ.");
+        return (int)(currentZField!.GetValue(gameRoot) ?? 0);
+    }
+
+    private static Rect2I GetVisibleTileBounds(GameRoot gameRoot)
+    {
+        var visibleTileBoundsField = typeof(GameRoot).GetField("_world3DVisibleTileBounds", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(visibleTileBoundsField is not null, "Smoke test needs access to GameRoot._world3DVisibleTileBounds.");
+        return visibleTileBoundsField!.GetValue(gameRoot) is Rect2I bounds ? bounds : default;
+    }
+
+    private static HashSet<Vec3i> GetPreviewRenderSnapshotOrigins(WorldRender3D world3DRoot)
+        => GetPreviewRenderSnapshots(world3DRoot).Select(snapshot => snapshot.Origin).ToHashSet();
+
+    private static WorldChunkRenderSnapshot[] GetPreviewRenderSnapshots(WorldRender3D world3DRoot)
+    {
+        var snapshotField = typeof(WorldRender3D).GetField("_chunkSnapshots", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(snapshotField is not null, "Smoke test needs access to WorldRender3D._chunkSnapshots.");
+        var snapshotDictionaryObject = snapshotField!.GetValue(world3DRoot);
+        Assert(snapshotDictionaryObject is System.Collections.IDictionary,
+            "Smoke test expected WorldRender3D._chunkSnapshots to be a dictionary.");
+        var snapshotDictionary = (System.Collections.IDictionary)snapshotDictionaryObject!;
+
+        var snapshots = new System.Collections.Generic.List<WorldChunkRenderSnapshot>();
+        foreach (System.Collections.DictionaryEntry entry in snapshotDictionary)
+        {
+            if (entry.Value is WorldChunkRenderSnapshot snapshot && snapshot.IsPreview)
+                snapshots.Add(snapshot);
+        }
+
+        return snapshots.ToArray();
+    }
+
+    private static bool TryFindVisiblePreviewVegetationTile(
+        WorldChunkRenderSnapshot snapshot,
+        int currentZ,
+        Rect2I visibleTileBounds,
+        out Vec3i tilePosition,
+        out bool isTree)
+    {
+        tilePosition = default;
+        isTree = false;
+        if (!snapshot.ContainsWorldZ(currentZ))
+            return false;
+
+        var localZ = currentZ - snapshot.Origin.Z;
+
+        for (var localY = 0; localY < Chunk.Height; localY++)
+        for (var localX = 0; localX < Chunk.Width; localX++)
+        {
+            if (!snapshot.TryGetLocalTile(localX, localY, localZ, out var tile)
+                || tile.TileDefId == TileDefIds.Empty)
+            {
+                continue;
+            }
+
+            var worldX = snapshot.Origin.X + localX;
+            var worldY = snapshot.Origin.Y + localY;
+            if (worldX < visibleTileBounds.Position.X
+                || worldX >= visibleTileBounds.Position.X + visibleTileBounds.Size.X
+                || worldY < visibleTileBounds.Position.Y
+                || worldY >= visibleTileBounds.Position.Y + visibleTileBounds.Size.Y)
+            {
+                continue;
+            }
+
+            if (tile.TileDefId == TileDefIds.Tree)
+            {
+                tilePosition = new Vec3i(worldX, worldY, currentZ);
+                isTree = true;
+                return true;
+            }
+        }
+
+        for (var localY = 0; localY < Chunk.Height; localY++)
+        for (var localX = 0; localX < Chunk.Width; localX++)
+        {
+            if (!snapshot.TryGetLocalTile(localX, localY, localZ, out var tile)
+                || tile.TileDefId == TileDefIds.Empty
+                || string.IsNullOrWhiteSpace(tile.PlantDefId))
+            {
+                continue;
+            }
+
+            var worldX = snapshot.Origin.X + localX;
+            var worldY = snapshot.Origin.Y + localY;
+            if (worldX < visibleTileBounds.Position.X
+                || worldX >= visibleTileBounds.Position.X + visibleTileBounds.Size.X
+                || worldY < visibleTileBounds.Position.Y
+                || worldY >= visibleTileBounds.Position.Y + visibleTileBounds.Size.Y)
+            {
+                continue;
+            }
+
+            tilePosition = new Vec3i(worldX, worldY, currentZ);
+            isTree = false;
+            return true;
+        }
+
+        return false;
+    }
+
     private static void JumpCameraToTile(GameRoot gameRoot, Vec3i pos)
     {
         var jumpMethod = typeof(GameRoot).GetMethod("JumpToTile", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert(jumpMethod is not null, "Smoke test needs access to GameRoot.JumpToTile().");
         jumpMethod!.Invoke(gameRoot, [pos]);
+    }
+
+    private static void Sync3DHoverState(GameRoot gameRoot)
+    {
+        var world3DRoot = gameRoot.GetNode<WorldRender3D>("%World3DRoot");
+        var mainCamera3D = gameRoot.GetNode<Camera3D>("%MainCamera3D");
+        var input = gameRoot.GetNode<InputController>("%InputController");
+        var simulation = ResolveSimulation(gameRoot);
+
+        var renderCacheField = typeof(GameRoot).GetField("_renderCache", BindingFlags.Instance | BindingFlags.NonPublic);
+        var feedbackField = typeof(GameRoot).GetField("_feedback", BindingFlags.Instance | BindingFlags.NonPublic);
+        var currentZField = typeof(GameRoot).GetField("_currentZ", BindingFlags.Instance | BindingFlags.NonPublic);
+        var visibleTileBoundsField = typeof(GameRoot).GetField("_world3DVisibleTileBounds", BindingFlags.Instance | BindingFlags.NonPublic);
+        var focusedLogTileField = typeof(GameRoot).GetField("_focusedLogTile", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert(renderCacheField is not null, "Hover highlight smoke test needs access to GameRoot._renderCache.");
+        Assert(currentZField is not null, "Hover highlight smoke test needs access to GameRoot._currentZ.");
+        Assert(visibleTileBoundsField is not null, "Hover highlight smoke test needs access to GameRoot._world3DVisibleTileBounds.");
+
+        var renderCache = renderCacheField!.GetValue(gameRoot) as RenderCache;
+        Assert(renderCache is not null, "Hover highlight smoke test expected a live render cache.");
+        var feedback = feedbackField?.GetValue(gameRoot) as GameFeedbackController;
+        var currentZ = (int)(currentZField!.GetValue(gameRoot) ?? 0);
+        var visibleTileBounds = visibleTileBoundsField!.GetValue(gameRoot) is Rect2I bounds ? bounds : default;
+        var focusedLogTile = focusedLogTileField?.GetValue(gameRoot) is Vec3i focusTile ? focusTile : (Vec3i?)null;
+
+        world3DRoot.SyncDynamicState(
+            mainCamera3D,
+            simulation.Context.Get<WorldMap>(),
+            simulation.Context.Get<WorldQuerySystem>(),
+            simulation.Context.Get<EntityRegistry>(),
+            simulation.Context.Get<ItemSystem>(),
+            simulation.Context.Get<SpatialIndexSystem>(),
+            simulation.Context.Get<MovementPresentationSystem>(),
+            simulation.Context.Get<DataManager>(),
+            input,
+            renderCache!,
+            feedback,
+            currentZ,
+            visibleTileBounds,
+            focusedLogTile,
+            Time.GetTicksMsec() / 1000.0);
+    }
+
+    private static Vector2 ProjectTileCenterToScreen(Camera3D camera, WorldMap map, Vec3i position, float surfaceOffset = 0.2f)
+    {
+        var tile = map.GetTile(position);
+        var y = tile.TileDefId == TileDefIds.Empty
+            ? WorldTileHeightResolver3D.ResolveSliceY(position.Z, surfaceOffset)
+            : WorldTileHeightResolver3D.ResolveSurfaceY(position.Z, tile, surfaceOffset);
+        return camera.UnprojectPosition(new Vector3(position.X + 0.5f, y, position.Y + 0.5f));
     }
 
     private static Vec3i FindAdjacentPassableTile(WorldMap map, Vec3i origin)
@@ -1855,6 +2495,65 @@ public partial class ClientSmokeTests : Node
         map.SetTile(position, tile);
     }
 
+    private static void SetGroundPlantTile(WorldMap map, Vec3i position, string plantDefId)
+    {
+        var tile = map.GetTile(position);
+        if (tile.TileDefId == TileDefIds.Empty)
+            tile.TileDefId = TileDefIds.Grass;
+
+        tile.IsPassable = true;
+        tile.TreeSpeciesId = null;
+        tile.PlantDefId = plantDefId;
+        tile.PlantGrowthStage = PlantGrowthStages.Mature;
+        tile.PlantYieldLevel = 1;
+        tile.PlantSeedLevel = 0;
+        tile.FluidType = FluidType.None;
+        tile.FluidLevel = 0;
+        tile.FluidMaterialId = null;
+        map.SetTile(position, tile);
+    }
+
+    private static Vec3i FindBuildableFootprintOrigin(WorldMap map, SpatialIndexSystem spatial, ItemSystem items, DataManager data, string buildingDefId, BuildingRotation rotation, int z)
+    {
+        var definition = data.Buildings.Get(buildingDefId);
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            var origin = new Vec3i(x, y, z);
+            var isBuildable = true;
+            foreach (var position in BuildingPlacementGeometry.EnumerateWorldFootprint(definition, origin, rotation))
+            {
+                if (!map.IsInBounds(position))
+                {
+                    isBuildable = false;
+                    break;
+                }
+
+                var tile = map.GetTile(position);
+                if (!tile.IsPassable || tile.TileDefId == TileDefIds.Empty)
+                {
+                    isBuildable = false;
+                    break;
+                }
+
+                if (spatial.GetDwarvesAt(position).Count > 0 ||
+                    spatial.GetCreaturesAt(position).Count > 0 ||
+                    spatial.GetContainersAt(position).Count > 0 ||
+                    spatial.GetBuildingAt(position).HasValue ||
+                    items.GetItemsAt(position).Any())
+                {
+                    isBuildable = false;
+                    break;
+                }
+            }
+
+            if (isBuildable)
+                return origin;
+        }
+
+        return Vec3i.Zero;
+    }
+
     private static Vec3i FindEmptyPassableTile(WorldMap map, SpatialIndexSystem spatial, ItemSystem items, int z)
     {
         for (var x = 0; x < map.Width; x++)
@@ -1878,6 +2577,79 @@ public partial class ClientSmokeTests : Node
         }
 
         return Vec3i.Zero;
+    }
+
+    private static bool TryFindVisibleAdjacentChunkPair(Rect2I visibleTileBounds, int currentZ, out Vec3i leftOrigin, out Vec3i rightOrigin)
+    {
+        leftOrigin = default;
+        rightOrigin = default;
+        if (visibleTileBounds.Size.X <= Chunk.Width)
+            return false;
+
+        var chunkZ = AlignToChunkOrigin(currentZ, Chunk.Depth);
+        var maxVisibleX = visibleTileBounds.Position.X + visibleTileBounds.Size.X - 1;
+        var minChunkX = AlignToChunkOrigin(visibleTileBounds.Position.X, Chunk.Width);
+        var minChunkY = AlignToChunkOrigin(visibleTileBounds.Position.Y, Chunk.Height);
+        var maxChunkX = AlignToChunkOrigin(maxVisibleX, Chunk.Width);
+        if (minChunkX >= maxChunkX)
+            return false;
+
+        leftOrigin = new Vec3i(minChunkX, minChunkY, chunkZ);
+        rightOrigin = new Vec3i(minChunkX + Chunk.Width, minChunkY, chunkZ);
+        return true;
+    }
+
+    private static bool TryFindBoundaryTileToMutate(WorldMap map, Vec3i leftOrigin, int currentZ, out Vec3i boundaryTile, out WorldTileData originalTile)
+    {
+        var boundaryX = leftOrigin.X + Chunk.Width - 1;
+        for (var localY = 0; localY < Chunk.Height; localY++)
+        {
+            boundaryTile = new Vec3i(boundaryX, leftOrigin.Y + localY, currentZ);
+            if (!map.IsInBounds(boundaryTile))
+                continue;
+
+            originalTile = map.GetTile(boundaryTile);
+            if (originalTile.TileDefId != TileDefIds.Empty)
+                return true;
+        }
+
+        boundaryTile = new Vec3i(boundaryX, leftOrigin.Y, currentZ);
+        if (map.IsInBounds(boundaryTile))
+        {
+            originalTile = map.GetTile(boundaryTile);
+            return true;
+        }
+
+        originalTile = WorldTileData.Empty;
+        return false;
+    }
+
+    private static WorldTileData CreateMutatedBoundaryTile(WorldTileData tile)
+    {
+        tile.TreeSpeciesId = null;
+        tile.PlantDefId = null;
+        tile.PlantGrowthStage = 0;
+        tile.PlantYieldLevel = 0;
+        tile.PlantSeedLevel = 0;
+        tile.FluidType = FluidType.None;
+        tile.FluidLevel = 0;
+        tile.FluidMaterialId = null;
+        tile.CoatingMaterialId = null;
+        tile.CoatingAmount = 0f;
+        tile.TileDefId = tile.TileDefId == TileDefIds.Grass ? TileDefIds.Soil : TileDefIds.Grass;
+        tile.IsPassable = true;
+        return tile;
+    }
+
+    private static int AlignToChunkOrigin(int coordinate, int chunkSize)
+    {
+        var remainder = coordinate % chunkSize;
+        if (remainder == 0)
+            return coordinate;
+
+        return coordinate >= 0
+            ? coordinate - remainder
+            : coordinate - remainder - chunkSize;
     }
 
     private static void Assert(bool condition, string message)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using DwarfFortress.GameLogic.Core;
 using DwarfFortress.GameLogic.Data;
@@ -7,6 +8,7 @@ using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.World;
+using DwarfFortress.GodotClient.Presentation;
 using Godot;
 
 using WorldTileData = DwarfFortress.GameLogic.World.TileData;
@@ -23,7 +25,6 @@ public partial class WorldRender3D : Node3D
     private const float OverlayThickness = 0.035f;
     private const int OverlayRenderPriority = 0;
     private const int BillboardRenderPriority = 1;
-    private const int BillboardOutlineRenderPriority = 2;
     private const float GroundSpriteHeight = 0.18f;
     private const float TreeSpriteOverlayHeight = 0.46f;
     private const float StockpileRailInset = 0.05f;
@@ -32,30 +33,21 @@ public partial class WorldRender3D : Node3D
     private const float StockpileTrimWidth = 0.04f;
     private const float StockpilePostSize = 0.17f;
     private const int MaxChunkBuildsPerSync = 2;
-    private const float ResourceDesignationOutlineScale = 1.08f;
-    private const float ResourceDesignationOutlineDepthOffset = -0.0035f;
-    private const float ResourceHoverOutlineScale = 1.14f;
-    private const float ResourceHoverOutlineDepthOffset = -0.0025f;
-    private static readonly Color ResourceDesignationOutlineTint = new(0.28f, 0.96f, 0.20f, 0.82f);
-    private static readonly Color ResourceHoverOutlineTint = new(0.76f, 1f, 0.62f, 0.9f);
 
     private readonly Dictionary<Vec3i, WorldChunkRenderSnapshot> _chunkSnapshots = new();
     private readonly Dictionary<Vec3i, ChunkMeshState> _chunkMeshes = new();
     private readonly Dictionary<int, StructureMeshState> _structureMeshes = new();
-    private readonly Dictionary<Vec3i, BillboardState> _treeBillboards = new();
-    private readonly Dictionary<Vec3i, BillboardState> _plantBillboards = new();
     private readonly List<Chunk> _activeChunks = new();
     private readonly HashSet<Vec3i> _activeChunkOrigins = new();
+    private readonly HashSet<Vec3i> _unavailableChunkOrigins = new();
     private readonly Queue<Vec3i> _pendingChunkBuildOrigins = new();
     private readonly HashSet<Vec3i> _pendingChunkBuildOriginSet = new();
     private readonly List<Vec3i> _pendingChunkScratch = new();
-    private readonly Dictionary<Texture2D, StandardMaterial3D> _billboardMaterials = new();
-    private readonly Dictionary<Texture2D, StandardMaterial3D> _designationOutlineBillboardMaterials = new();
-    private readonly Dictionary<Texture2D, StandardMaterial3D> _outlineBillboardMaterials = new();
     private readonly WorldChunkSliceMesher _sliceMesher = new();
     private readonly WorldStructureMesher _structureMesher = new();
-
     private WorldActorPresentation3D? _actorPresentation;
+    private VegetationInstanceRenderer? _vegetationRenderer;
+    private WorldHoverHighlightRenderer3D? _hoverHighlightRenderer;
     private ShaderMaterial? _chunkTopMaterial;
     private ShaderMaterial? _chunkDetailMaterial;
     private StandardMaterial3D? _chunkMaterial;
@@ -63,7 +55,6 @@ public partial class WorldRender3D : Node3D
     private MeshInstance3D? _designationOverlayMesh;
     private MeshInstance3D? _stockpileOverlayMesh;
     private MeshInstance3D? _dynamicOverlayMesh;
-    private BillboardState? _hoveredResourceBillboard;
     private bool _isActive;
     private bool _tileSpriteBillboardsDirty = true;
     private int? _tileSpriteBillboardViewHash;
@@ -74,6 +65,14 @@ public partial class WorldRender3D : Node3D
     private int _debugVisibleResourceBurstCount;
     private int _debugResourceBurstPlateCount;
     private int _debugMaxVisibleResourceBurstId;
+    private Vector2 _chunkBuildFocusTile;
+    private int _debugChunkBuildsProcessedThisSync;
+    private int _debugChunkTopVertexCount;
+    private int _debugChunkSideVertexCount;
+    private int _debugChunkDetailVertexCount;
+    private double _debugLatestChunkBuildMilliseconds;
+    private string _debugHoverTargetKey = HoverWorldTarget.None.DebugKey;
+    private bool _debugUsesRawHoverTileFallback;
 
     public override void _Ready()
     {
@@ -82,10 +81,18 @@ public partial class WorldRender3D : Node3D
         EnsureChunkMaterial();
         EnsureOverlayMaterial();
         EnsureActorPresentation();
+        EnsureVegetationRenderer();
+        EnsureHoverHighlightRenderer();
         SetActive(false);
     }
 
     public bool HasPendingChunkBuilds => _pendingChunkBuildOrigins.Count > 0;
+
+    public int GetDebugPendingChunkBuildCount()
+        => _pendingChunkBuildOrigins.Count;
+
+    public int GetDebugUnavailableChunkCount()
+        => _unavailableChunkOrigins.Count;
 
     public void Reset()
     {
@@ -99,18 +106,15 @@ public partial class WorldRender3D : Node3D
         ClearOverlayMesh(ref _stockpileOverlayMesh);
         ClearOverlayMesh(ref _dynamicOverlayMesh);
         _actorPresentation?.Reset();
-        SetHoveredResourceBillboard(null);
-        ClearBillboards(_treeBillboards);
-        ClearBillboards(_plantBillboards);
-        DisposeMaterials(_billboardMaterials);
-        DisposeMaterials(_designationOutlineBillboardMaterials);
-        DisposeMaterials(_outlineBillboardMaterials);
+        _vegetationRenderer?.Reset();
+        _hoverHighlightRenderer?.Reset();
 
         _chunkMeshes.Clear();
         _structureMeshes.Clear();
         _chunkSnapshots.Clear();
         _activeChunks.Clear();
         _activeChunkOrigins.Clear();
+        _unavailableChunkOrigins.Clear();
         _pendingChunkBuildOrigins.Clear();
         _pendingChunkBuildOriginSet.Clear();
         _pendingChunkScratch.Clear();
@@ -123,6 +127,15 @@ public partial class WorldRender3D : Node3D
         _debugVisibleResourceBurstCount = 0;
         _debugResourceBurstPlateCount = 0;
         _debugMaxVisibleResourceBurstId = 0;
+        _debugChunkBuildsProcessedThisSync = 0;
+        _debugChunkTopVertexCount = 0;
+        _debugChunkSideVertexCount = 0;
+        _debugChunkDetailVertexCount = 0;
+        _debugLatestChunkBuildMilliseconds = 0d;
+        _debugHoverTargetKey = HoverWorldTarget.None.DebugKey;
+        _debugUsesRawHoverTileFallback = false;
+        TerrainSurfaceArrayLibrary.Reset();
+        TerrainDetailOverlayLibrary.Reset();
     }
 
     public void SetActive(bool active)
@@ -145,29 +158,20 @@ public partial class WorldRender3D : Node3D
             _dynamicOverlayMesh.Visible = active;
 
         _actorPresentation?.SetActive(active);
-
-        foreach (var state in _treeBillboards.Values)
-        {
-            state.Root.Visible = active;
-            ApplyResourceBillboardHighlight(state);
-        }
-
-        foreach (var state in _plantBillboards.Values)
-        {
-            state.Root.Visible = active;
-            ApplyResourceBillboardHighlight(state);
-        }
+        _vegetationRenderer?.SetActive(active);
+        _hoverHighlightRenderer?.SetActive(active);
     }
 
-    public void SyncSlice(WorldMap? map, BuildingSystem? buildings, StockpileManager? stockpiles, DataManager? data, int currentZ, Rect2I visibleTileBounds, SimulationProfiler? profiler = null)
+    public void SyncSlice(WorldMap? map, BuildingSystem? buildings, StockpileManager? stockpiles, DataManager? data, int currentZ, Rect2I visibleTileBounds, ChunkPreviewStreamingService? chunkPreviewStreaming = null, SimulationProfiler? profiler = null, Vector2? cameraFocusTile = null)
     {
         if (map is null)
             return;
 
         EnsureChunkMaterial();
+        _chunkBuildFocusTile = cameraFocusTile ?? ResolveVisibleTileBoundsCenter(visibleTileBounds);
 
         using (profiler?.Measure("active_chunks") ?? default)
-            CollectActiveChunks(map, currentZ, visibleTileBounds);
+            CollectActiveChunks(map, currentZ, visibleTileBounds, chunkPreviewStreaming);
 
         using (profiler?.Measure("prune_inactive_chunks") ?? default)
             UpdateChunkResidency(currentZ);
@@ -177,14 +181,19 @@ public partial class WorldRender3D : Node3D
 
         using (profiler?.Measure("sync_chunk_meshes") ?? default)
         {
-            foreach (var chunk in _activeChunks)
-            {
-                var snapshot = GetOrCaptureSnapshot(chunk);
-                QueueChunkMeshSync(snapshot, currentZ);
-                SetChunkMeshVisibility(snapshot.Origin, currentZ, isVisible: true);
-            }
+            foreach (var origin in _activeChunkOrigins)
+                QueueChunkMeshSync(origin, currentZ);
 
-            ProcessChunkBuildQueue(map, data, currentZ);
+            ProcessChunkBuildQueue(map, chunkPreviewStreaming, data, currentZ);
+            RefreshChunkTopMaterialTextureArray();
+            RefreshChunkDetailMaterialTextureArray();
+            TerrainRenderStats.RecordChunkFrame(
+                _pendingChunkBuildOrigins.Count,
+                _debugChunkBuildsProcessedThisSync,
+                _debugChunkTopVertexCount,
+                _debugChunkSideVertexCount,
+                _debugChunkDetailVertexCount,
+                _debugLatestChunkBuildMilliseconds);
         }
 
         using (profiler?.Measure("sync_structures") ?? default)
@@ -198,56 +207,37 @@ public partial class WorldRender3D : Node3D
     }
 
     public void SyncDynamicState(
-
         Camera3D? camera,
-
         WorldMap? map,
-
         WorldQuerySystem? query,
-
         EntityRegistry? registry,
-
         ItemSystem? items,
-
         SpatialIndexSystem? spatial,
-
         MovementPresentationSystem? movementPresentation,
-
         DataManager? data,
-
         InputController? input,
-
         RenderCache renderCache,
-
         GameFeedbackController? feedback,
-
         int currentZ,
-
         Rect2I visibleTileBounds,
-
         Vec3i? focusedLogTile,
-
         double presentationTimeSeconds,
-
         SimulationProfiler? profiler = null)
-
     {
-
         EnsureOverlayMaterial();
-
-
+        EnsureHoverHighlightRenderer();
+        var hoverTarget = ResolveHoverTarget(query, input, currentZ);
+        _debugHoverTargetKey = hoverTarget.DebugKey;
+        _debugUsesRawHoverTileFallback = hoverTarget.Kind == HoverWorldTargetKind.RawTile;
 
         using (profiler?.Measure("dynamic_overlay") ?? default)
-
-            SyncDynamicOverlay(map, query, data, input, feedback, currentZ, visibleTileBounds, focusedLogTile);
-
-
+            SyncDynamicOverlay(map, query, data, input, feedback, hoverTarget, currentZ, visibleTileBounds, focusedLogTile);
 
         using (profiler?.Measure("tile_sprites") ?? default)
         {
             if (camera is null)
             {
-                SyncTileSpriteBillboards(null, currentZ, visibleTileBounds);
+                SyncTileSpriteBillboards(map, null, currentZ, visibleTileBounds);
                 _tileSpriteBillboardsDirty = true;
                 _tileSpriteBillboardViewHash = null;
             }
@@ -256,26 +246,41 @@ public partial class WorldRender3D : Node3D
                 var viewHash = HashCode.Combine(currentZ, visibleTileBounds);
                 if (_tileSpriteBillboardsDirty || _tileSpriteBillboardViewHash != viewHash)
                 {
-                    SyncTileSpriteBillboards(camera, currentZ, visibleTileBounds);
+                    SyncTileSpriteBillboards(map, camera, currentZ, visibleTileBounds);
                     _tileSpriteBillboardsDirty = false;
                     _tileSpriteBillboardViewHash = viewHash;
                 }
             }
-
-            SyncResourceBillboardHighlights(input);
         }
 
-        UpdateStructureHoverState(input, spatial, currentZ);
+        UpdateStructureHoverState(hoverTarget);
 
         EnsureActorPresentation();
         _actorPresentation?.Sync(camera, map, registry, items, spatial, movementPresentation, data, renderCache, feedback, currentZ, visibleTileBounds, presentationTimeSeconds, profiler);
+        if (_actorPresentation is not null)
+        {
+            var actorCounts = _actorPresentation.GetDebugSpriteCounts();
+            TerrainRenderStats.RecordActorBillboards(actorCounts.Dwarves + actorCounts.Creatures + actorCounts.Items);
+        }
 
+        _hoverHighlightRenderer?.Sync(
+            map,
+            query,
+            data,
+            hoverTarget,
+            _actorPresentation,
+            _vegetationRenderer,
+            currentZ,
+            visibleTileBounds,
+            presentationTimeSeconds);
     }
 
     public (int Dwarves, int Creatures, int Items, int Trees, int Plants) GetDebugSpriteCounts()
     {
+        EnsureVegetationRenderer();
         var actorCounts = _actorPresentation?.GetDebugSpriteCounts() ?? (0, 0, 0);
-        return (actorCounts.Item1, actorCounts.Item2, actorCounts.Item3, _treeBillboards.Count, _plantBillboards.Count);
+        TerrainRenderStats.RecordActorBillboards(actorCounts.Item1 + actorCounts.Item2 + actorCounts.Item3);
+        return (actorCounts.Item1, actorCounts.Item2, actorCounts.Item3, _vegetationRenderer?.TreeCount ?? 0, _vegetationRenderer?.PlantCount ?? 0);
     }
 
     public bool TryResolveHoveredBillboardTarget(Camera3D? camera, Viewport viewport, out Vector2I tile, out HoverSelectionMode selectionMode)
@@ -290,10 +295,7 @@ public partial class WorldRender3D : Node3D
         selectionMode = HoverSelectionMode.QueryTile;
 
         if (_actorPresentation?.TryResolveHoveredBillboardTile(camera, viewport, screenPosition, out tile) == true)
-        {
-            SetHoveredResourceBillboard(null);
             return true;
-        }
 
         if (TryResolveHoveredResourceBillboardTile(camera, viewport, screenPosition, out tile))
         {
@@ -312,13 +314,24 @@ public partial class WorldRender3D : Node3D
 
     public bool TryGetDebugResourceBillboardProbe(Camera3D? camera, Viewport viewport, out Vector2 screenPosition, out Vector2I tile)
     {
+        EnsureVegetationRenderer();
+        if (camera is not null
+            && _vegetationRenderer?.TryGetDebugProbe(
+                camera,
+                viewport,
+                (candidateScreenPosition, tilePosition) =>
+                    TryResolveHoveredBillboardTarget(camera, viewport, candidateScreenPosition, out var resolvedTile, out var selectionMode)
+                    && selectionMode == HoverSelectionMode.RawTile
+                    && resolvedTile == new Vector2I(tilePosition.X, tilePosition.Y),
+                out screenPosition,
+                out tile) == true)
+        {
+            return true;
+        }
+
         screenPosition = default;
         tile = default;
-        if (camera is null)
-            return false;
-
-        return TryGetDebugResourceBillboardProbe(camera, viewport, _plantBillboards.Values, out screenPosition, out tile)
-            || TryGetDebugResourceBillboardProbe(camera, viewport, _treeBillboards.Values, out screenPosition, out tile);
+        return false;
     }
 
     public bool TryGetDebugBillboardProbe(Camera3D? camera, Viewport viewport, out Vector2 screenPosition, out Vector2I tile)
@@ -329,18 +342,13 @@ public partial class WorldRender3D : Node3D
         return _actorPresentation?.TryGetDebugBillboardProbe(camera, viewport, out screenPosition, out tile) == true;
     }
 
-    public bool HasDebugHoveredBillboardOutline()
-        => _actorPresentation?.HasDebugHoveredBillboardOutline() == true || _hoveredResourceBillboard?.Outline.Visible == true;
-
-    public bool HasDebugHoveredResourceBillboardOutline()
-        => _hoveredResourceBillboard?.Outline.Visible == true;
-
-    public bool HasDebugDesignatedResourceBillboardOutline(Vector2I tile)
-        => HasDebugDesignatedResourceBillboardOutline(_treeBillboards.Values, tile)
-            || HasDebugDesignatedResourceBillboardOutline(_plantBillboards.Values, tile);
-
-    public int GetDebugEmphasizedResourceBillboardCount()
-        => CountEmphasizedResourceBillboards(_treeBillboards.Values) + CountEmphasizedResourceBillboards(_plantBillboards.Values);
+    public bool TryGetDebugBillboardProbeForEntity(int entityId, Camera3D? camera, Viewport viewport, out Vector2 screenPosition, out Vector2I tile)
+    {
+        EnsureActorPresentation();
+        screenPosition = default;
+        tile = default;
+        return _actorPresentation?.TryGetDebugBillboardProbeForEntity(entityId, camera, viewport, out screenPosition, out tile) == true;
+    }
 
     public int GetDebugItemBillboardRenderPriority()
     {
@@ -371,20 +379,135 @@ public partial class WorldRender3D : Node3D
         return _actorPresentation?.TryGetDebugBillboardRenderPriority(entityId, out renderPriority) == true;
     }
 
+    public bool TryGetDebugBillboardAlbedoColor(int entityId, out Color albedoColor)
+    {
+        EnsureActorPresentation();
+        albedoColor = default;
+        return _actorPresentation?.TryGetDebugBillboardAlbedoColor(entityId, out albedoColor) == true;
+    }
+
+    public string GetDebugHoverTargetKey()
+        => _debugHoverTargetKey;
+
+    public bool HasDebugHoverHighlight()
+    {
+        EnsureHoverHighlightRenderer();
+        return _hoverHighlightRenderer?.HasDebugActiveHighlight() == true;
+    }
+
+    public bool UsesDebugRawHoverTileFallback()
+        => _debugUsesRawHoverTileFallback;
+
+    public bool HasDebugHoverBillboard()
+    {
+        EnsureHoverHighlightRenderer();
+        return _hoverHighlightRenderer?.HasDebugBillboard() == true;
+    }
+
+    public bool HasDebugHoverRing()
+    {
+        EnsureHoverHighlightRenderer();
+        return _hoverHighlightRenderer?.HasDebugRing() == true;
+    }
+
+    public int GetDebugHoverBillboardCount()
+    {
+        EnsureHoverHighlightRenderer();
+        return _hoverHighlightRenderer?.GetDebugBillboardCount() ?? 0;
+    }
+
+    public bool TryGetDebugHoverBillboardTexture(out Texture2D? texture)
+    {
+        EnsureHoverHighlightRenderer();
+        texture = null;
+        return _hoverHighlightRenderer?.TryGetDebugBillboardTexture(out texture) == true;
+    }
+
+    public bool TryGetDebugHoverBillboardWorldPosition(out Vector3 worldPosition)
+    {
+        EnsureHoverHighlightRenderer();
+        worldPosition = default;
+        return _hoverHighlightRenderer?.TryGetDebugBillboardWorldPosition(out worldPosition) == true;
+    }
+
     public bool TryGetDebugTreeBillboardTexture(Vec3i tilePosition, out Texture2D? texture)
     {
-        if (_treeBillboards.TryGetValue(tilePosition, out var state))
-        {
-            texture = state.Texture;
+        EnsureVegetationRenderer();
+        if (_vegetationRenderer?.TryGetTreeTexture(tilePosition, out texture) == true)
             return true;
-        }
 
         texture = null;
         return false;
     }
 
+    public bool HasDebugVegetationBillboard(Vec3i tilePosition)
+    {
+        EnsureVegetationRenderer();
+        return _vegetationRenderer?.HasVisualState(tilePosition) == true;
+    }
+
+    public bool TryGetDebugTreeBillboardProbe(Vec3i tilePosition, Camera3D? camera, Viewport viewport, out Vector2 screenPosition)
+    {
+        EnsureVegetationRenderer();
+        screenPosition = default;
+        return camera is not null
+            && _vegetationRenderer?.TryGetTreeProbe(
+                tilePosition,
+                camera,
+                viewport,
+                (candidateScreenPosition, resolvedTilePosition) =>
+                    TryResolveHoveredBillboardTarget(camera, viewport, candidateScreenPosition, out var hoveredTile, out var selectionMode)
+                    && selectionMode == HoverSelectionMode.RawTile
+                    && hoveredTile == new Vector2I(resolvedTilePosition.X, resolvedTilePosition.Y),
+                out screenPosition) == true;
+    }
+
+    public bool TryGetDebugTreeBillboardRenderedSize(Vec3i tilePosition, out Vector2 size)
+    {
+        EnsureVegetationRenderer();
+        size = default;
+        return _vegetationRenderer?.TryGetTreeRenderedSize(tilePosition, out size) == true;
+    }
+
+    public bool TryGetDebugTreeBillboardTransparencyMode(Vec3i tilePosition, out BaseMaterial3D.TransparencyEnum transparency)
+    {
+        EnsureVegetationRenderer();
+        transparency = default;
+        return _vegetationRenderer?.TryGetTreeTransparencyMode(tilePosition, out transparency) == true;
+    }
+
+    public bool TryGetDebugTreeBillboardHasOverlayPass(Vec3i tilePosition, out bool hasOverlayPass)
+    {
+        EnsureVegetationRenderer();
+        hasOverlayPass = false;
+        return _vegetationRenderer?.TryGetTreeHasOverlayPass(tilePosition, out hasOverlayPass) == true;
+    }
+
+    public bool TryGetDebugStructureRoofVisible(int buildingId, out bool visible)
+    {
+        visible = false;
+        if (!_structureMeshes.TryGetValue(buildingId, out var state))
+            return false;
+
+        visible = state.RoofMesh.Visible;
+        return true;
+    }
+
     public int GetDebugChunkMeshCount()
         => _chunkMeshes.Count;
+
+    public int GetDebugPreviewChunkMeshCount()
+        => _chunkMeshes.Values.Count(state => state.UsesPreviewVisuals);
+
+    public bool TryGetDebugChunkMeshBuildSignature(Vec3i origin, out int buildSignature)
+    {
+        buildSignature = 0;
+        if (!_chunkMeshes.TryGetValue(origin, out var state))
+            return false;
+
+        buildSignature = state.BuildSignature;
+        return true;
+    }
 
     public bool HasDebugStockpileOverlay()
         => _stockpileOverlayMesh?.Mesh is not null;
@@ -416,31 +539,48 @@ public partial class WorldRender3D : Node3D
     public int GetDebugMaxVisibleResourceBurstId()
         => _debugMaxVisibleResourceBurstId;
 
-    private void CollectActiveChunks(WorldMap map, int currentZ, Rect2I visibleTileBounds)
+    private void CollectActiveChunks(WorldMap map, int currentZ, Rect2I visibleTileBounds, ChunkPreviewStreamingService? chunkPreviewStreaming)
     {
         _activeChunks.Clear();
         _activeChunkOrigins.Clear();
         if (visibleTileBounds.Size.X <= 0 || visibleTileBounds.Size.Y <= 0)
             return;
 
-        var chunkZ = (currentZ / Chunk.Depth) * Chunk.Depth;
+        var chunkZ = AlignToChunkOrigin(currentZ, Chunk.Depth);
         var maxVisibleX = visibleTileBounds.Position.X + visibleTileBounds.Size.X - 1;
         var maxVisibleY = visibleTileBounds.Position.Y + visibleTileBounds.Size.Y - 1;
-        var minChunkX = (visibleTileBounds.Position.X / Chunk.Width) * Chunk.Width;
-        var minChunkY = (visibleTileBounds.Position.Y / Chunk.Height) * Chunk.Height;
-        var maxChunkX = (maxVisibleX / Chunk.Width) * Chunk.Width;
-        var maxChunkY = (maxVisibleY / Chunk.Height) * Chunk.Height;
+        var minChunkX = AlignToChunkOrigin(visibleTileBounds.Position.X, Chunk.Width);
+        var minChunkY = AlignToChunkOrigin(visibleTileBounds.Position.Y, Chunk.Height);
+        var maxChunkX = AlignToChunkOrigin(maxVisibleX, Chunk.Width);
+        var maxChunkY = AlignToChunkOrigin(maxVisibleY, Chunk.Height);
 
         for (var originX = minChunkX; originX <= maxChunkX; originX += Chunk.Width)
         for (var originY = minChunkY; originY <= maxChunkY; originY += Chunk.Height)
         {
             var origin = new Vec3i(originX, originY, chunkZ);
-            if (!map.TryGetChunk(origin, out var chunk) || chunk is null)
-                continue;
-
-            _activeChunks.Add(chunk);
             _activeChunkOrigins.Add(origin);
+
+            if (map.TryGetChunk(origin, out var activeChunk) && activeChunk is not null)
+                _activeChunks.Add(activeChunk);
         }
+
+        if (_unavailableChunkOrigins.Count > 0)
+        {
+            var staleUnavailableOrigins = _unavailableChunkOrigins.Where(origin => !_activeChunkOrigins.Contains(origin)).ToArray();
+            foreach (var origin in staleUnavailableOrigins)
+                _unavailableChunkOrigins.Remove(origin);
+        }
+    }
+
+    private static int AlignToChunkOrigin(int coordinate, int chunkSize)
+    {
+        var remainder = coordinate % chunkSize;
+        if (remainder == 0)
+            return coordinate;
+
+        return coordinate >= 0
+            ? coordinate - remainder
+            : coordinate - remainder - chunkSize;
     }
 
     private void RefreshDirtyChunkSnapshots(IEnumerable<Chunk> activeChunks)
@@ -452,6 +592,7 @@ public partial class WorldRender3D : Node3D
                 continue;
 
             _chunkSnapshots[chunk.Origin] = WorldChunkRenderSnapshot.Capture(chunk);
+            InvalidateAdjacentChunkMeshes(chunk.Origin);
             chunk.ClearDirty();
             updatedSnapshot = true;
         }
@@ -465,53 +606,259 @@ public partial class WorldRender3D : Node3D
 
     private WorldChunkRenderSnapshot GetOrCaptureSnapshot(Chunk chunk)
     {
-        if (_chunkSnapshots.TryGetValue(chunk.Origin, out var snapshot))
+        if (_chunkSnapshots.TryGetValue(chunk.Origin, out var snapshot)
+            && snapshot.Version == chunk.Version
+            && !snapshot.IsPreview)
             return snapshot;
 
         snapshot = WorldChunkRenderSnapshot.Capture(chunk);
         _chunkSnapshots[chunk.Origin] = snapshot;
+        InvalidateAdjacentChunkMeshes(chunk.Origin);
+        _tileSpriteBillboardsDirty = true;
         if (chunk.IsDirty)
             chunk.ClearDirty();
 
         return snapshot;
     }
 
-    private void QueueChunkMeshSync(WorldChunkRenderSnapshot snapshot, int currentZ)
+    private WorldChunkRenderSnapshot GetOrCaptureSnapshot(ChunkTileSnapshot snapshot)
     {
-        if (!RequiresChunkMeshRebuild(snapshot, currentZ))
+        if (_chunkSnapshots.TryGetValue(snapshot.Origin, out var cached)
+            && cached.Version == snapshot.Version
+            && cached.IsPreview == snapshot.IsPreview)
+        {
+            return cached;
+        }
+
+        var captured = WorldChunkRenderSnapshot.Capture(snapshot);
+        _chunkSnapshots[snapshot.Origin] = captured;
+        InvalidateAdjacentChunkMeshes(snapshot.Origin);
+        _tileSpriteBillboardsDirty = true;
+        return captured;
+    }
+
+    private void InvalidateAdjacentChunkMeshes(Vec3i origin)
+    {
+        for (var deltaX = -Chunk.Width; deltaX <= Chunk.Width; deltaX += Chunk.Width)
+        for (var deltaY = -Chunk.Height; deltaY <= Chunk.Height; deltaY += Chunk.Height)
+        {
+            if (deltaX == 0 && deltaY == 0)
+                continue;
+
+            var neighborOrigin = new Vec3i(origin.X + deltaX, origin.Y + deltaY, origin.Z);
+            if (!_chunkMeshes.TryGetValue(neighborOrigin, out var state))
+                continue;
+
+            state.BuildSignature = -1;
+            if (_activeChunkOrigins.Contains(neighborOrigin) && _pendingChunkBuildOriginSet.Add(neighborOrigin))
+                _pendingChunkBuildOrigins.Enqueue(neighborOrigin);
+        }
+    }
+
+    private bool TryCreateChunkMeshBuildContext(
+        WorldChunkRenderSnapshot snapshot,
+        WorldMap map,
+        ChunkPreviewStreamingService? chunkPreviewStreaming,
+        out ChunkMeshBuildContext buildContext)
+    {
+        var neighborhoodSnapshots = new Dictionary<Vec3i, WorldChunkRenderSnapshot>(9);
+        var buildSignature = new HashCode();
+
+        for (var deltaY = -Chunk.Height; deltaY <= Chunk.Height; deltaY += Chunk.Height)
+        for (var deltaX = -Chunk.Width; deltaX <= Chunk.Width; deltaX += Chunk.Width)
+        {
+            var neighborOrigin = new Vec3i(snapshot.Origin.X + deltaX, snapshot.Origin.Y + deltaY, snapshot.Origin.Z);
+            buildSignature.Add(neighborOrigin);
+
+            WorldChunkRenderSnapshot? neighborSnapshot = null;
+            if (deltaX == 0 && deltaY == 0)
+            {
+                neighborSnapshot = snapshot;
+            }
+            else if (TryResolveChunkSnapshotForMeshing(neighborOrigin, map, chunkPreviewStreaming, out var resolvedSnapshot))
+            {
+                neighborSnapshot = resolvedSnapshot;
+            }
+
+            if (neighborSnapshot is null)
+            {
+                buildSignature.Add(false);
+                buildSignature.Add(-1);
+                continue;
+            }
+
+            neighborhoodSnapshots[neighborOrigin] = neighborSnapshot;
+            buildSignature.Add(true);
+            buildSignature.Add(neighborSnapshot.Version);
+            buildSignature.Add(neighborSnapshot.IsPreview);
+        }
+
+        buildContext = new ChunkMeshBuildContext(snapshot, buildSignature.ToHashCode(), neighborhoodSnapshots);
+        return true;
+    }
+
+    private bool TryResolveChunkSnapshotForMeshing(
+        Vec3i origin,
+        WorldMap map,
+        ChunkPreviewStreamingService? chunkPreviewStreaming,
+        out WorldChunkRenderSnapshot snapshot)
+    {
+        if (_chunkSnapshots.TryGetValue(origin, out var cachedSnapshot))
+        {
+            if (map.TryGetChunk(origin, out var cachedChunk) && cachedChunk is not null)
+            {
+                if (!cachedChunk.IsDirty && cachedSnapshot.Version == cachedChunk.Version && !cachedSnapshot.IsPreview)
+                {
+                    snapshot = cachedSnapshot;
+                    return true;
+                }
+            }
+            else
+            {
+                snapshot = cachedSnapshot;
+                return true;
+            }
+        }
+
+        if (map.TryGetChunk(origin, out var activeChunk) && activeChunk is not null)
+        {
+            snapshot = WorldChunkRenderSnapshot.Capture(activeChunk);
+            return true;
+        }
+
+        if (chunkPreviewStreaming?.TryGetResidentChunkSnapshot(origin, out var streamedSnapshot) == true)
+        {
+            snapshot = WorldChunkRenderSnapshot.Capture(streamedSnapshot);
+            return true;
+        }
+
+        snapshot = null!;
+        return false;
+    }
+
+    private void QueueChunkMeshSync(Vec3i origin, int currentZ)
+    {
+        if (_unavailableChunkOrigins.Contains(origin))
             return;
 
-        if (_pendingChunkBuildOriginSet.Add(snapshot.Origin))
-            _pendingChunkBuildOrigins.Enqueue(snapshot.Origin);
+        if (_chunkSnapshots.TryGetValue(origin, out var snapshot)
+            && _chunkMeshes.TryGetValue(origin, out var state)
+            && state.CenterSnapshotVersion == snapshot.Version
+            && state.BuildSignature != -1
+            && state.SliceZ == currentZ
+            && state.UsesPreviewVisuals == snapshot.IsPreview)
+        {
+            SetChunkMeshVisibility(origin, currentZ, isVisible: true);
+            return;
+        }
+
+        if (_pendingChunkBuildOriginSet.Add(origin))
+            _pendingChunkBuildOrigins.Enqueue(origin);
     }
 
-    private bool RequiresChunkMeshRebuild(WorldChunkRenderSnapshot snapshot, int currentZ)
+    private bool RequiresChunkMeshRebuild(ChunkMeshBuildContext buildContext, int currentZ)
     {
+        var snapshot = buildContext.Snapshot;
         return !_chunkMeshes.TryGetValue(snapshot.Origin, out var state)
-            || state.SnapshotVersion != snapshot.Version
-            || state.SliceZ != currentZ;
+            || state.CenterSnapshotVersion != snapshot.Version
+            || state.BuildSignature != buildContext.BuildSignature
+            || state.SliceZ != currentZ
+            || state.UsesPreviewVisuals != snapshot.IsPreview;
     }
 
-    private void ProcessChunkBuildQueue(WorldMap map, DataManager? data, int currentZ)
+    private void ProcessChunkBuildQueue(WorldMap map, ChunkPreviewStreamingService? chunkPreviewStreaming, DataManager? data, int currentZ)
     {
+        PrioritizePendingChunkBuilds();
+        _debugChunkBuildsProcessedThisSync = 0;
+        _debugChunkTopVertexCount = 0;
+        _debugChunkSideVertexCount = 0;
+        _debugChunkDetailVertexCount = 0;
+        _debugLatestChunkBuildMilliseconds = 0d;
+
         var buildsProcessed = 0;
         while (buildsProcessed < MaxChunkBuildsPerSync && _pendingChunkBuildOrigins.Count > 0)
         {
             var origin = _pendingChunkBuildOrigins.Dequeue();
             _pendingChunkBuildOriginSet.Remove(origin);
 
-            if (!_activeChunkOrigins.Contains(origin) || !_chunkSnapshots.TryGetValue(origin, out var snapshot))
+            if (!_activeChunkOrigins.Contains(origin))
                 continue;
 
-            if (!RequiresChunkMeshRebuild(snapshot, currentZ))
+            if (!_chunkSnapshots.TryGetValue(origin, out var snapshot))
+            {
+                if (map.TryGetChunk(origin, out var activeChunk) && activeChunk is not null)
+                {
+                    snapshot = GetOrCaptureSnapshot(activeChunk);
+                    _unavailableChunkOrigins.Remove(origin);
+                }
+                else if (chunkPreviewStreaming?.TryGetResidentChunkSnapshot(origin, out var streamedSnapshot) == true)
+                {
+                    snapshot = GetOrCaptureSnapshot(streamedSnapshot);
+                    _unavailableChunkOrigins.Remove(origin);
+                }
+                else
+                {
+                    _unavailableChunkOrigins.Add(origin);
+                    continue;
+                }
+            }
+
+            if (!TryCreateChunkMeshBuildContext(snapshot, map, chunkPreviewStreaming, out var buildContext))
+            {
+                _unavailableChunkOrigins.Add(origin);
+                continue;
+            }
+
+            if (!RequiresChunkMeshRebuild(buildContext, currentZ))
             {
                 SetChunkMeshVisibility(origin, currentZ, isVisible: true);
                 continue;
             }
 
-            SyncChunkMesh(snapshot, map, data, currentZ);
+            var stopwatch = Stopwatch.StartNew();
+            var build = SyncChunkMesh(buildContext, data, currentZ);
+            stopwatch.Stop();
+            _debugLatestChunkBuildMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+            if (build is WorldChunkSliceMesher.ChunkSliceMeshBuild resolvedBuild)
+            {
+                _debugChunkBuildsProcessedThisSync++;
+                _debugChunkTopVertexCount += resolvedBuild.TopVertexCount;
+                _debugChunkSideVertexCount += resolvedBuild.SideVertexCount;
+                _debugChunkDetailVertexCount += resolvedBuild.DetailVertexCount;
+            }
+
             buildsProcessed++;
         }
+    }
+
+    private void PrioritizePendingChunkBuilds()
+    {
+        if (_pendingChunkBuildOrigins.Count <= 1)
+            return;
+
+        _pendingChunkScratch.Clear();
+        while (_pendingChunkBuildOrigins.Count > 0)
+            _pendingChunkScratch.Add(_pendingChunkBuildOrigins.Dequeue());
+
+        _pendingChunkScratch.Sort((left, right) =>
+        {
+            var leftDistance = ResolveChunkFocusDistanceSquared(left, _chunkBuildFocusTile);
+            var rightDistance = ResolveChunkFocusDistanceSquared(right, _chunkBuildFocusTile);
+            var compare = leftDistance.CompareTo(rightDistance);
+            if (compare != 0)
+                return compare;
+
+            compare = left.Z.CompareTo(right.Z);
+            if (compare != 0)
+                return compare;
+
+            compare = left.Y.CompareTo(right.Y);
+            return compare != 0 ? compare : left.X.CompareTo(right.X);
+        });
+
+        foreach (var origin in _pendingChunkScratch)
+            _pendingChunkBuildOrigins.Enqueue(origin);
+        _pendingChunkScratch.Clear();
     }
 
     private void SetChunkMeshVisibility(Vec3i origin, int currentZ, bool isVisible)
@@ -525,52 +872,66 @@ public partial class WorldRender3D : Node3D
         state.Mesh.Visible = _isActive && shouldShow;
     }
 
-    private void SyncChunkMesh(WorldChunkRenderSnapshot snapshot, WorldMap map, DataManager? data, int currentZ)
+    private WorldChunkSliceMesher.ChunkSliceMeshBuild? SyncChunkMesh(ChunkMeshBuildContext buildContext, DataManager? data, int currentZ)
     {
         EnsureChunkTopMaterial();
         EnsureChunkDetailMaterial();
         if (_chunkMaterial is null || _chunkTopMaterial is null)
-            return;
+            return null;
 
+        var snapshot = buildContext.Snapshot;
+
+        var sliceRenderCache = WorldChunkSliceRenderCache.Build(
+            snapshot,
+            currentZ,
+            buildContext.TryGetTile,
+            materialId => ResolveGroundTileDefIdFromMaterial(data, materialId));
         var build = _sliceMesher.BuildSliceMesh(
             snapshot,
-            map,
             currentZ,
-            (x, y, z) => TryGetSnapshotTileRenderData(snapshot, map, x, y, z),
-            materialId => ResolveGroundTileDefIdFromMaterial(data, materialId));
+            buildContext.TryGetTile,
+            sliceRenderCache);
         if (build is not WorldChunkSliceMesher.ChunkSliceMeshBuild resolvedBuild)
         {
             RemoveChunkMesh(snapshot.Origin);
-            return;
+            return null;
         }
 
         RefreshChunkTopMaterialTextureArray();
         RefreshChunkDetailMaterialTextureArray();
 
+        var topMaterial = _chunkTopMaterial;
+        var sideMaterial = _chunkMaterial;
+        var detailMaterial = _chunkDetailMaterial;
+
         if (!_chunkMeshes.TryGetValue(snapshot.Origin, out var state))
         {
             var meshInstance = CreateChunkMeshInstance(snapshot.Origin);
-            state = new ChunkMeshState(meshInstance, snapshot.Version, currentZ, isVisible: false);
+            state = new ChunkMeshState(meshInstance, snapshot.Version, buildContext.BuildSignature, currentZ, isVisible: false, usesPreviewVisuals: snapshot.IsPreview);
             _chunkMeshes[snapshot.Origin] = state;
         }
 
         ReplaceOwnedMesh(state.Mesh, resolvedBuild.Mesh);
-        state.SnapshotVersion = snapshot.Version;
+        state.CenterSnapshotVersion = snapshot.Version;
+        state.BuildSignature = buildContext.BuildSignature;
         state.SliceZ = currentZ;
+        state.UsesPreviewVisuals = snapshot.IsPreview;
         state.Mesh.MaterialOverride = null;
-        state.Mesh.SetSurfaceOverrideMaterial(resolvedBuild.TopSurfaceIndex, _chunkTopMaterial);
+        state.Mesh.SetSurfaceOverrideMaterial(resolvedBuild.TopSurfaceIndex, topMaterial);
         if (resolvedBuild.SideSurfaceIndex.HasValue)
-            state.Mesh.SetSurfaceOverrideMaterial(resolvedBuild.SideSurfaceIndex.Value, _chunkMaterial);
-        if (resolvedBuild.DetailSurfaceIndex.HasValue && _chunkDetailMaterial is not null)
-            state.Mesh.SetSurfaceOverrideMaterial(resolvedBuild.DetailSurfaceIndex.Value, _chunkDetailMaterial);
+            state.Mesh.SetSurfaceOverrideMaterial(resolvedBuild.SideSurfaceIndex.Value, sideMaterial);
+        if (resolvedBuild.DetailSurfaceIndex.HasValue && detailMaterial is not null)
+            state.Mesh.SetSurfaceOverrideMaterial(resolvedBuild.DetailSurfaceIndex.Value, detailMaterial);
         state.Mesh.Position = ResolveChunkMeshPosition(snapshot.Origin, currentZ);
         state.Mesh.Visible = false;
 
         SetChunkMeshVisibility(snapshot.Origin, currentZ, isVisible: true);
+        return resolvedBuild;
     }
 
     private void UpdateChunkResidency(int currentZ)
     {
+        var removedSnapshot = false;
         if (_chunkMeshes.Count > 0)
         {
             var staleMeshOrigins = _chunkMeshes.Keys.Where(origin => !_activeChunkOrigins.Contains(origin)).ToArray();
@@ -589,8 +950,15 @@ public partial class WorldRender3D : Node3D
         {
             var staleSnapshotOrigins = _chunkSnapshots.Keys.Where(origin => !_activeChunkOrigins.Contains(origin)).ToArray();
             foreach (var origin in staleSnapshotOrigins)
+            {
+                InvalidateAdjacentChunkMeshes(origin);
                 _chunkSnapshots.Remove(origin);
+                removedSnapshot = true;
+            }
         }
+
+        if (removedSnapshot)
+            _tileSpriteBillboardsDirty = true;
 
         PrunePendingChunkBuilds();
     }
@@ -743,11 +1111,23 @@ public partial class WorldRender3D : Node3D
         _structureMeshes.Remove(buildingId);
     }
 
-    private void UpdateStructureHoverState(InputController? input, SpatialIndexSystem? spatial, int currentZ)
+    private static HoverWorldTarget ResolveHoverTarget(WorldQuerySystem? query, InputController? input, int currentZ)
     {
-        var hoveredBuildingId = -1;
-        if (input is not null && spatial is not null)
-            hoveredBuildingId = spatial.GetBuildingAt(new Vec3i(input.HoveredTile.X, input.HoveredTile.Y, currentZ)) ?? -1;
+        if (input is null)
+            return HoverWorldTarget.None;
+
+        return HoverSelectionResolver.ResolvePrimaryTarget(
+            query,
+            input.HoveredTile,
+            currentZ,
+            input.CurrentHoverSelectionMode);
+    }
+
+    private void UpdateStructureHoverState(HoverWorldTarget hoverTarget)
+    {
+        var hoveredBuildingId = hoverTarget.Kind == HoverWorldTargetKind.Building && hoverTarget.TargetId.HasValue
+            ? hoverTarget.TargetId.Value
+            : -1;
 
         foreach (var pair in _structureMeshes)
             ApplyStructureMeshVisibility(pair.Value, hoveredBuildingId == pair.Key);
@@ -763,7 +1143,7 @@ public partial class WorldRender3D : Node3D
     }
 
     private static bool ShouldRenderStructure(BuildingDef definition, PlacedBuildingData building)
-        => building.IsWorkshop || !string.IsNullOrWhiteSpace(definition.StructureVisualId);
+        => building.IsComplete && definition.VisualProfile is not null;
 
     private void SyncDesignationOverlay(int currentZ, Rect2I visibleTileBounds)
     {
@@ -831,6 +1211,7 @@ public partial class WorldRender3D : Node3D
         DataManager? data,
         InputController? input,
         GameFeedbackController? feedback,
+        HoverWorldTarget hoverTarget,
         int currentZ,
         Rect2I visibleTileBounds,
         Vec3i? focusedLogTile)
@@ -914,6 +1295,11 @@ public partial class WorldRender3D : Node3D
         overlayState.Add(visibleTileBounds);
         overlayState.Add(currentMode);
         overlayState.Add(input?.HoveredTile ?? new Vector2I(-1, -1));
+        overlayState.Add(hoverTarget.Kind);
+        overlayState.Add(hoverTarget.TilePosition);
+        overlayState.Add(hoverTarget.TargetId.HasValue);
+        if (hoverTarget.TargetId.HasValue)
+            overlayState.Add(hoverTarget.TargetId.Value);
         overlayState.Add(input?.SelectedTile.HasValue ?? false);
         if (input?.SelectedTile is Vector2I selectedTileState)
             overlayState.Add(selectedTileState);
@@ -1067,7 +1453,7 @@ public partial class WorldRender3D : Node3D
                 ResolvePulseInset(0.10f, buildingPulse.Pulse.Ring, 0.08f));
         }
 
-        if (input is not null)
+        if (input is not null && hoverTarget.Kind == HoverWorldTargetKind.RawTile)
             AddTilePlate(plates, map, input.HoveredTile.X, input.HoveredTile.Y, currentZ, visibleTileBounds, new Color(1f, 1f, 1f, 0.18f), 0.10f);
 
         if (focusedLogTile is Vec3i focusedTile && focusedTile.Z == currentZ)
@@ -1133,17 +1519,16 @@ public partial class WorldRender3D : Node3D
         SyncOverlayMesh(ref _dynamicOverlayMesh, "DynamicOverlay", WorldOverlayMesher.Build(plates));
     }
 
-    private void SyncTileSpriteBillboards(Camera3D? camera, int currentZ, Rect2I visibleTileBounds)
+    private void SyncTileSpriteBillboards(WorldMap? map, Camera3D? camera, int currentZ, Rect2I visibleTileBounds)
     {
+        EnsureVegetationRenderer();
         if (camera is null)
         {
-            ClearBillboards(_treeBillboards);
-            ClearBillboards(_plantBillboards);
+            _vegetationRenderer?.SyncVisibleInstances(Array.Empty<VegetationVisualInstance>());
             return;
         }
 
-        var visibleTreeIds = new HashSet<Vec3i>();
-        var visiblePlantIds = new HashSet<Vec3i>();
+        var visibleInstances = new List<VegetationVisualInstance>();
 
         foreach (var snapshot in _chunkSnapshots.Values)
         {
@@ -1154,39 +1539,38 @@ public partial class WorldRender3D : Node3D
             for (var localY = 0; localY < Chunk.Height; localY++)
             for (var localX = 0; localX < Chunk.Width; localX++)
             {
-                if (!snapshot.TryGetLocalTile(localX, localY, localZ, out var tile) || tile.TileDefId == TileDefIds.Empty)
+                if (!snapshot.TryGetLocalTile(localX, localY, localZ, out var snapshotTile) || snapshotTile.TileDefId == TileDefIds.Empty)
                     continue;
 
                 var position = new Vec3i(snapshot.Origin.X + localX, snapshot.Origin.Y + localY, currentZ);
                 if (!TileBoundsContains(visibleTileBounds, position.X, position.Y))
                     continue;
 
-                var compositeTreeVisual = default(WorldSpriteVisual);
+                var tile = !snapshot.IsPreview && map is not null && map.IsInBounds(position)
+                    ? map.GetTile(position)
+                    : snapshotTile;
+                if (tile.TileDefId == TileDefIds.Empty)
+                    continue;
+
+                var canopyOverlayVisual = default(WorldSpriteVisual);
                 var hasTreeCanopyOverlay = tile.TileDefId == TileDefIds.Tree
-                    && WorldSpriteVisuals.TryTreeWithPlantOverlay(
-                        tile.TreeSpeciesId,
+                    && WorldSpriteVisuals.TryTreeCanopyOverlay(
                         tile.PlantDefId,
                         tile.PlantGrowthStage,
                         tile.PlantYieldLevel,
                         tile.PlantSeedLevel,
-                        out compositeTreeVisual);
+                        out canopyOverlayVisual);
 
                 if (tile.TileDefId == TileDefIds.Tree)
                 {
-                    var treeVisual = hasTreeCanopyOverlay
-                        ? compositeTreeVisual
-                        : WorldSpriteVisuals.Tree(tile.TreeSpeciesId);
-                    visibleTreeIds.Add(position);
-                    SyncBillboard(
-                        _treeBillboards,
+                    var treeVisual = WorldSpriteVisuals.Tree(tile.TreeSpeciesId);
+                    visibleInstances.Add(new VegetationVisualInstance(
                         position,
-                        position,
-                        ResourceBillboardKind.Tree,
-                        tile.IsDesignated,
-                        $"Tree_{position.X}_{position.Y}_{position.Z}",
+                        VegetationInstanceKind.Tree,
                         treeVisual.Texture,
+                        hasTreeCanopyOverlay ? canopyOverlayVisual.Texture : null,
                         ResolveBillboardPosition(position, GroundSpriteHeight),
-                        treeVisual.WorldSize);
+                        treeVisual.WorldSize));
                 }
 
                 if (hasTreeCanopyOverlay)
@@ -1195,342 +1579,29 @@ public partial class WorldRender3D : Node3D
                 if (!WorldSpriteVisuals.TryPlantOverlay(tile.PlantDefId, tile.PlantGrowthStage, tile.PlantYieldLevel, tile.PlantSeedLevel, out var plantVisual))
                     continue;
 
-                visiblePlantIds.Add(position);
                 var plantHeight = tile.TileDefId == TileDefIds.Tree ? TreeSpriteOverlayHeight : GroundSpriteHeight;
-                SyncBillboard(
-                    _plantBillboards,
+                visibleInstances.Add(new VegetationVisualInstance(
                     position,
-                    position,
-                    ResourceBillboardKind.Plant,
-                    isDesignated: false,
-                    $"Plant_{position.X}_{position.Y}_{position.Z}",
+                    VegetationInstanceKind.Plant,
                     plantVisual.Texture,
+                    null,
                     ResolveBillboardPosition(position, plantHeight),
-                    plantVisual.WorldSize);
+                    plantVisual.WorldSize));
             }
         }
 
-        RemoveStaleBillboards(_treeBillboards, visibleTreeIds);
-        RemoveStaleBillboards(_plantBillboards, visiblePlantIds);
-    }
-
-    private void SyncResourceBillboardHighlights(InputController? input)
-    {
-        UpdateResourceBillboardHighlights(_treeBillboards.Values, input);
-        UpdateResourceBillboardHighlights(_plantBillboards.Values, input);
-    }
-
-    private void UpdateResourceBillboardHighlights(IEnumerable<BillboardState> states, InputController? input)
-    {
-        foreach (var state in states)
-        {
-            state.IsAreaSelected = IsTileWithinSelection(state.TilePosition, input);
-            ApplyResourceBillboardHighlight(state);
-        }
-    }
-
-    private bool IsTileWithinSelection(Vec3i tilePosition, InputController? input)
-    {
-        return SelectionContains(input?.GetSelectionRect(), tilePosition)
-            || SelectionContains(input?.GetSelectedAreaRect(), tilePosition);
-    }
-
-    private static bool SelectionContains((Vector2I from, Vector2I to)? selection, Vec3i tilePosition)
-    {
-        if (selection is not { } rect)
-            return false;
-
-        return tilePosition.X >= rect.from.X
-            && tilePosition.X <= rect.to.X
-            && tilePosition.Y >= rect.from.Y
-            && tilePosition.Y <= rect.to.Y;
-    }
-
-    private void ApplyResourceBillboardHighlight(BillboardState state)
-    {
-        state.DesignationOutline.Visible = _isActive && state.IsDesignated;
-        state.Outline.Visible = _isActive
-            && (state.IsAreaSelected || ReferenceEquals(state, _hoveredResourceBillboard));
-    }
-
-    private void SyncBillboard<TKey>(
-        Dictionary<TKey, BillboardState> states,
-        TKey entityId,
-        string name,
-        Texture2D texture,
-        Vector3 position,
-        Vector2 size)
-        where TKey : notnull
-    {
-        if (!states.TryGetValue(entityId, out var state))
-        {
-            state = CreateBillboardState(name, texture, size);
-            states[entityId] = state;
-        }
-        else if (state.Texture != texture || state.Size != size)
-        {
-            ApplyBillboardVisual(state, texture, size);
-        }
-
-        state.Root.Position = position;
-        state.Root.Visible = _isActive;
-        ApplyResourceBillboardHighlight(state);
-    }
-
-    private void SyncBillboard<TKey>(
-        Dictionary<TKey, BillboardState> states,
-        TKey entityId,
-        Vec3i tilePosition,
-        ResourceBillboardKind kind,
-        bool isDesignated,
-        string name,
-        Texture2D texture,
-        Vector3 position,
-        Vector2 size)
-        where TKey : notnull
-    {
-        SyncBillboard(states, entityId, name, texture, position, size);
-        states[entityId].TilePosition = tilePosition;
-        states[entityId].Kind = kind;
-        states[entityId].IsDesignated = isDesignated;
-        ApplyResourceBillboardHighlight(states[entityId]);
-    }
-
-    private BillboardState CreateBillboardState(string name, Texture2D texture, Vector2 size)
-    {
-        var root = new Node3D { Name = name };
-        var designationOutline = new MeshInstance3D
-        {
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            Visible = false,
-        };
-        var outline = new MeshInstance3D
-        {
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            Visible = false,
-        };
-        var mesh = new MeshInstance3D
-        {
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-        };
-
-        root.AddChild(designationOutline);
-        root.AddChild(outline);
-        root.AddChild(mesh);
-        AddChild(root);
-
-        var state = new BillboardState(root, mesh, designationOutline, outline, texture, size);
-        ApplyBillboardVisual(state, texture, size);
-        return state;
-    }
-
-    private void ApplyBillboardVisual(BillboardState state, Texture2D texture, Vector2 size)
-    {
-        state.Texture = texture;
-        state.Size = size;
-        var quadMesh = state.Mesh.Mesh as QuadMesh ?? new QuadMesh();
-        quadMesh.Size = size;
-        state.Mesh.Mesh = quadMesh;
-        state.Mesh.MaterialOverride = GetBillboardMaterial(texture);
-        state.Mesh.Position = new Vector3(0f, size.Y * 0.5f, 0f);
-
-        var designationOutlineMesh = state.DesignationOutline.Mesh as QuadMesh ?? new QuadMesh();
-        designationOutlineMesh.Size = size * ResourceDesignationOutlineScale;
-        state.DesignationOutline.Mesh = designationOutlineMesh;
-        state.DesignationOutline.MaterialOverride = GetDesignationOutlineBillboardMaterial(texture);
-        state.DesignationOutline.Position = new Vector3(0f, size.Y * 0.5f, ResourceDesignationOutlineDepthOffset);
-
-        var outlineMesh = state.Outline.Mesh as QuadMesh ?? new QuadMesh();
-        outlineMesh.Size = size * ResourceHoverOutlineScale;
-        state.Outline.Mesh = outlineMesh;
-        state.Outline.MaterialOverride = GetOutlineBillboardMaterial(texture);
-        state.Outline.Position = new Vector3(0f, size.Y * 0.5f, ResourceHoverOutlineDepthOffset);
-        ApplyResourceBillboardHighlight(state);
-    }
-
-    private StandardMaterial3D GetBillboardMaterial(Texture2D texture)
-    {
-        if (_billboardMaterials.TryGetValue(texture, out var material))
-            return material;
-
-        material = new StandardMaterial3D
-        {
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
-            AlbedoTexture = texture,
-            RenderPriority = BillboardRenderPriority,
-        };
-
-        _billboardMaterials[texture] = material;
-        return material;
-    }
-
-    private StandardMaterial3D GetDesignationOutlineBillboardMaterial(Texture2D texture)
-    {
-        if (_designationOutlineBillboardMaterials.TryGetValue(texture, out var material))
-            return material;
-
-        material = new StandardMaterial3D
-        {
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
-            AlbedoTexture = texture,
-            AlbedoColor = ResourceDesignationOutlineTint,
-            RenderPriority = BillboardOutlineRenderPriority,
-        };
-
-        _designationOutlineBillboardMaterials[texture] = material;
-        return material;
-    }
-
-    private StandardMaterial3D GetOutlineBillboardMaterial(Texture2D texture)
-    {
-        if (_outlineBillboardMaterials.TryGetValue(texture, out var material))
-            return material;
-
-        material = new StandardMaterial3D
-        {
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
-            AlbedoTexture = texture,
-            AlbedoColor = ResourceHoverOutlineTint,
-            RenderPriority = BillboardOutlineRenderPriority,
-        };
-
-        _outlineBillboardMaterials[texture] = material;
-        return material;
+        _vegetationRenderer?.SyncVisibleInstances(visibleInstances);
     }
 
     private bool TryResolveHoveredResourceBillboardTile(Camera3D? camera, Viewport viewport, Vector2 screenPosition, out Vector2I tile)
     {
-        tile = default;
-        if (camera is null)
-        {
-            SetHoveredResourceBillboard(null);
-            return false;
-        }
-
-        ResourceBillboardPickCandidate? best = null;
-        TryPickResourceBillboards(camera, viewport, screenPosition, _plantBillboards.Values, ref best);
-        TryPickResourceBillboards(camera, viewport, screenPosition, _treeBillboards.Values, ref best);
-
-        SetHoveredResourceBillboard(best?.State);
-        if (best is null)
-            return false;
-
-        tile = new Vector2I(best.Value.TilePosition.X, best.Value.TilePosition.Y);
-        return true;
-    }
-
-    private void TryPickResourceBillboards(Camera3D camera, Viewport viewport, Vector2 screenPosition, IEnumerable<BillboardState> states, ref ResourceBillboardPickCandidate? best)
-    {
-        foreach (var state in states)
-        {
-            if (!TryProjectBillboard(camera, viewport, state, out var screenCenter, out var screenRect, out var depthSquared))
-                continue;
-
-            if (!screenRect.HasPoint(screenPosition))
-                continue;
-
-            var screenDistanceSquared = screenCenter.DistanceSquaredTo(screenPosition);
-            if (best is null
-                || depthSquared < best.Value.DepthSquared
-                || (Mathf.IsEqualApprox(depthSquared, best.Value.DepthSquared) && screenDistanceSquared < best.Value.ScreenDistanceSquared))
-            {
-                best = new ResourceBillboardPickCandidate(state, state.TilePosition, state.Kind, depthSquared, screenDistanceSquared);
-            }
-        }
-    }
-
-    private bool TryGetDebugResourceBillboardProbe(Camera3D camera, Viewport viewport, IEnumerable<BillboardState> states, out Vector2 screenPosition, out Vector2I tile)
-    {
-        screenPosition = default;
-        tile = default;
-
-        foreach (var state in states)
-        {
-            if (!TryProjectBillboard(camera, viewport, state, out var projectedCenter, out _, out _))
-                continue;
-
-            screenPosition = projectedCenter;
-            tile = new Vector2I(state.TilePosition.X, state.TilePosition.Y);
+        EnsureVegetationRenderer();
+        if (_vegetationRenderer?.TryResolveHoveredTile(camera, viewport, screenPosition, out tile) == true)
             return true;
-        }
 
+        tile = default;
         return false;
     }
-
-    private static bool TryProjectBillboard(Camera3D camera, Viewport viewport, BillboardState state, out Vector2 screenCenter, out Rect2 screenRect, out float depthSquared)
-    {
-        screenCenter = default;
-        screenRect = default;
-        depthSquared = 0f;
-
-        if (!state.Root.Visible)
-            return false;
-
-        var rightAxis = camera.GlobalTransform.Basis.X.Normalized();
-        var upAxis = camera.GlobalTransform.Basis.Y.Normalized();
-        var footWorld = state.Root.GlobalTransform.Origin;
-        var centerWorld = footWorld + (upAxis * (state.Size.Y * 0.5f));
-        var cameraOrigin = camera.GlobalTransform.Origin;
-        var forwardAxis = -camera.GlobalTransform.Basis.Z.Normalized();
-        var toCenter = centerWorld - cameraOrigin;
-        if (toCenter.Dot(forwardAxis) <= 0f)
-            return false;
-
-        var rightWorld = centerWorld + (rightAxis * (state.Size.X * 0.5f));
-        var topWorld = centerWorld + (upAxis * (state.Size.Y * 0.5f));
-        screenCenter = camera.UnprojectPosition(centerWorld);
-        var rightScreen = camera.UnprojectPosition(rightWorld);
-        var topScreen = camera.UnprojectPosition(topWorld);
-        var halfWidth = Mathf.Max(3f, Mathf.Abs(rightScreen.X - screenCenter.X) + 2f);
-        var halfHeight = Mathf.Max(5f, Mathf.Abs(topScreen.Y - screenCenter.Y) + 2f);
-        screenRect = new Rect2(
-            screenCenter - new Vector2(halfWidth, halfHeight),
-            new Vector2(halfWidth * 2f, halfHeight * 2f));
-
-        var viewportRect = viewport.GetVisibleRect();
-        if (!viewportRect.Intersects(screenRect))
-            return false;
-
-        depthSquared = toCenter.LengthSquared();
-        return true;
-    }
-
-    private void SetHoveredResourceBillboard(BillboardState? next)
-    {
-        var previous = _hoveredResourceBillboard;
-        if (ReferenceEquals(previous, next))
-        {
-            if (previous is not null)
-                ApplyResourceBillboardHighlight(previous);
-
-            return;
-        }
-
-        _hoveredResourceBillboard = next;
-        if (previous is not null)
-            ApplyResourceBillboardHighlight(previous);
-
-        if (next is not null)
-            ApplyResourceBillboardHighlight(next);
-    }
-
-    private static int CountEmphasizedResourceBillboards(IEnumerable<BillboardState> states)
-        => states.Count(state => state.Outline.Visible);
-
-    private static bool HasDebugDesignatedResourceBillboardOutline(IEnumerable<BillboardState> states, Vector2I tile)
-        => states.Any(state => state.IsDesignated
-            && state.DesignationOutline.Visible
-            && state.TilePosition.X == tile.X
-            && state.TilePosition.Y == tile.Y);
 
     private static Vector3 ResolveBillboardPosition(Vec3i position, float localFeetHeight)
         => new(position.X + 0.5f, (position.Z * VerticalSliceSpacing) + localFeetHeight, position.Y + 0.5f);
@@ -1950,29 +2021,6 @@ public partial class WorldRender3D : Node3D
         meshInstance.Visible = false;
     }
 
-    private static void ClearBillboards<TKey>(Dictionary<TKey, BillboardState> states)
-        where TKey : notnull
-    {
-        foreach (var state in states.Values)
-            ReleaseBillboardState(state);
-
-        states.Clear();
-    }
-
-    private static void RemoveStaleBillboards<TKey>(Dictionary<TKey, BillboardState> states, HashSet<TKey> visibleIds)
-        where TKey : notnull
-    {
-        if (states.Count == 0)
-            return;
-
-        var staleIds = states.Keys.Where(id => !visibleIds.Contains(id)).ToArray();
-        foreach (var staleId in staleIds)
-        {
-            ReleaseBillboardState(states[staleId]);
-            states.Remove(staleId);
-        }
-    }
-
     private static void ReleaseChunkMeshState(ChunkMeshState state)
     {
         state.Mesh.MaterialOverride = null;
@@ -1986,15 +2034,6 @@ public partial class WorldRender3D : Node3D
         ReplaceOwnedMesh(state.BodyMesh, null);
         state.RoofMesh.MaterialOverride = null;
         ReplaceOwnedMesh(state.RoofMesh, null);
-        state.Root.QueueFree();
-    }
-
-    private static void ReleaseBillboardState(BillboardState state)
-    {
-        ReplaceOwnedMesh(state.Mesh, null);
-        state.Mesh.MaterialOverride = null;
-        ReplaceOwnedMesh(state.Outline, null);
-        state.Outline.MaterialOverride = null;
         state.Root.QueueFree();
     }
 
@@ -2083,24 +2122,18 @@ public partial class WorldRender3D : Node3D
     private static Vector3 ResolveChunkMeshPosition(Vec3i origin, int currentZ)
         => new(origin.X * TileWorldSize, currentZ * VerticalSliceSpacing, origin.Y * TileWorldSize);
 
-    private static TileRenderData? TryGetSnapshotTileRenderData(WorldChunkRenderSnapshot snapshot, WorldMap map, int x, int y, int z)
+    private static Vector2 ResolveVisibleTileBoundsCenter(Rect2I visibleTileBounds)
+        => new(
+            visibleTileBounds.Position.X + (visibleTileBounds.Size.X * 0.5f),
+            visibleTileBounds.Position.Y + (visibleTileBounds.Size.Y * 0.5f));
+
+    private static float ResolveChunkFocusDistanceSquared(Vec3i origin, Vector2 focusTile)
     {
-        var position = new Vec3i(x, y, z);
-        if (!map.IsInBounds(position))
-            return null;
-
-        WorldTileData tile;
-        var localX = x - snapshot.Origin.X;
-        var localY = y - snapshot.Origin.Y;
-        var localZ = z - snapshot.Origin.Z;
-        if (snapshot.TryGetLocalTile(localX, localY, localZ, out var snapshotTile))
-            tile = snapshotTile;
-        else
-            tile = map.GetTile(position);
-
-        return tile.TileDefId == TileDefIds.Empty
-            ? null
-            : new TileRenderData(tile.TileDefId, tile.MaterialId, tile.FluidType, tile.FluidLevel, tile.FluidMaterialId, tile.OreItemDefId, tile.PlantDefId, tile.PlantGrowthStage, tile.PlantYieldLevel, tile.PlantSeedLevel);
+        var centerX = origin.X + (Chunk.Width * 0.5f);
+        var centerY = origin.Y + (Chunk.Height * 0.5f);
+        var dx = centerX - focusTile.X;
+        var dy = centerY - focusTile.Y;
+        return (dx * dx) + (dy * dy);
     }
 
     private static string? ResolveGroundTileDefIdFromMaterial(DataManager? data, string? materialId)
@@ -2120,10 +2153,7 @@ public partial class WorldRender3D : Node3D
             return;
         }
 
-        _chunkTopMaterial = new ShaderMaterial
-        {
-            Shader = LoadChunkArrayShader(),
-        };
+        _chunkTopMaterial = CreateChunkArrayMaterial(Colors.White);
         RefreshChunkTopMaterialTextureArray();
     }
 
@@ -2145,10 +2175,7 @@ public partial class WorldRender3D : Node3D
             return;
         }
 
-        _chunkDetailMaterial = new ShaderMaterial
-        {
-            Shader = LoadChunkArrayShader(),
-        };
+        _chunkDetailMaterial = CreateChunkArrayMaterial(Colors.White);
         RefreshChunkDetailMaterialTextureArray();
     }
 
@@ -2160,6 +2187,16 @@ public partial class WorldRender3D : Node3D
         var textureArray = TerrainDetailOverlayLibrary.GetTextureArray();
         if (textureArray is not null)
             _chunkDetailMaterial.SetShaderParameter("tile_array", textureArray);
+    }
+
+    private static ShaderMaterial CreateChunkArrayMaterial(Color tint)
+    {
+        var material = new ShaderMaterial
+        {
+            Shader = LoadChunkArrayShader(),
+        };
+        material.SetShaderParameter("tint_color", tint);
+        return material;
     }
 
     private static Shader LoadChunkArrayShader()
@@ -2212,23 +2249,92 @@ public partial class WorldRender3D : Node3D
         _actorPresentation.SetActive(_isActive);
     }
 
+    private void EnsureVegetationRenderer()
+    {
+        if (_vegetationRenderer is not null)
+            return;
+
+        _vegetationRenderer = new VegetationInstanceRenderer
+        {
+            Name = "VegetationInstanceRenderer",
+        };
+        AddChild(_vegetationRenderer);
+        _vegetationRenderer.SetActive(_isActive);
+    }
+
+    private void EnsureHoverHighlightRenderer()
+    {
+        if (_hoverHighlightRenderer is not null)
+            return;
+
+        _hoverHighlightRenderer = new WorldHoverHighlightRenderer3D
+        {
+            Name = "WorldHoverHighlightRenderer3D",
+        };
+        AddChild(_hoverHighlightRenderer);
+        _hoverHighlightRenderer.SetActive(_isActive);
+    }
+
+    private sealed class ChunkMeshBuildContext
+    {
+        private readonly Dictionary<Vec3i, WorldChunkRenderSnapshot> _neighborhoodSnapshots;
+
+        public ChunkMeshBuildContext(
+            WorldChunkRenderSnapshot snapshot,
+            int buildSignature,
+            Dictionary<Vec3i, WorldChunkRenderSnapshot> neighborhoodSnapshots)
+        {
+            Snapshot = snapshot;
+            BuildSignature = buildSignature;
+            _neighborhoodSnapshots = neighborhoodSnapshots;
+        }
+
+        public WorldChunkRenderSnapshot Snapshot { get; }
+
+        public int BuildSignature { get; }
+
+        public WorldTileData? TryGetTile(int x, int y, int z)
+        {
+            var origin = new Vec3i(
+                AlignToChunkOrigin(x, Chunk.Width),
+                AlignToChunkOrigin(y, Chunk.Height),
+                AlignToChunkOrigin(z, Chunk.Depth));
+            if (!_neighborhoodSnapshots.TryGetValue(origin, out var snapshot))
+                return null;
+
+            return snapshot.TryGetLocalTile(
+                x - origin.X,
+                y - origin.Y,
+                z - origin.Z,
+                out var tile)
+                ? tile
+                : null;
+        }
+    }
+
     private sealed class ChunkMeshState
     {
-        public ChunkMeshState(MeshInstance3D mesh, int snapshotVersion, int sliceZ, bool isVisible)
+        public ChunkMeshState(MeshInstance3D mesh, int centerSnapshotVersion, int buildSignature, int sliceZ, bool isVisible, bool usesPreviewVisuals)
         {
             Mesh = mesh;
-            SnapshotVersion = snapshotVersion;
+            CenterSnapshotVersion = centerSnapshotVersion;
+            BuildSignature = buildSignature;
             SliceZ = sliceZ;
             IsVisible = isVisible;
+            UsesPreviewVisuals = usesPreviewVisuals;
         }
 
         public MeshInstance3D Mesh { get; }
 
-        public int SnapshotVersion { get; set; }
+        public int CenterSnapshotVersion { get; set; }
+
+        public int BuildSignature { get; set; }
 
         public int SliceZ { get; set; }
 
         public bool IsVisible { get; set; }
+
+        public bool UsesPreviewVisuals { get; set; }
     }
 
     private sealed class StructureMeshState
@@ -2255,55 +2361,4 @@ public partial class WorldRender3D : Node3D
         public bool HideRoofOnHover { get; set; }
     }
 
-    private sealed class BillboardState
-    {
-        public BillboardState(
-            Node3D root,
-            MeshInstance3D mesh,
-            MeshInstance3D designationOutline,
-            MeshInstance3D outline,
-            Texture2D texture,
-            Vector2 size)
-        {
-            Root = root;
-            Mesh = mesh;
-            DesignationOutline = designationOutline;
-            Outline = outline;
-            Texture = texture;
-            Size = size;
-        }
-
-        public Node3D Root { get; }
-
-        public MeshInstance3D Mesh { get; }
-
-    public MeshInstance3D DesignationOutline { get; }
-
-        public MeshInstance3D Outline { get; }
-
-        public Texture2D Texture { get; set; }
-
-        public Vector2 Size { get; set; }
-
-        public Vec3i TilePosition { get; set; }
-
-        public ResourceBillboardKind Kind { get; set; }
-
-        public bool IsDesignated { get; set; }
-
-        public bool IsAreaSelected { get; set; }
-    }
-
-    private enum ResourceBillboardKind
-    {
-        Tree,
-        Plant,
-    }
-
-    private readonly record struct ResourceBillboardPickCandidate(
-        BillboardState State,
-        Vec3i TilePosition,
-        ResourceBillboardKind Kind,
-        float DepthSquared,
-        float ScreenDistanceSquared);
 }

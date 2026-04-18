@@ -13,6 +13,13 @@ using WorldTileData = DwarfFortress.GameLogic.World.TileData;
 
 namespace DwarfFortress.GodotClient.Rendering;
 
+public readonly record struct ActorBillboardHoverPresentation(
+    Vec3i TilePosition,
+    Vector3 WorldPosition,
+    Texture2D Texture,
+    Vector2 Size,
+    bool UsesCarriedVariant);
+
 public sealed partial class WorldActorPresentation3D : Node3D
 {
     private const float EntityFeetHeight = 0.18f;
@@ -25,18 +32,13 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private const float ContainerPreviewDepthOffset = 0.016f;
     private const float WaterSurfaceOffset = 0.012f;
     private const int BillboardRenderPriority = 1;
-    private const int BillboardOutlineRenderPriority = 2;
     private const int CarriedBillboardRenderPriority = 3;
-    private const int CarriedBillboardOutlineRenderPriority = 4;
-    private const float HoverOutlineScale = 1.14f;
-    private const float HoverOutlineDepthOffset = -0.0025f;
     private const int MaxVisibleCreatureBillboards = 96;
     private const int MaxVisibleItemLikeBillboards = 160;
     private const int WorldFxLabelFontSize = 24;
     private const float WorldFxLabelPixelSize = 0.0030f;
     private const int EmoteBubbleRenderPriority = 10;
     private const int EmoteIconRenderPriority = 11;
-    private static readonly Color HoverOutlineTint = new(1f, 0.95f, 0.58f, 0.9f);
     private static readonly Vector2 EmoteBubbleSize = new(0.94f, 0.68f);
     private static readonly Vector2 EmoteTailSize = new(0.26f, 0.22f);
     private static readonly Vector2 EmoteBubbleIconSize = new(0.58f, 0.58f);
@@ -54,8 +56,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
     private readonly Dictionary<int, Label3D> _worldFxLabels = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _billboardMaterials = new();
     private readonly Dictionary<Texture2D, StandardMaterial3D> _carriedBillboardMaterials = new();
-    private readonly Dictionary<Texture2D, StandardMaterial3D> _outlineBillboardMaterials = new();
-    private readonly Dictionary<Texture2D, StandardMaterial3D> _carriedOutlineBillboardMaterials = new();
     private readonly List<int> _visibleDwarfIds = new();
     private readonly List<int> _visibleCreatureIds = new();
     private readonly List<int> _visibleItemIds = new();
@@ -71,7 +71,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
     private MeshInstance3D? _waterEffectMesh;
     private StandardMaterial3D? _waterEffectMaterial;
-    private BillboardState? _hoveredBillboard;
     private bool _isActive;
 
     public override void _Ready()
@@ -82,9 +81,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
     public (int Dwarves, int Creatures, int Items) GetDebugSpriteCounts()
         => (_dwarfBillboards.Count, _creatureBillboards.Count, _itemBillboards.Count + _carriedItemBillboards.Count);
-
-    public bool HasDebugHoveredBillboardOutline()
-        => _hoveredBillboard?.Outline.Visible == true;
 
     public int GetDebugItemBillboardRenderPriority()
     {
@@ -122,10 +118,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
     {
         tile = default;
         if (camera is null)
-        {
-            SetHoveredBillboard(null);
             return false;
-        }
 
         BillboardPickCandidate? best = null;
         TryPickBillboards(camera, viewport, screenPosition, _dwarfBillboards.Values, ref best);
@@ -133,7 +126,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
         TryPickBillboards(camera, viewport, screenPosition, _itemBillboards.Values, ref best);
         TryPickBillboards(camera, viewport, screenPosition, _carriedItemBillboards.Values, ref best);
 
-        SetHoveredBillboard(best?.State);
         if (best is null)
             return false;
 
@@ -197,9 +189,45 @@ public sealed partial class WorldActorPresentation3D : Node3D
         return false;
     }
 
+    public bool TryGetHoverPresentation(int entityId, out ActorBillboardHoverPresentation snapshot)
+    {
+        snapshot = default;
+        if (!TryGetBillboardState(entityId, out var billboardState))
+            return false;
+
+        snapshot = new ActorBillboardHoverPresentation(
+            billboardState.TilePosition,
+            billboardState.Root.GlobalTransform.Origin,
+            billboardState.Texture,
+            billboardState.Size,
+            _carriedItemBillboards.ContainsKey(entityId));
+        return true;
+    }
+
+    public bool TryGetDebugBillboardAlbedoColor(int entityId, out Color albedoColor)
+    {
+        albedoColor = default;
+        if (TryGetBillboardState(entityId, out var billboardState)
+            && billboardState.Mesh.MaterialOverride is StandardMaterial3D material)
+        {
+            albedoColor = material.AlbedoColor;
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool TryGetDebugBillboardProbeForEntity(int entityId, Camera3D? camera, Viewport viewport, out Vector2 screenPosition, out Vector2I tile)
+    {
+        screenPosition = default;
+        tile = default;
+        return camera is not null
+            && TryGetBillboardState(entityId, out var billboardState)
+            && TryGetDebugBillboardProbe(camera, viewport, new[] { billboardState }, out screenPosition, out tile);
+    }
+
     public void Reset()
     {
-        SetHoveredBillboard(null);
         ClearBillboards(_dwarfBillboards);
         ClearBillboards(_creatureBillboards);
         ClearBillboards(_itemBillboards);
@@ -211,12 +239,8 @@ public sealed partial class WorldActorPresentation3D : Node3D
         ClearOverlayMesh(ref _waterEffectMesh);
         DisposeMaterials(_billboardMaterials);
         DisposeMaterials(_carriedBillboardMaterials);
-        DisposeMaterials(_outlineBillboardMaterials);
-        DisposeMaterials(_carriedOutlineBillboardMaterials);
         _billboardMaterials.Clear();
         _carriedBillboardMaterials.Clear();
-        _outlineBillboardMaterials.Clear();
-        _carriedOutlineBillboardMaterials.Clear();
         _dwarfFacingById.Clear();
         _creatureFacingById.Clear();
         ClearVisibleEntityIds();
@@ -257,34 +281,19 @@ public sealed partial class WorldActorPresentation3D : Node3D
         _isActive = active;
 
         foreach (var state in _dwarfBillboards.Values)
-        {
             state.Root.Visible = active;
-            state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
-        }
 
         foreach (var state in _creatureBillboards.Values)
-        {
             state.Root.Visible = active;
-            state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
-        }
 
         foreach (var state in _itemBillboards.Values)
-        {
             state.Root.Visible = active;
-            state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
-        }
 
         foreach (var state in _carriedItemBillboards.Values)
-        {
             state.Root.Visible = active;
-            state.Outline.Visible = active && ReferenceEquals(state, _hoveredBillboard);
-        }
 
         foreach (var state in _inventoryPickupCueBillboards.Values)
-        {
             state.Root.Visible = active;
-            state.Outline.Visible = false;
-        }
 
         foreach (var bubble in _emoteBubbles.Values)
             bubble.Root.Visible = active;
@@ -1230,7 +1239,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
 
         state.Root.Position = position;
         state.Root.Visible = _isActive;
-        state.Outline.Visible = _isActive && ReferenceEquals(state, _hoveredBillboard);
     }
 
     private void SyncBillboard<TKey>(Dictionary<TKey, BillboardState> states, TKey entityId, Vec3i tilePosition, string name, Texture2D texture, Vector3 position, Vector2 size, bool useCarriedMaterial = false)
@@ -1246,11 +1254,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
         var mesh = new MeshInstance3D
         {
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-        };
-        var outline = new MeshInstance3D
-        {
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            Visible = false,
         };
         var previewMeshes = Enumerable.Range(0, 3)
             .Select(_ => new MeshInstance3D
@@ -1275,7 +1278,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
         waterTint.MaterialOverride = waterTintMaterial;
         waterLine.MaterialOverride = waterLineMaterial;
 
-        root.AddChild(outline);
         root.AddChild(mesh);
         foreach (var previewMesh in previewMeshes)
             root.AddChild(previewMesh);
@@ -1283,7 +1285,7 @@ public sealed partial class WorldActorPresentation3D : Node3D
         root.AddChild(waterLine);
         AddChild(root);
 
-        var state = new BillboardState(root, mesh, outline, previewMeshes, waterTint, waterTintMaterial, waterLine, waterLineMaterial, texture, size);
+        var state = new BillboardState(root, mesh, previewMeshes, waterTint, waterTintMaterial, waterLine, waterLineMaterial, texture, size);
         ApplyBillboardVisual(state, texture, size, useCarriedMaterial);
         return state;
     }
@@ -1297,13 +1299,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
         state.Mesh.Mesh = quadMesh;
         state.Mesh.MaterialOverride = GetBillboardMaterial(texture, useCarriedMaterial);
         state.Mesh.Position = new Vector3(0f, size.Y * 0.5f, 0f);
-
-        var outlineMesh = state.Outline.Mesh as QuadMesh ?? new QuadMesh();
-        outlineMesh.Size = size * HoverOutlineScale;
-        state.Outline.Mesh = outlineMesh;
-        state.Outline.MaterialOverride = GetOutlineBillboardMaterial(texture, useCarriedMaterial);
-        state.Outline.Position = new Vector3(0f, size.Y * 0.5f, HoverOutlineDepthOffset);
-        state.Outline.Visible = _isActive && ReferenceEquals(state, _hoveredBillboard);
     }
 
     private StandardMaterial3D GetBillboardMaterial(Texture2D texture, bool useCarriedMaterial = false)
@@ -1320,27 +1315,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
             AlbedoTexture = texture,
             RenderPriority = useCarriedMaterial ? CarriedBillboardRenderPriority : BillboardRenderPriority,
-        };
-
-        materials[texture] = material;
-        return material;
-    }
-
-    private StandardMaterial3D GetOutlineBillboardMaterial(Texture2D texture, bool useCarriedMaterial = false)
-    {
-        var materials = useCarriedMaterial ? _carriedOutlineBillboardMaterials : _outlineBillboardMaterials;
-        if (materials.TryGetValue(texture, out var material))
-            return material;
-
-        material = new StandardMaterial3D
-        {
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-            BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
-            AlbedoTexture = texture,
-            AlbedoColor = HoverOutlineTint,
-            RenderPriority = useCarriedMaterial ? CarriedBillboardOutlineRenderPriority : BillboardOutlineRenderPriority,
         };
 
         materials[texture] = material;
@@ -1467,8 +1441,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
     {
         ReplaceOwnedMesh(state.Mesh, null);
         state.Mesh.MaterialOverride = null;
-        ReplaceOwnedMesh(state.Outline, null);
-        state.Outline.MaterialOverride = null;
         foreach (var previewMesh in state.PreviewMeshes)
         {
             ReplaceOwnedMesh(previewMesh, null);
@@ -1819,30 +1791,11 @@ public sealed partial class WorldActorPresentation3D : Node3D
         return true;
     }
 
-    private void SetHoveredBillboard(BillboardState? next)
-    {
-        if (ReferenceEquals(_hoveredBillboard, next))
-        {
-            if (_hoveredBillboard is not null)
-                _hoveredBillboard.Outline.Visible = _isActive;
-
-            return;
-        }
-
-        if (_hoveredBillboard is not null)
-            _hoveredBillboard.Outline.Visible = false;
-
-        _hoveredBillboard = next;
-        if (_hoveredBillboard is not null)
-            _hoveredBillboard.Outline.Visible = _isActive;
-    }
-
     private sealed class BillboardState
     {
         public BillboardState(
             Node3D root,
             MeshInstance3D mesh,
-            MeshInstance3D outline,
             MeshInstance3D[] previewMeshes,
             MeshInstance3D waterTint,
             StandardMaterial3D waterTintMaterial,
@@ -1853,7 +1806,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
         {
             Root = root;
             Mesh = mesh;
-            Outline = outline;
             PreviewMeshes = previewMeshes;
             WaterTint = waterTint;
             WaterTintMaterial = waterTintMaterial;
@@ -1866,8 +1818,6 @@ public sealed partial class WorldActorPresentation3D : Node3D
         public Node3D Root { get; }
 
         public MeshInstance3D Mesh { get; }
-
-        public MeshInstance3D Outline { get; }
 
         public MeshInstance3D[] PreviewMeshes { get; }
 

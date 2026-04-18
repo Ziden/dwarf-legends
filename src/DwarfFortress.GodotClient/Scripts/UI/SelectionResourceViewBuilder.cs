@@ -176,6 +176,9 @@ internal static class SelectionResourceViewBuilder
             ];
         }
 
+        if (tile.IsPreview)
+            return DescribePreviewTileResources(data, tile);
+
         var descriptors = new List<SelectionResourceDescriptor>(capacity: 2);
 
         if (PlantHarvesting.TryGetHarvestablePlant(map, data, position, out var harvestablePlant))
@@ -248,6 +251,65 @@ internal static class SelectionResourceViewBuilder
                 Details: details,
                 Icon: PixelArtFactory.GetTile(tile.TileDefId, tile.MaterialId),
                 ActionKind: actionKind),
+        ];
+    }
+
+    private static SelectionResourceDescriptor[] DescribePreviewTileResources(DataManager data, TileView tile)
+    {
+        const string previewDetails = "Read-only streamed preview tile.";
+        var descriptors = new List<SelectionResourceDescriptor>(capacity: 2);
+
+        if (!string.IsNullOrWhiteSpace(tile.PlantDefId))
+        {
+            var plantDef = data.Plants.GetOrNull(tile.PlantDefId);
+            descriptors.Add(new SelectionResourceDescriptor(
+                Id: $"preview-plant:{tile.PlantDefId}:{tile.PlantGrowthStage}:{tile.PlantYieldLevel}:{tile.PlantSeedLevel}",
+                CategoryLabel: "Plants",
+                Title: plantDef?.DisplayName ?? ItemTextFormatter.FormatToken(tile.PlantDefId!),
+                Details: previewDetails,
+                Icon: PixelArtFactory.GetPlantOverlay(tile.PlantDefId!, tile.PlantGrowthStage, tile.PlantYieldLevel, tile.PlantSeedLevel),
+                ActionKind: SelectionResourceActionKind.None));
+        }
+
+        if (string.Equals(tile.TileDefId, DwarfFortress.GameLogic.World.TileDefIds.Tree, StringComparison.OrdinalIgnoreCase))
+        {
+            var speciesName = !string.IsNullOrWhiteSpace(tile.TreeSpeciesId)
+                ? $"{ItemTextFormatter.FormatToken(tile.TreeSpeciesId!)} Tree"
+                : "Tree";
+            descriptors.Add(new SelectionResourceDescriptor(
+                Id: $"preview-tree:{tile.TreeSpeciesId ?? tile.TileDefId}",
+                CategoryLabel: "Trees",
+                Title: speciesName,
+                Details: previewDetails,
+                Icon: PixelArtFactory.GetTile(tile.TileDefId, tile.TreeSpeciesId ?? tile.MaterialId),
+                ActionKind: SelectionResourceActionKind.None));
+        }
+
+        if (!string.IsNullOrWhiteSpace(tile.OreItemDefId))
+        {
+            var oreDef = data.Items.GetOrNull(tile.OreItemDefId);
+            descriptors.Add(new SelectionResourceDescriptor(
+                Id: $"preview-ore:{tile.OreItemDefId}",
+                CategoryLabel: "Ore",
+                Title: oreDef?.DisplayName ?? ItemTextFormatter.FormatToken(tile.OreItemDefId!),
+                Details: previewDetails,
+                Icon: PixelArtFactory.GetItem(tile.OreItemDefId!, tile.MaterialId),
+                ActionKind: SelectionResourceActionKind.None));
+        }
+
+        if (descriptors.Count > 0)
+            return descriptors.ToArray();
+
+        var tileDef = data.Tiles.GetOrNull(tile.TileDefId);
+        return
+        [
+            new SelectionResourceDescriptor(
+                Id: $"preview-tile:{tile.TileDefId}:{tile.MaterialId ?? string.Empty}",
+                CategoryLabel: ResolveTileCategory(tile, tileDef),
+                Title: BuildTileTitle(tile, tileDef),
+                Details: previewDetails,
+                Icon: PixelArtFactory.GetTile(tile.TileDefId, tile.MaterialId),
+                ActionKind: SelectionResourceActionKind.None),
         ];
     }
 

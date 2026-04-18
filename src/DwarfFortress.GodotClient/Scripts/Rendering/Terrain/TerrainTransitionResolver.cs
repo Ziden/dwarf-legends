@@ -9,16 +9,15 @@ public static class TerrainTransitionResolver
         int x,
         int y,
         int z,
-        Func<int, int, int, TileRenderData?> tryGetTile,
-        Func<string?, string?>? resolveGroundFromMaterial)
+        Func<int, int, int, GroundVisualData?> tryGetGround)
     {
         var transitions = TileSmoothingResolver.ResolveTransitions(
             baseGround,
             x,
             y,
             z,
-            tryGetTile,
-            GroundTileSmoothingProfile.Create(resolveGroundFromMaterial));
+            tryGetGround,
+            GroundTileSmoothingProfile.Create());
         return TerrainTransitionSet.FromTileTransitions(transitions);
     }
 }

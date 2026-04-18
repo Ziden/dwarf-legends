@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using DwarfFortress.GameLogic.Data;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.World;
 using DwarfFortress.WorldGen.Content;
 using Godot;
@@ -24,6 +25,48 @@ public static class GroundMaterialResolver
 
     private static readonly Lazy<IReadOnlyDictionary<string, TagSet>> MaterialTagsByMaterialId =
         new(LoadMaterialTagsByMaterialId);
+
+    public static bool IsWoodMaterial(string? materialId)
+    {
+        if (string.IsNullOrWhiteSpace(materialId))
+            return false;
+
+        var normalized = materialId.Trim().ToLowerInvariant();
+        if (normalized == MaterialIds.Wood)
+            return true;
+
+        MaterialTagsByMaterialId.Value.TryGetValue(normalized, out var materialTags);
+        return materialTags?.Contains(TagIds.Wood) == true || materialTags?.Contains(TagIds.Wooden) == true;
+    }
+
+    public static TerrainGroundMaterialKind ResolveTerrainGroundMaterialKind(string? materialId, TagSet? materialTags = null)
+    {
+        if (string.IsNullOrWhiteSpace(materialId))
+            return TerrainGroundMaterialKind.None;
+
+        var normalized = materialId.Trim().ToLowerInvariant();
+        var resolvedTags = materialTags;
+        if (resolvedTags is null)
+            MaterialTagsByMaterialId.Value.TryGetValue(normalized, out resolvedTags);
+
+        if (normalized == MaterialIds.Wood || resolvedTags?.Contains(TagIds.Wood) == true || resolvedTags?.Contains(TagIds.Wooden) == true)
+            return TerrainGroundMaterialKind.None;
+
+        if (resolvedTags?.Contains(TagIds.Dirt) == true)
+            return TerrainGroundMaterialKind.Dirt;
+
+        if (resolvedTags?.Contains(TagIds.Stone) == true)
+            return TerrainGroundMaterialKind.Stone;
+
+        if (normalized.Contains("soil") || normalized.Contains("dirt") || normalized.Contains("loam")
+            || normalized.Contains("peat") || normalized.Contains("sand") || normalized.Contains("mud")
+            || normalized.Contains("clay") || normalized.Contains("silt"))
+        {
+            return TerrainGroundMaterialKind.Dirt;
+        }
+
+        return TerrainGroundMaterialKind.None;
+    }
 
     public static string? ResolveGroundTileDefIdFromTileDef(string tileDefId)
     {

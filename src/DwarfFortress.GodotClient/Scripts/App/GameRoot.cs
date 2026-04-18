@@ -8,6 +8,7 @@ using DwarfFortress.GameLogic.Entities.Components;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.World;
 using DwarfFortress.GodotClient.Rendering;
+using DwarfFortress.WorldGen.Generation;
 using Godot;
 
 using WorldTileData = DwarfFortress.GameLogic.World.TileData;
@@ -29,6 +30,8 @@ public partial class GameRoot : Node
     private WorldQuerySystem? _query;
     private SpatialIndexSystem? _spatialIndex;
     private MovementPresentationSystem? _movementPresentation;
+    private ChunkActivationManager? _chunkActivationManager;
+    private ChunkPreviewStreamingService? _chunkPreviewStreamingService;
     private readonly SimulationLoopController _simulationLoop = new();
     private readonly SimulationProfiler _renderProfiler = new(maxFrames: 300);
 
@@ -39,6 +42,7 @@ public partial class GameRoot : Node
     private Rect2I _world3DVisibleTileBounds;
     private int _world3DVisibleZ;
     private bool _hasWorld3DVisibleState;
+    private RegionCoord? _embarkRegionCoord;
 
     private WorldRender3D? _world3DPlaceholder;
 
@@ -203,6 +207,9 @@ public partial class GameRoot : Node
             _query = _simulation.Context.Get<WorldQuerySystem>();
             _spatialIndex = _simulation.Context.Get<SpatialIndexSystem>();
             _movementPresentation = _simulation.Context.Get<MovementPresentationSystem>();
+            _chunkActivationManager = _simulation.Context.Get<ChunkActivationManager>();
+            _chunkPreviewStreamingService = _simulation.Context.Get<ChunkPreviewStreamingService>();
+            _embarkRegionCoord = _simulation.Context.Get<MapGenerationService>().LastGeneratedEmbark?.RegionCoord;
             _renderCache.Clear();
 
             if (PixelArtFactory.UseSprites)
@@ -278,8 +285,6 @@ public partial class GameRoot : Node
             _world3DPlaceholder?.SetActive(true);
             _hasWorld3DVisibleState = false;
             _world3DDirty = true;
-            _worldCamera3D.SyncTransform(_currentZ);
-            Update3DWorldState();
 
             _simulation.EventBus.On<TileChangedEvent>(OnTileChanged);
             _simulation.EventBus.On<StockpileCreatedEvent>(_ => _world3DDirty = true);
@@ -391,7 +396,6 @@ public partial class GameRoot : Node
         _worldCamera3D.JumpToTile(pos);
         _focusedLogTile = pos;
         _world3DDirty = true;
-        Update3DWorldState();
     }
 
     private void SetCurrentZ(int nextZ, bool refreshImmediately = true)
@@ -404,8 +408,6 @@ public partial class GameRoot : Node
         _currentZ = clampedZ;
         _input?.SetCurrentZ(_currentZ);
         _world3DDirty = true;
-        if (refreshImmediately)
-            Update3DWorldState();
     }
 
     private bool JumpToLinkedEventTarget(EventLogLinkTarget linkedTarget)
@@ -469,7 +471,7 @@ public partial class GameRoot : Node
 
             if (_world3DPlaceholder?.TryResolveHoveredBillboardTarget(_camera3D, GetViewport(), out var hoveredTile, out var hoverSelectionMode) == true)
                 _input?.UseExternalHoveredTile(hoveredTile, hoverSelectionMode);
-            else if (_sliceHoverResolver3D.TryResolveHoveredTile(_camera3D, GetViewport(), _map, _currentZ, out hoveredTile))
+            else if (_sliceHoverResolver3D.TryResolveHoveredTile(_camera3D, GetViewport(), _map, _chunkPreviewStreamingService, _currentZ, out hoveredTile))
                 _input?.UseExternalHoveredTile(hoveredTile, HoverSelectionMode.QueryTile);
             else
                 _input?.UseExternalHoveredTile(_input?.HoveredTile ?? Vector2I.Zero, HoverSelectionMode.QueryTile);
@@ -478,7 +480,7 @@ public partial class GameRoot : Node
         if (_world3DDirty || (_world3DPlaceholder?.HasPendingChunkBuilds ?? false))
         {
             ProfileRenderSystem("render3d_sync_slice", 21, () =>
-                _world3DPlaceholder?.SyncSlice(_map, _buildings, _stockpiles, _data, _currentZ, visibleTileBounds, _renderProfiler));
+                _world3DPlaceholder?.SyncSlice(_map, _buildings, _stockpiles, _data, _currentZ, visibleTileBounds, _chunkPreviewStreamingService, _renderProfiler, _worldCamera3D.FocusTile));
             _world3DDirty = _world3DPlaceholder?.HasPendingChunkBuilds ?? false;
         }
 
@@ -528,6 +530,28 @@ public partial class GameRoot : Node
         _world3DVisibleZ = _currentZ;
         _hasWorld3DVisibleState = true;
         _world3DDirty = true;
+        PublishChunkViewportState(visibleTileBounds);
+    }
+
+    private void PublishChunkViewportState(Rect2I visibleTileBounds)
+    {
+        if (_simulation is null || _chunkActivationManager is null || _embarkRegionCoord is not RegionCoord regionCoord)
+            return;
+
+        var tileBounds = new TileBounds(
+            visibleTileBounds.Position.X,
+            visibleTileBounds.Position.Y,
+            visibleTileBounds.Size.X,
+            visibleTileBounds.Size.Y);
+        var viewport = new ChunkViewportState(regionCoord, _currentZ, tileBounds);
+
+        if (_chunkActivationManager.CurrentViewport is ChunkViewportState currentViewport
+            && currentViewport.HasEquivalentChunkCoverage(viewport))
+        {
+            return;
+        }
+
+        _simulation.EventBus.Emit(new ChunkViewportChangedEvent(viewport));
     }
 
     private bool ShouldRefresh3DForTileChange(Vec3i position)

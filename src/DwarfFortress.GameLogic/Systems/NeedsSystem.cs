@@ -35,25 +35,43 @@ public sealed class NeedsSystem : IGameSystem
     private readonly HashSet<(int entityId, string needId)> _activeCriticalNeeds = new();
     // Tracks when a need was last satisfied (in game seconds) to prevent job spam
     private readonly Dictionary<(int entityId, string needId), float> _lastSatisfiedAt = new();
+    // Tracks failed hunger/thirst searches so unreachable resources do not trigger a full rescan every tick.
+    private readonly Dictionary<(int entityId, string needId), float> _lastSearchAttemptAt = new();
 
     // Minimum time (in seconds) between satisfying a need and allowing another job for the same need
     private const float SatisfactionCooldown = 30f;
+    private const float FailedSearchRetrySeconds = 1f;
     private const int SleepSurvivalPriority = 100;
     private const int EatSurvivalPriority = 101;
     private const int DrinkSurvivalPriority = 102;
     private const int EatPlantSearchRadius = 24;
     private const int DrinkSearchRadius = 14;
     private const float StaggeredNeedIntervalSeconds = 1f;
+    private const string NeedsTickSpan = "needs_tick";
+    private const string NeedsDwarvesSpan = "needs_dwarves";
+    private const string NeedsCreaturesSpan = "needs_creatures";
+    private const string CheckHungerSpan = "check_hunger";
+    private const string CheckThirstSpan = "check_thirst";
+    private const string SearchEatJobSpan = "search_eat_job";
+    private const string SearchDrinkJobSpan = "search_drink_job";
+    private const string EatCarriedFoodSpan = "eat_carried_food";
+    private const string EatForageSearchSpan = "eat_forage_search";
+    private const string EatItemLookupSpan = "eat_item_lookup";
+    private const string DrinkItemSearchSpan = "drink_item_search";
+    private const string DrinkTileSearchSpan = "drink_tile_search";
+    private const string DrinkFortressFallbackSpan = "drink_fortress_fallback";
 
     private float _elapsedTime;
     private GameContext? _ctx;
+    private SimulationProfiler? _profiler;
 
     public void Initialize(GameContext ctx)
     {
         _ctx = ctx;
+        _profiler = ctx.Profiler;
 
         ctx.EventBus.On<Jobs.JobCompletedEvent>(e  => RemoveTracked(e.JobId));
-        ctx.EventBus.On<Jobs.JobFailedEvent>   (e  => RemoveTracked(e.JobId));
+        ctx.EventBus.On<Jobs.JobFailedEvent>   (OnTrackedJobFailed);
         ctx.EventBus.On<Jobs.JobCancelledEvent>(e  => RemoveTracked(e.JobId));
         ctx.EventBus.On<NeedSatisfiedEvent>(e => OnNeedSatisfied(e));
     }
@@ -65,21 +83,30 @@ public sealed class NeedsSystem : IGameSystem
 
         var registry  = _ctx!.Get<EntityRegistry>();
         var jobSystem = _ctx!.TryGet<Jobs.JobSystem>();
+        var data = _ctx!.TryGet<DataManager>();
 
-        foreach (var dwarf in registry.GetAlive<Dwarf>())
+        using var needsScope = _profiler?.Measure(NeedsTickSpan) ?? default;
+
+        using (var dwarfScope = _profiler?.Measure(NeedsDwarvesSpan) ?? default)
         {
-            TickDwarfNeeds(dwarf, delta, elapsedBeforeTick, _ctx!.TryGet<DataManager>());
+            foreach (var dwarf in registry.GetAlive<Dwarf>())
+            {
+                TickDwarfNeeds(dwarf, delta, elapsedBeforeTick, data);
 
-            CheckNeed(dwarf, dwarf.Needs.Hunger, Jobs.JobDefIds.Eat, jobSystem);
-            CheckNeed(dwarf, dwarf.Needs.Thirst, Jobs.JobDefIds.Drink, jobSystem);
-            CheckNeed(dwarf, dwarf.Needs.Sleep, Jobs.JobDefIds.Sleep, jobSystem);
+                CheckNeed(dwarf, dwarf.Needs.Hunger, Jobs.JobDefIds.Eat, jobSystem);
+                CheckNeed(dwarf, dwarf.Needs.Thirst, Jobs.JobDefIds.Drink, jobSystem);
+                CheckNeed(dwarf, dwarf.Needs.Sleep, Jobs.JobDefIds.Sleep, jobSystem);
+            }
         }
 
-        foreach (var creature in registry.GetAlive<Creature>())
+        using (var creatureScope = _profiler?.Measure(NeedsCreaturesSpan) ?? default)
         {
-            TickNeeds(creature.Id, creature.Needs, delta, elapsedBeforeTick);
-            EmitNeedCritical(creature, creature.Needs.Hunger);
-            EmitNeedCritical(creature, creature.Needs.Thirst);
+            foreach (var creature in registry.GetAlive<Creature>())
+            {
+                TickNeeds(creature.Id, creature.Needs, delta, elapsedBeforeTick);
+                EmitNeedCritical(creature, creature.Needs.Hunger);
+                EmitNeedCritical(creature, creature.Needs.Thirst);
+            }
         }
     }
 
@@ -89,6 +116,7 @@ public sealed class NeedsSystem : IGameSystem
         _activeJobIds.Clear();
         _jobIdToKey.Clear();
         _activeCriticalNeeds.Clear();
+        _lastSearchAttemptAt.Clear();
     }
 
     // ── Private ────────────────────────────────────────────────────────────
@@ -169,6 +197,7 @@ public sealed class NeedsSystem : IGameSystem
         if (!need.IsCritical)
         {
             _activeCriticalNeeds.Remove(criticalKey);
+            _lastSearchAttemptAt.Remove(criticalKey);
             CancelTrackedPendingJob(dwarf.Id, jobDefId, jobSystem);
             return;
         }
@@ -195,9 +224,11 @@ public sealed class NeedsSystem : IGameSystem
 
         var key = (dwarf.Id, jobDefId);
         if (_activeJobIds.ContainsKey(key)) return;  // job already pending or in-progress
+        if (ShouldDelayFailedSearch(dwarf.Id, need.Name)) return;
 
         if (string.Equals(jobDefId, Jobs.JobDefIds.Eat, StringComparison.OrdinalIgnoreCase))
         {
+            using var eatScope = _profiler?.Measure(CheckHungerSpan) ?? default;
             var eatJob = TryCreateEatJob(dwarf, jobSystem);
             if (eatJob is not null)
             {
@@ -206,11 +237,15 @@ public sealed class NeedsSystem : IGameSystem
             }
 
             if (_ctx!.TryGet<ItemSystem>() is not null || _ctx.TryGet<WorldMap>() is not null)
+            {
+                MarkFailedSearchAttempt(dwarf.Id, need.Name);
                 return;
+            }
         }
 
         if (string.Equals(jobDefId, Jobs.JobDefIds.Drink, StringComparison.OrdinalIgnoreCase))
         {
+            using var drinkScope = _profiler?.Measure(CheckThirstSpan) ?? default;
             var drinkJob = TryCreateDrinkJob(dwarf, jobSystem);
             if (drinkJob is not null)
             {
@@ -219,7 +254,10 @@ public sealed class NeedsSystem : IGameSystem
             }
 
             if (_ctx!.TryGet<ItemSystem>() is not null || _ctx.TryGet<WorldMap>() is not null)
+            {
+                MarkFailedSearchAttempt(dwarf.Id, need.Name);
                 return;
+            }
         }
 
         var job = jobSystem.CreateJob(jobDefId, dwarf.Position.Position, priority: GetSurvivalPriority(jobDefId));
@@ -230,26 +268,34 @@ public sealed class NeedsSystem : IGameSystem
     private Jobs.Job? TryCreateEatJob(Dwarf dwarf, Jobs.JobSystem jobSystem)
     {
         var itemSystem = _ctx!.TryGet<ItemSystem>();
-        if (itemSystem?.FindCarriedFoodItem(dwarf.Id) is { } carriedFood)
+        using var searchScope = _profiler?.Measure(SearchEatJobSpan) ?? default;
+
+        using (var carriedFoodScope = _profiler?.Measure(EatCarriedFoodSpan) ?? default)
         {
-            carriedFood.IsClaimed = true;
-            var carriedJob = jobSystem.CreateJob(
-                Jobs.JobDefIds.Eat,
-                dwarf.Position.Position,
-                priority: EatSurvivalPriority,
-                entityId: carriedFood.Id);
-            carriedJob.AssignedDwarfId = dwarf.Id;
-            carriedJob.ReservedItemIds.Add(carriedFood.Id);
-            return carriedJob;
+            if (itemSystem?.FindCarriedFoodItem(dwarf.Id) is { } carriedFood)
+            {
+                carriedFood.IsClaimed = true;
+                var carriedJob = jobSystem.CreateJob(
+                    Jobs.JobDefIds.Eat,
+                    dwarf.Position.Position,
+                    priority: EatSurvivalPriority,
+                    entityId: carriedFood.Id);
+                carriedJob.AssignedDwarfId = dwarf.Id;
+                carriedJob.ReservedItemIds.Add(carriedFood.Id);
+                return carriedJob;
+            }
         }
 
         var map = _ctx.TryGet<WorldMap>();
         var data = _ctx.TryGet<DataManager>();
         Vec3i? forageTarget = null;
-        if (map is not null && data is not null
-            && PlantHarvesting.TryFindNearestHarvestablePlant(map, data, dwarf.Position.Position, EatPlantSearchRadius, out var harvestTarget))
+        using (var forageScope = _profiler?.Measure(EatForageSearchSpan) ?? default)
         {
-            forageTarget = harvestTarget.PlantPos;
+            if (map is not null && data is not null
+                && PlantHarvesting.TryFindNearestHarvestablePlant(map, data, dwarf.Position.Position, EatPlantSearchRadius, out var harvestTarget))
+            {
+                forageTarget = harvestTarget.PlantPos;
+            }
         }
 
         var inventory = dwarf.Components.TryGet<InventoryComponent>();
@@ -263,17 +309,20 @@ public sealed class NeedsSystem : IGameSystem
             return forageJob;
         }
 
-        if (itemSystem?.FindFoodItem() is { } food)
+        using (var itemLookupScope = _profiler?.Measure(EatItemLookupSpan) ?? default)
         {
-            food.IsClaimed = true;
-            var foodJob = jobSystem.CreateJob(
-                Jobs.JobDefIds.Eat,
-                food.Position.Position,
-                priority: EatSurvivalPriority,
-                entityId: food.Id);
-            foodJob.AssignedDwarfId = dwarf.Id;
-            foodJob.ReservedItemIds.Add(food.Id);
-            return foodJob;
+            if (itemSystem?.FindFoodItem() is { } food)
+            {
+                food.IsClaimed = true;
+                var foodJob = jobSystem.CreateJob(
+                    Jobs.JobDefIds.Eat,
+                    food.Position.Position,
+                    priority: EatSurvivalPriority,
+                    entityId: food.Id);
+                foodJob.AssignedDwarfId = dwarf.Id;
+                foodJob.ReservedItemIds.Add(food.Id);
+                return foodJob;
+            }
         }
 
         if (!forageTarget.HasValue)
@@ -289,9 +338,16 @@ public sealed class NeedsSystem : IGameSystem
         var itemSystem = _ctx!.TryGet<ItemSystem>();
         var map = _ctx.TryGet<WorldMap>();
         var origin = dwarf.Position.Position;
-        var reachableDrink = map is not null
-            ? DrinkItemLocator.FindReachableDrinkItem(_ctx, map, origin)
-            : itemSystem?.FindDrinkItem();
+        using var searchScope = _profiler?.Measure(SearchDrinkJobSpan) ?? default;
+
+        Item? reachableDrink;
+        using (var itemLookupScope = _profiler?.Measure(DrinkItemSearchSpan) ?? default)
+        {
+            reachableDrink = map is not null
+                ? DrinkItemLocator.FindReachableDrinkItem(_ctx, map, origin)
+                : itemSystem?.FindDrinkItem();
+        }
+
         if (reachableDrink is { } drink)
         {
             drink.IsClaimed = true;
@@ -309,17 +365,16 @@ public sealed class NeedsSystem : IGameSystem
             return null;
 
         Vec3i targetPos;
-        if (DrinkSourceLocator.CanDrinkAt(map, origin))
+        using (var tileSearchScope = _profiler?.Measure(DrinkTileSearchSpan) ?? default)
         {
-            targetPos = origin;
-        }
-        else if (TryResolveDrinkTileTarget(map, origin, out var drinkTile))
-        {
-            targetPos = drinkTile;
-        }
-        else
-        {
-            return null;
+            if (DrinkSourceLocator.CanDrinkAt(map, origin))
+            {
+                targetPos = origin;
+            }
+            else if (!TryResolveDrinkTileTarget(map, origin, out targetPos))
+            {
+                return null;
+            }
         }
 
         var waterJob = jobSystem.CreateJob(Jobs.JobDefIds.Drink, targetPos, priority: DrinkSurvivalPriority);
@@ -332,17 +387,24 @@ public sealed class NeedsSystem : IGameSystem
         if (DrinkSourceLocator.TryFindNearestDrinkableTile(map, origin, DrinkSearchRadius, out drinkTile))
             return true;
 
+        using var fallbackScope = _profiler?.Measure(DrinkFortressFallbackSpan) ?? default;
         var fortressLocations = _ctx!.TryGet<FortressLocationSystem>();
-        if (fortressLocations is null || !fortressLocations.TryGetClosestDrinkLocation(out drinkTile))
+        if (fortressLocations is null || !fortressLocations.TryGetClosestDrinkLocation(out var fallbackDrinkTile))
+        {
+            drinkTile = origin;
             return false;
+        }
 
-        return DrinkSourceLocator.IsDrinkableWaterTile(map, drinkTile);
+        drinkTile = fallbackDrinkTile;
+        return DrinkSourceLocator.TryFindReachableDrinkStandPosition(map, origin, drinkTile, out _);
     }
 
     private void TrackJob((int entityId, string jobDefId) key, Jobs.Job job)
     {
         _activeJobIds[key] = job.Id;
         _jobIdToKey[job.Id] = key;  // O(1) reverse mapping
+        if (TryResolveNeedIdForJob(key.jobDefId, out var needId))
+            _lastSearchAttemptAt.Remove((key.entityId, needId));
     }
 
     private void CancelTrackedPendingJob(int entityId, string jobDefId, Jobs.JobSystem? jobSystem)
@@ -400,10 +462,23 @@ public sealed class NeedsSystem : IGameSystem
             _activeJobIds.Remove(key);
     }
 
+    private void OnTrackedJobFailed(Jobs.JobFailedEvent e)
+    {
+        if (_jobIdToKey.TryGetValue(e.JobId, out var key)
+            && TryResolveNeedIdForJob(key.jobDefId, out var needId)
+            && ShouldRetryFailedSearch(needId))
+        {
+            _lastSearchAttemptAt[(key.entityId, needId)] = _elapsedTime;
+        }
+
+        RemoveTracked(e.JobId);
+    }
+
     private void OnNeedSatisfied(NeedSatisfiedEvent e)
     {
         var key = (e.EntityId, e.NeedId);
         _lastSatisfiedAt[key] = _elapsedTime;
+        _lastSearchAttemptAt.Remove(key);
     }
 
     private void EmitNeedCritical(Entity entity, Need need)
@@ -419,5 +494,50 @@ public sealed class NeedsSystem : IGameSystem
             return;
 
         _ctx!.EventBus.Emit(new NeedCriticalEvent(entity.Id, need.Name));
+    }
+
+    private bool ShouldDelayFailedSearch(int entityId, string needId)
+    {
+        if (!ShouldRetryFailedSearch(needId))
+            return false;
+
+        return _lastSearchAttemptAt.TryGetValue((entityId, needId), out var lastAttemptAt)
+            && (_elapsedTime - lastAttemptAt) < FailedSearchRetrySeconds;
+    }
+
+    private void MarkFailedSearchAttempt(int entityId, string needId)
+    {
+        if (!ShouldRetryFailedSearch(needId))
+            return;
+
+        _lastSearchAttemptAt[(entityId, needId)] = _elapsedTime;
+    }
+
+    private static bool ShouldRetryFailedSearch(string needId)
+        => string.Equals(needId, NeedIds.Hunger, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(needId, NeedIds.Thirst, StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryResolveNeedIdForJob(string jobDefId, out string needId)
+    {
+        if (string.Equals(jobDefId, Jobs.JobDefIds.Eat, StringComparison.OrdinalIgnoreCase))
+        {
+            needId = NeedIds.Hunger;
+            return true;
+        }
+
+        if (string.Equals(jobDefId, Jobs.JobDefIds.Drink, StringComparison.OrdinalIgnoreCase))
+        {
+            needId = NeedIds.Thirst;
+            return true;
+        }
+
+        if (string.Equals(jobDefId, Jobs.JobDefIds.Sleep, StringComparison.OrdinalIgnoreCase))
+        {
+            needId = NeedIds.Sleep;
+            return true;
+        }
+
+        needId = string.Empty;
+        return false;
     }
 }

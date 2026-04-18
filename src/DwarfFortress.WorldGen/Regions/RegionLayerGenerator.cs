@@ -38,6 +38,14 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
         (-1, 0),
     ];
 
+    private static readonly BoundaryEdge[] CardinalBoundaryEdges =
+    [
+        BoundaryEdge.North,
+        BoundaryEdge.East,
+        BoundaryEdge.South,
+        BoundaryEdge.West,
+    ];
+
     private static readonly (int Dx, int Dy)[] SurroundingNeighborOffsets =
     [
         (-1, -1), (0, -1), (1, -1),
@@ -453,6 +461,8 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
         {
             StripRoadData(map);
         }
+
+        ApplyEcologyEdgeDescriptors(map, world, worldCoord, parent);
         return map;
     }
 
@@ -465,52 +475,43 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
     {
         var portals = new List<BoundaryPortal>(4);
 
-        if (WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.North) &&
-            TryGetNeighbor(world, worldCoord.X, worldCoord.Y - 1, out _))
-        {
-            var x = ResolveSharedBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.North, regionWidth);
-            portals.Add(new BoundaryPortal(
-                BoundaryEdge.North,
-                x,
-                0,
-                ResolveSharedBoundaryDischarge(world, worldCoord, parentTile, BoundaryEdge.North)));
-        }
-
-        if (WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.East) &&
-            TryGetNeighbor(world, worldCoord.X + 1, worldCoord.Y, out _))
-        {
-            var y = ResolveSharedBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.East, regionHeight);
-            portals.Add(new BoundaryPortal(
-                BoundaryEdge.East,
-                regionWidth - 1,
-                y,
-                ResolveSharedBoundaryDischarge(world, worldCoord, parentTile, BoundaryEdge.East)));
-        }
-
-        if (WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.South) &&
-            TryGetNeighbor(world, worldCoord.X, worldCoord.Y + 1, out _))
-        {
-            var x = ResolveSharedBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.South, regionWidth);
-            portals.Add(new BoundaryPortal(
-                BoundaryEdge.South,
-                x,
-                regionHeight - 1,
-                ResolveSharedBoundaryDischarge(world, worldCoord, parentTile, BoundaryEdge.South)));
-        }
-
-        if (WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.West) &&
-            TryGetNeighbor(world, worldCoord.X - 1, worldCoord.Y, out _))
-        {
-            var y = ResolveSharedBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.West, regionHeight);
-            portals.Add(new BoundaryPortal(
-                BoundaryEdge.West,
-                0,
-                y,
-                ResolveSharedBoundaryDischarge(world, worldCoord, parentTile, BoundaryEdge.West)));
-        }
+        foreach (var edge in CardinalBoundaryEdges)
+            AddBoundaryRiverPortal(portals, world, worldCoord, regionWidth, regionHeight, parentTile, edge);
 
         return portals;
     }
+
+    private static void AddBoundaryRiverPortal(
+        List<BoundaryPortal> portals,
+        GeneratedWorldMap world,
+        WorldCoord worldCoord,
+        int regionWidth,
+        int regionHeight,
+        GeneratedWorldTile parentTile,
+        BoundaryEdge edge)
+    {
+        if (!HasParentRiverBoundary(parentTile, edge) || !TryGetNeighbor(world, worldCoord, edge, out _))
+            return;
+
+        var axisSize = ResolveBoundaryAxisSize(edge, regionWidth, regionHeight);
+        var offset = ResolveSharedBoundaryOffset(world.Seed, worldCoord, edge, axisSize);
+        var (x, y) = ResolveBoundaryPoint(edge, regionWidth, regionHeight, offset);
+        portals.Add(new BoundaryPortal(
+            edge,
+            x,
+            y,
+            ResolveSharedBoundaryDischarge(world, worldCoord, parentTile, edge)));
+    }
+
+    private static bool HasParentRiverBoundary(GeneratedWorldTile parentTile, BoundaryEdge edge)
+        => edge switch
+        {
+            BoundaryEdge.North => WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.North),
+            BoundaryEdge.East => WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.East),
+            BoundaryEdge.South => WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.South),
+            BoundaryEdge.West => WorldRiverEdgeMask.Has(parentTile.RiverEdges, WorldRiverEdges.West),
+            _ => false,
+        };
 
     private static bool TryGetNeighbor(GeneratedWorldMap world, int x, int y, out GeneratedWorldTile neighbor)
     {
@@ -522,6 +523,33 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
 
         neighbor = world.GetTile(x, y);
         return true;
+    }
+
+    private static bool TryGetNeighbor(GeneratedWorldMap world, WorldCoord worldCoord, BoundaryEdge edge, out GeneratedWorldTile neighbor)
+    {
+        ResolveBoundaryNeighborCoord(worldCoord, edge, out var x, out var y);
+        return TryGetNeighbor(world, x, y, out neighbor);
+    }
+
+    private static void ResolveBoundaryNeighborCoord(WorldCoord worldCoord, BoundaryEdge edge, out int x, out int y)
+    {
+        x = worldCoord.X;
+        y = worldCoord.Y;
+        switch (edge)
+        {
+            case BoundaryEdge.North:
+                y--;
+                break;
+            case BoundaryEdge.East:
+                x++;
+                break;
+            case BoundaryEdge.South:
+                y++;
+                break;
+            case BoundaryEdge.West:
+                x--;
+                break;
+        }
     }
 
     private static float[] BuildBoundaryDischargeContracts(List<BoundaryPortal> boundaryPortals, int width, int height)
@@ -546,36 +574,39 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
     {
         var contracts = new RegionRoadEdges[regionWidth * regionHeight];
 
-        if (WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.North) &&
-            TryGetNeighbor(world, worldCoord.X, worldCoord.Y - 1, out _))
-        {
-            var x = ResolveSharedRoadBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.North, regionWidth);
-            contracts[IndexOf(x, 0, regionWidth)] |= RegionRoadEdges.North;
-        }
-
-        if (WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.East) &&
-            TryGetNeighbor(world, worldCoord.X + 1, worldCoord.Y, out _))
-        {
-            var y = ResolveSharedRoadBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.East, regionHeight);
-            contracts[IndexOf(regionWidth - 1, y, regionWidth)] |= RegionRoadEdges.East;
-        }
-
-        if (WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.South) &&
-            TryGetNeighbor(world, worldCoord.X, worldCoord.Y + 1, out _))
-        {
-            var x = ResolveSharedRoadBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.South, regionWidth);
-            contracts[IndexOf(x, regionHeight - 1, regionWidth)] |= RegionRoadEdges.South;
-        }
-
-        if (WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.West) &&
-            TryGetNeighbor(world, worldCoord.X - 1, worldCoord.Y, out _))
-        {
-            var y = ResolveSharedRoadBoundaryOffset(world.Seed, worldCoord, BoundaryEdge.West, regionHeight);
-            contracts[IndexOf(0, y, regionWidth)] |= RegionRoadEdges.West;
-        }
+        foreach (var edge in CardinalBoundaryEdges)
+            AddBoundaryRoadContract(contracts, world, worldCoord, regionWidth, regionHeight, parentTile, edge);
 
         return contracts;
     }
+
+    private static void AddBoundaryRoadContract(
+        RegionRoadEdges[] contracts,
+        GeneratedWorldMap world,
+        WorldCoord worldCoord,
+        int regionWidth,
+        int regionHeight,
+        GeneratedWorldTile parentTile,
+        BoundaryEdge edge)
+    {
+        if (!HasParentRoadBoundary(parentTile, edge) || !TryGetNeighbor(world, worldCoord, edge, out _))
+            return;
+
+        var axisSize = ResolveBoundaryAxisSize(edge, regionWidth, regionHeight);
+        var offset = ResolveSharedRoadBoundaryOffset(world.Seed, worldCoord, edge, axisSize);
+        var (x, y) = ResolveBoundaryPoint(edge, regionWidth, regionHeight, offset);
+        contracts[IndexOf(x, y, regionWidth)] |= ToRegionRoadEdge(edge);
+    }
+
+    private static bool HasParentRoadBoundary(GeneratedWorldTile parentTile, BoundaryEdge edge)
+        => edge switch
+        {
+            BoundaryEdge.North => WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.North),
+            BoundaryEdge.East => WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.East),
+            BoundaryEdge.South => WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.South),
+            BoundaryEdge.West => WorldRoadEdgeMask.Has(parentTile.RoadEdges, WorldRoadEdges.West),
+            _ => false,
+        };
 
     private static void ApplyRiverEdgeContracts(GeneratedRegionMap map, List<BoundaryPortal> boundaryPortals)
     {
@@ -1105,6 +1136,147 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
         return weight <= 0f ? values[IndexOf(x, y, width)] : (weighted / weight);
     }
 
+    private static void ApplyEcologyEdgeDescriptors(
+        GeneratedRegionMap map,
+        GeneratedWorldMap world,
+        WorldCoord worldCoord,
+        GeneratedWorldTile parentTile)
+    {
+        var northBoundary = ResolveBoundaryEcologyProfile(world, worldCoord, parentTile, BoundaryEdge.North);
+        var eastBoundary = ResolveBoundaryEcologyProfile(world, worldCoord, parentTile, BoundaryEdge.East);
+        var southBoundary = ResolveBoundaryEcologyProfile(world, worldCoord, parentTile, BoundaryEdge.South);
+        var westBoundary = ResolveBoundaryEcologyProfile(world, worldCoord, parentTile, BoundaryEdge.West);
+
+        for (var y = 0; y < map.Height; y++)
+        for (var x = 0; x < map.Width; x++)
+        {
+            var tile = map.GetTile(x, y);
+            var center = ToEcologyEdgeProfile(tile);
+            var north = y > 0
+                ? EcologyEdgeProfile.Blend(center, ToEcologyEdgeProfile(map.GetTile(x, y - 1)))
+                : northBoundary;
+            var east = x < map.Width - 1
+                ? EcologyEdgeProfile.Blend(center, ToEcologyEdgeProfile(map.GetTile(x + 1, y)))
+                : eastBoundary;
+            var south = y < map.Height - 1
+                ? EcologyEdgeProfile.Blend(center, ToEcologyEdgeProfile(map.GetTile(x, y + 1)))
+                : southBoundary;
+            var west = x > 0
+                ? EcologyEdgeProfile.Blend(center, ToEcologyEdgeProfile(map.GetTile(x - 1, y)))
+                : westBoundary;
+
+            map.SetTile(x, y, tile with
+            {
+                EcologyEdges = new EcologyEdgeDescriptors(north, east, south, west),
+            });
+        }
+    }
+
+    private static EcologyEdgeProfile ResolveBoundaryEcologyProfile(
+        GeneratedWorldMap world,
+        WorldCoord worldCoord,
+        GeneratedWorldTile parentTile,
+        BoundaryEdge edge)
+    {
+        var neighborX = worldCoord.X;
+        var neighborY = worldCoord.Y;
+
+        switch (edge)
+        {
+            case BoundaryEdge.North:
+                neighborY--;
+                break;
+            case BoundaryEdge.East:
+                neighborX++;
+                break;
+            case BoundaryEdge.South:
+                neighborY++;
+                break;
+            case BoundaryEdge.West:
+                neighborX--;
+                break;
+        }
+
+        if (!TryGetNeighbor(world, neighborX, neighborY, out var neighborTile))
+            neighborTile = parentTile;
+
+        return BuildSharedBoundaryEcologyProfile(parentTile, neighborTile, edge);
+    }
+
+    private static EcologyEdgeProfile BuildSharedBoundaryEcologyProfile(
+        GeneratedWorldTile tile,
+        GeneratedWorldTile neighbor,
+        BoundaryEdge edge)
+    {
+        var forestCover = (tile.ForestCover + neighbor.ForestCover) * 0.5f;
+        var moisture = (tile.MoistureBand + neighbor.MoistureBand) * 0.5f;
+        var drainage = (tile.DrainageBand + neighbor.DrainageBand) * 0.5f;
+        var relief = (tile.Relief + neighbor.Relief) * 0.5f;
+        var mountainCover = (tile.MountainCover + neighbor.MountainCover) * 0.5f;
+        var sharedRiver =
+            WorldRiverEdgeMask.Has(tile.RiverEdges, ToWorldRiverEdge(edge)) ||
+            WorldRiverEdgeMask.Has(neighbor.RiverEdges, ToWorldRiverEdge(Opposite(edge)));
+        var riverDischarge = (tile.RiverDischarge + neighbor.RiverDischarge) * 0.5f;
+        var riverBoost = sharedRiver
+            ? Math.Clamp(0.08f + (riverDischarge * 0.02f), 0.08f, 0.18f)
+            : 0f;
+
+        return new EcologyEdgeProfile(
+            VegetationDensity: Math.Clamp(
+                (forestCover * 0.72f) +
+                (moisture * 0.18f) +
+                riverBoost -
+                (mountainCover * 0.10f) -
+                (relief * 0.06f), 0f, 1f),
+            VegetationSuitability: Math.Clamp(
+                (forestCover * 0.52f) +
+                (moisture * 0.24f) +
+                (drainage * 0.08f) +
+                (riverBoost * 0.55f) -
+                (mountainCover * 0.08f), 0f, 1f),
+            SoilDepth: Math.Clamp(
+                0.28f +
+                (moisture * 0.22f) +
+                (drainage * 0.16f) +
+                (forestCover * 0.08f) +
+                (riverBoost * 0.35f) -
+                (mountainCover * 0.10f) -
+                (relief * 0.08f), 0f, 1f),
+            Groundwater: Math.Clamp(
+                0.24f +
+                (moisture * 0.36f) +
+                (drainage * 0.10f) +
+                riverBoost -
+                (relief * 0.06f), 0f, 1f));
+    }
+
+    private static EcologyEdgeProfile ToEcologyEdgeProfile(GeneratedRegionTile tile)
+        => new(
+            VegetationDensity: tile.VegetationDensity,
+            VegetationSuitability: tile.VegetationSuitability,
+            SoilDepth: tile.SoilDepth,
+            Groundwater: tile.Groundwater);
+
+    private static BoundaryEdge Opposite(BoundaryEdge edge)
+        => edge switch
+        {
+            BoundaryEdge.North => BoundaryEdge.South,
+            BoundaryEdge.East => BoundaryEdge.West,
+            BoundaryEdge.South => BoundaryEdge.North,
+            BoundaryEdge.West => BoundaryEdge.East,
+            _ => edge,
+        };
+
+    private static WorldRiverEdges ToWorldRiverEdge(BoundaryEdge edge)
+        => edge switch
+        {
+            BoundaryEdge.North => WorldRiverEdges.North,
+            BoundaryEdge.East => WorldRiverEdges.East,
+            BoundaryEdge.South => WorldRiverEdges.South,
+            BoundaryEdge.West => WorldRiverEdges.West,
+            _ => WorldRiverEdges.None,
+        };
+
     private static void ApplyHistoryOverlay(
         GeneratedRegionMap map,
         WorldCoord worldCoord,
@@ -1379,33 +1551,47 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
         out (int X, int Y) point,
         out RegionRoadEdges boundaryEdge)
     {
-        if (neighbor.X == worldCoord.X && neighbor.Y == worldCoord.Y - 1)
+        if (TryResolveNeighborBoundaryEdge(worldCoord, neighbor, out var edge))
         {
-            point = (ResolveSharedRoadBoundaryOffset(worldSeed, worldCoord, neighbor, roadId, map.Width), 0);
-            boundaryEdge = RegionRoadEdges.North;
-            return true;
-        }
-        if (neighbor.X == worldCoord.X + 1 && neighbor.Y == worldCoord.Y)
-        {
-            point = (map.Width - 1, ResolveSharedRoadBoundaryOffset(worldSeed, worldCoord, neighbor, roadId, map.Height));
-            boundaryEdge = RegionRoadEdges.East;
-            return true;
-        }
-        if (neighbor.X == worldCoord.X && neighbor.Y == worldCoord.Y + 1)
-        {
-            point = (ResolveSharedRoadBoundaryOffset(worldSeed, worldCoord, neighbor, roadId, map.Width), map.Height - 1);
-            boundaryEdge = RegionRoadEdges.South;
-            return true;
-        }
-        if (neighbor.X == worldCoord.X - 1 && neighbor.Y == worldCoord.Y)
-        {
-            point = (0, ResolveSharedRoadBoundaryOffset(worldSeed, worldCoord, neighbor, roadId, map.Height));
-            boundaryEdge = RegionRoadEdges.West;
+            var axisSize = ResolveBoundaryAxisSize(edge, map.Width, map.Height);
+            var offset = ResolveSharedRoadBoundaryOffset(worldSeed, worldCoord, neighbor, roadId, axisSize);
+            point = ResolveBoundaryPoint(edge, map.Width, map.Height, offset);
+            boundaryEdge = ToRegionRoadEdge(edge);
             return true;
         }
 
         point = default;
         boundaryEdge = RegionRoadEdges.None;
+        return false;
+    }
+
+    private static bool TryResolveNeighborBoundaryEdge(WorldCoord worldCoord, WorldCoord neighbor, out BoundaryEdge edge)
+    {
+        if (neighbor.X == worldCoord.X && neighbor.Y == worldCoord.Y - 1)
+        {
+            edge = BoundaryEdge.North;
+            return true;
+        }
+
+        if (neighbor.X == worldCoord.X + 1 && neighbor.Y == worldCoord.Y)
+        {
+            edge = BoundaryEdge.East;
+            return true;
+        }
+
+        if (neighbor.X == worldCoord.X && neighbor.Y == worldCoord.Y + 1)
+        {
+            edge = BoundaryEdge.South;
+            return true;
+        }
+
+        if (neighbor.X == worldCoord.X - 1 && neighbor.Y == worldCoord.Y)
+        {
+            edge = BoundaryEdge.West;
+            return true;
+        }
+
+        edge = default;
         return false;
     }
 
@@ -1581,53 +1767,43 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
             _ => RegionRiverEdges.None,
         };
 
-    private static int ResolveSharedBoundaryOffset(int worldSeed, WorldCoord worldCoord, BoundaryEdge edge, int axisSize)
-    {
-        int keyX;
-        int keyY;
-        int salt;
-        switch (edge)
+    private static RegionRoadEdges ToRegionRoadEdge(BoundaryEdge edge)
+        => edge switch
         {
-            case BoundaryEdge.North:
-                keyX = worldCoord.X;
-                keyY = worldCoord.Y - 1;
-                salt = 17011;
-                break;
-            case BoundaryEdge.South:
-                keyX = worldCoord.X;
-                keyY = worldCoord.Y;
-                salt = 17011;
-                break;
-            case BoundaryEdge.East:
-                keyX = worldCoord.X;
-                keyY = worldCoord.Y;
-                salt = 17029;
-                break;
-            case BoundaryEdge.West:
-                keyX = worldCoord.X - 1;
-                keyY = worldCoord.Y;
-                salt = 17029;
-                break;
-            default:
-                keyX = worldCoord.X;
-                keyY = worldCoord.Y;
-                salt = 17041;
-                break;
-        }
+            BoundaryEdge.North => RegionRoadEdges.North,
+            BoundaryEdge.East => RegionRoadEdges.East,
+            BoundaryEdge.South => RegionRoadEdges.South,
+            BoundaryEdge.West => RegionRoadEdges.West,
+            _ => RegionRoadEdges.None,
+        };
 
-        var hash = SeedHash.Hash(worldSeed, keyX, keyY, salt);
-        var margin = axisSize > 8 ? 2 : 1;
-        var min = margin;
-        var max = axisSize - 1 - margin;
-        if (max <= min)
-            return axisSize / 2;
+    private static int ResolveBoundaryAxisSize(BoundaryEdge edge, int width, int height)
+        => edge is BoundaryEdge.North or BoundaryEdge.South ? width : height;
 
-        var span = max - min + 1;
-        var offset = Math.Abs(hash % span);
-        return min + offset;
-    }
+    private static (int X, int Y) ResolveBoundaryPoint(BoundaryEdge edge, int width, int height, int axisOffset)
+        => edge switch
+        {
+            BoundaryEdge.North => (axisOffset, 0),
+            BoundaryEdge.East => (width - 1, axisOffset),
+            BoundaryEdge.South => (axisOffset, height - 1),
+            BoundaryEdge.West => (0, axisOffset),
+            _ => (width / 2, height / 2),
+        };
+
+    private static int ResolveSharedBoundaryOffset(int worldSeed, WorldCoord worldCoord, BoundaryEdge edge, int axisSize)
+        => ResolveSharedBoundaryAxisOffset(worldSeed, worldCoord, edge, axisSize, northSouthSalt: 17011, eastWestSalt: 17029, fallbackSalt: 17041);
 
     private static int ResolveSharedRoadBoundaryOffset(int worldSeed, WorldCoord worldCoord, BoundaryEdge edge, int axisSize)
+        => ResolveSharedBoundaryAxisOffset(worldSeed, worldCoord, edge, axisSize, northSouthSalt: 17111, eastWestSalt: 17129, fallbackSalt: 17141);
+
+    private static int ResolveSharedBoundaryAxisOffset(
+        int worldSeed,
+        WorldCoord worldCoord,
+        BoundaryEdge edge,
+        int axisSize,
+        int northSouthSalt,
+        int eastWestSalt,
+        int fallbackSalt)
     {
         int keyX;
         int keyY;
@@ -1637,27 +1813,27 @@ public sealed class RegionLayerGenerator : IRegionLayerGenerator
             case BoundaryEdge.North:
                 keyX = worldCoord.X;
                 keyY = worldCoord.Y - 1;
-                salt = 17111;
+                salt = northSouthSalt;
                 break;
             case BoundaryEdge.South:
                 keyX = worldCoord.X;
                 keyY = worldCoord.Y;
-                salt = 17111;
+                salt = northSouthSalt;
                 break;
             case BoundaryEdge.East:
                 keyX = worldCoord.X;
                 keyY = worldCoord.Y;
-                salt = 17129;
+                salt = eastWestSalt;
                 break;
             case BoundaryEdge.West:
                 keyX = worldCoord.X - 1;
                 keyY = worldCoord.Y;
-                salt = 17129;
+                salt = eastWestSalt;
                 break;
             default:
                 keyX = worldCoord.X;
                 keyY = worldCoord.Y;
-                salt = 17141;
+                salt = fallbackSalt;
                 break;
         }
 

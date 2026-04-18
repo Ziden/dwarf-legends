@@ -33,6 +33,7 @@ public partial class ActionBar : PanelContainer
     private bool             _paused = false;
     private GameSimulation?  _simulation;
     private DiscoverySystem? _discovery;
+    private bool             _buildListRefreshQueued;
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ Knowledge panel callback Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     public Action? OnKnowledgePressed { get; set; }
@@ -90,11 +91,26 @@ public partial class ActionBar : PanelContainer
         pMargin.AddChild(pVbox);
     }
 
+    public override void _ExitTree()
+    {
+        UnsubscribeFromSimulationEvents();
+    }
+
     /// <summary>Called by GameRoot after the simulation is ready.</summary>
     public void Setup(InputController input, GameSimulation sim)
     {
         _input = input;
-        _simulation = sim;
+        if (!ReferenceEquals(_simulation, sim))
+        {
+            UnsubscribeFromSimulationEvents();
+            _simulation = sim;
+            SubscribeToSimulationEvents();
+        }
+        else
+        {
+            _simulation = sim;
+        }
+
         _discovery = sim.Context.TryGet<DiscoverySystem>();
         if (_buildPopup is null || _buildList is null)
             throw new InvalidOperationException("ActionBar must finish _Ready before Setup.");
@@ -108,6 +124,7 @@ public partial class ActionBar : PanelContainer
 
     public void RefreshBuildList()
     {
+        _buildListRefreshQueued = false;
         if (_buildList is null || _simulation is null)
             return;
 
@@ -139,6 +156,57 @@ public partial class ActionBar : PanelContainer
         }
 
         _buildList.SetEntries(entries);
+    }
+
+    private void SubscribeToSimulationEvents()
+    {
+        if (_simulation is null)
+            return;
+
+        _simulation.EventBus.On<ItemCreatedEvent>(OnBuildRelevantItemCreated);
+        _simulation.EventBus.On<ItemDestroyedEvent>(OnBuildRelevantItemDestroyed);
+        _simulation.EventBus.On<ItemPickedUpEvent>(OnBuildRelevantItemPickedUp);
+        _simulation.EventBus.On<ItemDroppedEvent>(OnBuildRelevantItemDropped);
+        _simulation.EventBus.On<ItemStoredEvent>(OnBuildRelevantItemStored);
+        _simulation.EventBus.On<DiscoveryUnlockedEvent>(OnBuildRelevantDiscoveryUnlocked);
+    }
+
+    private void UnsubscribeFromSimulationEvents()
+    {
+        if (_simulation is null)
+            return;
+
+        _simulation.EventBus.Off<ItemCreatedEvent>(OnBuildRelevantItemCreated);
+        _simulation.EventBus.Off<ItemDestroyedEvent>(OnBuildRelevantItemDestroyed);
+        _simulation.EventBus.Off<ItemPickedUpEvent>(OnBuildRelevantItemPickedUp);
+        _simulation.EventBus.Off<ItemDroppedEvent>(OnBuildRelevantItemDropped);
+        _simulation.EventBus.Off<ItemStoredEvent>(OnBuildRelevantItemStored);
+        _simulation.EventBus.Off<DiscoveryUnlockedEvent>(OnBuildRelevantDiscoveryUnlocked);
+    }
+
+    private void OnBuildRelevantItemCreated(ItemCreatedEvent _) => QueueBuildListRefresh();
+
+    private void OnBuildRelevantItemDestroyed(ItemDestroyedEvent _) => QueueBuildListRefresh();
+
+    private void OnBuildRelevantItemPickedUp(ItemPickedUpEvent _) => QueueBuildListRefresh();
+
+    private void OnBuildRelevantItemDropped(ItemDroppedEvent _) => QueueBuildListRefresh();
+
+    private void OnBuildRelevantItemStored(ItemStoredEvent _) => QueueBuildListRefresh();
+
+    private void OnBuildRelevantDiscoveryUnlocked(DiscoveryUnlockedEvent e)
+    {
+        if (string.Equals(e.Kind, "building", StringComparison.OrdinalIgnoreCase))
+            QueueBuildListRefresh();
+    }
+
+    private void QueueBuildListRefresh()
+    {
+        if (_buildListRefreshQueued || !IsInsideTree())
+            return;
+
+        _buildListRefreshQueued = true;
+        CallDeferred(nameof(RefreshBuildList));
     }
 
     private void ToggleBuildPopup()

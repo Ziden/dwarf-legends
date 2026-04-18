@@ -16,20 +16,25 @@ public sealed class DiscoverySystemTests
     [Fact]
     public void DiscoverySystem_Separates_Discovery_From_Current_Buildability()
     {
-        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
         var discovery = sim.Context.Get<DiscoverySystem>();
 
-        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(1, 1, 0));
+        var firstBoulder = items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(1, 1, 0));
 
         Assert.True(discovery.IsBuildingUnlocked(SmelterBuildingId));
         Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(SmelterBuildingId));
         Assert.Equal(ItemDefIds.GraniteBoulder, discovery.GetDiscoveredBy(SmelterBuildingId));
 
-        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(2, 1, 0));
+        var secondBoulder = items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(2, 1, 0));
 
         Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(SmelterBuildingId));
 
-        items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(3, 1, 0));
+        var thirdBoulder = items.CreateItem(ItemDefIds.GraniteBoulder, "granite", new Vec3i(3, 1, 0));
+        var box = new Box(er.NextId(), new Vec3i(6, 6, 0));
+        er.Register(box);
+        items.StoreItemInBox(firstBoulder.Id, box);
+        items.StoreItemInBox(secondBoulder.Id, box);
+        items.StoreItemInBox(thirdBoulder.Id, box);
 
         Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(SmelterBuildingId));
     }
@@ -71,20 +76,49 @@ public sealed class DiscoverySystemTests
     }
 
     [Fact]
-    public void DiscoverySystem_Creating_First_Log_Makes_House_Buildable_And_Carpenter_Discovered()
+    public void DiscoverySystem_Logs_Unlock_Hut_And_Track_Current_Buildability()
     {
-        var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
         var discovery = sim.Context.Get<DiscoverySystem>();
 
-        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(1, 1, 0));
+        var firstLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(1, 1, 0));
 
-        Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(BuildingDefIds.House));
+        Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(BuildingDefIds.House));
         Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.House));
         Assert.True(discovery.IsBuildingUnlocked(BuildingDefIds.CarpenterWorkshop));
         Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(BuildingDefIds.CarpenterWorkshop));
         Assert.True(discovery.IsRecipeUnlocked("make_plank"));
         Assert.Equal(ItemDefIds.Log, discovery.GetDiscoveredBy(BuildingDefIds.House));
         Assert.Equal(ItemDefIds.Log, discovery.GetDiscoveredBy(BuildingDefIds.CarpenterWorkshop));
+
+        var secondLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(2, 1, 0));
+        var box = new Box(er.NextId(), new Vec3i(6, 6, 0));
+        er.Register(box);
+        items.StoreItemInBox(firstLog.Id, box);
+        items.StoreItemInBox(secondLog.Id, box);
+
+        Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(BuildingDefIds.House));
+    }
+
+    [Fact]
+    public void DiscoverySystem_BuildableNow_Requires_Stored_Construction_Inputs()
+    {
+        var (sim, _, er, _, items) = TestFixtures.BuildFullSim();
+        var discovery = sim.Context.Get<DiscoverySystem>();
+
+        var firstLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(1, 1, 0));
+        var secondLog = items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(2, 1, 0));
+
+        Assert.Equal(DiscoveryKnowledgeState.Unlocked, discovery.GetBuildingState(BuildingDefIds.House));
+
+        var boxPos = new Vec3i(6, 6, 0);
+        var box = new Box(er.NextId(), boxPos);
+        er.Register(box);
+
+        items.StoreItemInBox(firstLog.Id, box);
+        items.StoreItemInBox(secondLog.Id, box);
+
+        Assert.Equal(DiscoveryKnowledgeState.BuildableNow, discovery.GetBuildingState(BuildingDefIds.House));
     }
 
     [Fact]

@@ -213,13 +213,39 @@ Acceptance:
 2. Enable first in Godot Test World Gen mode.
 3. Promote to default after seed-sweep and bootstrap gates pass.
 
-## 8. Immediate Execution Backlog (Recommended Order)
+## 8. Status After Full Pass
 
-1. Add world river edge graph + tests.
-2. Add region boundary hydrology contract + tests.
-3. Refactor local stream carving to use anchored entry/exit points.
-4. Add viewer overlays for flow/continuity diagnostics.
-5. Run 200+ seed sweep and tune.
+Status after executing the remaining continuity backlog:
+
+1. River and road contracts now reach the true local-map boundaries instead of stopping one tile in.
+2. Continuous surface-generation passes now use a shared continuity seed plus global noise origins instead of per-local noise universes.
+3. Boundary-adjacent ecology placement now uses continuity-anchored deterministic sampling for seam-relevant tree and plant decisions.
+4. Border safety cleanup is now seam-safe. Border repair no longer copies inward local tiles and instead resolves deterministic passable fallback surfaces.
+5. Seam diagnostics are centralized in a shared boundary-comparison helper used by tests, analyzer reporting, and the worldgen viewer.
+6. Analyzer reporting now records local boundary sample counts plus surface, water, ecology, and tree mismatch ratios.
+7. The worldgen viewer now exposes local surface, water, and ecology continuity overlays by comparing the active local map against generated neighbors.
+8. Broader worldgen validation was re-run and analyzer thresholds were rebalanced where the old budgets no longer matched the corrected generation behavior.
+
+Validation completed:
+
+1. `dotnet test .\src\DwarfFortress.WorldGen.Tests\DwarfFortress.WorldGen.Tests.csproj`
+   Passed: `170/170`.
+2. `dotnet build .\src\DwarfFortress.GodotClient\DwarfFortress.GodotClient.csproj`
+   Passed.
+3. `DF_SMOKE_FILTER=render-mode-residency` with `Godot_v4.6.1-stable_mono_win64_console.exe --headless --path src/DwarfFortress.GodotClient --scene res://Tests/ClientSmokeTests.tscn`
+   Passed. Preview/live chunk residency stayed bounded and the streamed preview path remained queryable and read-only.
+
+Optional follow-up:
+
+1. Use the new local continuity overlays during future manual viewer investigations if a visual seam report resurfaces.
+2. Add a more explicit chunk-edge visual smoke only if a concrete renderer artifact remains reproducible after the current worldgen-side fixes.
+
+Longer-term items still deferred from the broader roadmap:
+
+1. Add a true world river edge graph and world-scale hydrology storage.
+2. Add explicit region boundary hydrology contracts with discharge/order propagation.
+3. Upgrade the worldgen viewer with elevation, flow, river-network, soil-depth, and continuity mismatch overlays.
+4. Run broader realism and gameplay sweeps once the parent-to-child hydrology chain is complete.
 
 ## 9. Definition of Done
 

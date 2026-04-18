@@ -11,7 +11,11 @@ public static class TagIds
     public const string Aquatic = "aquatic";
     public const string AquaticGrazer = "aquatic_grazer";
     public const string Boulder = "boulder";
+    public const string Barrel = "barrel";
+    public const string Bed = "bed";
+    public const string Bucket = "bucket";
     public const string Carnivore = "carnivore";
+    public const string Chair = "chair";
     public const string Corpse = "corpse";
     public const string Dirt = "dirt";
     public const string Drink = "drink";
@@ -32,6 +36,7 @@ public static class TagIds
     public const string Seed = "seed";
     public const string Stone = "stone";
     public const string Swimmer = "swimmer";
+    public const string Table = "table";
     public const string Wood = "wood";
     public const string Wooden = "wooden";
     public const string Container = "container";

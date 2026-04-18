@@ -92,6 +92,8 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
     public GeneratedEmbarkContext? LastGeneratedEmbark { get; private set; }
     public GeneratedEmbarkMap? LastGeneratedLocalMap { get; private set; }
     public GeneratedWorldHistory? LastGeneratedHistory { get; private set; }
+    public LocalGenerationSettings? LastLocalGenerationSettings { get; private set; }
+    public MapGenerationSettings? LastGenerationSettings { get; private set; }
 
     public MapGenerationService(
         IWorldLayerGenerator? worldGenerator = null,
@@ -120,6 +122,8 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
         LastGeneratedEmbark = reader.TryRead<GeneratedEmbarkContext>(LastContextSaveKey);
         LastGeneratedLocalMap = null;
         LastGeneratedHistory = null;
+        LastLocalGenerationSettings = null;
+        LastGenerationSettings = null;
     }
 
     public GeneratedWorldMap GetOrCreateWorld(int seed, MapGenerationSettings settings)
@@ -256,6 +260,8 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
         LastGeneratedEmbark = context;
         LastGeneratedLocalMap = localMap;
         LastGeneratedHistory = history;
+        LastLocalGenerationSettings = effectiveSettings;
+        LastGenerationSettings = resolvedGenerationSettings;
         return context;
     }
 
@@ -841,17 +847,7 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
         int Width,
         int Height,
         int Depth,
-        string? BiomeOverrideId,
-        int TreeBiasMilli,
-        int OutcropBiasMilli,
-        int StreamBandBias,
-        int MarshPoolBias,
-        int WetnessBiasMilli,
-        int SoilDepthBiasMilli,
-        int ForestPatchBiasMilli,
-        int SettlementInfluenceMilli,
-        int RoadInfluenceMilli,
-        int StoneSurfaceMode)
+        int SettingsFingerprint)
     {
         public static LocalCacheKey From(
             int seed,
@@ -873,24 +869,6 @@ public sealed class MapGenerationService : IGameSystem, IMapGenerationService
                 localSettings.Width,
                 localSettings.Height,
                 localSettings.Depth,
-                localSettings.BiomeOverrideId,
-                Quantize(localSettings.TreeDensityBias),
-                Quantize(localSettings.OutcropBias),
-                localSettings.StreamBandBias,
-                localSettings.MarshPoolBias,
-                Quantize(localSettings.ParentWetnessBias),
-                Quantize(localSettings.ParentSoilDepthBias),
-                Quantize(localSettings.ForestPatchBias),
-                Quantize(localSettings.SettlementInfluence),
-                Quantize(localSettings.RoadInfluence),
-                localSettings.StoneSurfaceOverride switch
-                {
-                    true => 1,
-                    false => 0,
-                    _ => -1,
-                });
-
-        private static int Quantize(float value)
-            => (int)MathF.Round(Math.Clamp(value, -1f, 1f) * 1000f);
+                LocalGenerationFingerprint.Compute(localSettings));
     }
 }

@@ -54,15 +54,13 @@ public sealed class SpatialIndexSystemTests
         var (sim, _, _, _, items) = TestFixtures.BuildFullSim();
         var spatial = sim.Context.Get<SpatialIndexSystem>();
 
-        items.CreateItem(ItemDefIds.Log, MaterialIds.Wood, new Vec3i(2, 2, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
-            Origin: new Vec3i(8, 5, 0)));
+        var building = TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(8, 5, 0),
+            materialStart: new Vec3i(2, 2, 0));
 
-        var building = sim.Context.Get<BuildingSystem>().GetByOrigin(new Vec3i(8, 5, 0));
-        Assert.NotNull(building);
-
-        Assert.Equal(building!.Id, spatial.GetBuildingAt(building.Origin));
+        Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin));
         Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin + new Vec3i(1, 0, 0)));
         Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin + new Vec3i(0, 1, 0)));
         Assert.Equal(building.Id, spatial.GetBuildingAt(building.Origin + new Vec3i(1, 1, 0)));

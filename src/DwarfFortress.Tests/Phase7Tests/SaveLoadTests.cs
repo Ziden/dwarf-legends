@@ -119,10 +119,12 @@ public sealed class SaveLoadTests
     {
         var (sim, map, _, _, items) = TestFixtures.BuildFullSim();
 
-        items.CreateItem(ItemDefIds.Log, "oak_wood", new Vec3i(2, 2, 0));
-        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(
-            BuildingDefId: BuildingDefIds.CarpenterWorkshop,
-            Origin: new Vec3i(5, 5, 0)));
+        TestFixtures.PlaceBuildingWithMaterials(
+            sim,
+            BuildingDefIds.CarpenterWorkshop,
+            new Vec3i(5, 5, 0),
+            materialStart: new Vec3i(2, 2, 0),
+            materialId: "oak_wood");
 
         Assert.Equal("oak_wood", map.GetTile(new Vec3i(5, 5, 0)).MaterialId);
 

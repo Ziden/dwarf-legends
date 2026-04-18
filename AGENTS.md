@@ -15,6 +15,9 @@ Agents working in this repository should optimize for:
 
 ## Non-negotiable engineering rules
 
+- We don't need to keep backwards compatibility because this game is not live yet
+- Invasive changes can be ok when refactors are needed
+- Always address tech debt when facing it. Do not add new tech debt or hacks unless agreed by the user.
 - Keep code simple. Follow KISS, clean code, and SOLID.
 - Fix problems at the root cause, even when the correct fix is slightly larger.
 - Do not add dirty workarounds unless the user explicitly asks for a temporary stopgap.

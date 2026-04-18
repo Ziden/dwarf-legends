@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using DwarfFortress.WorldGen.Config;
 using DwarfFortress.WorldGen.Creatures;
@@ -9,7 +9,7 @@ using DwarfFortress.WorldGen.Local;
 
 namespace DwarfFortress.WorldGen.Maps;
 
-public static class EmbarkGenerator
+public static partial class EmbarkGenerator
 {
     private const int EmbarkProtectedHalfSpan = 5; // 10x10 spawn-safe core
     private const byte MinAquaticSpawnWaterLevel = 3;
@@ -23,13 +23,16 @@ public static class EmbarkGenerator
     ];
     private readonly record struct AnchoredPoint(int X, int Y, byte Strength);
     private readonly record struct RoadEndpoint(int X, int Y, byte Width);
+    private readonly record struct HydrologyCandidate(int X, int Y, float Score);
 
     private sealed class LocalGenerationContext
     {
         public LocalGenerationContext(
             LocalGenerationSettings settings,
             int seed,
+            int continuitySeed,
             GeneratedEmbarkMap map,
+            LocalRegionFieldMaps? regionFieldMaps,
             Random rng,
             string biomeId,
             float wetnessBias,
@@ -53,7 +56,9 @@ public static class EmbarkGenerator
         {
             Settings = settings;
             Seed = seed;
+            ContinuitySeed = continuitySeed;
             Map = map;
+            RegionFieldMaps = regionFieldMaps;
             Rng = rng;
             BiomeId = biomeId;
             WetnessBias = wetnessBias;
@@ -78,7 +83,9 @@ public static class EmbarkGenerator
 
         public LocalGenerationSettings Settings { get; }
         public int Seed { get; }
+        public int ContinuitySeed { get; }
         public GeneratedEmbarkMap Map { get; }
+        public LocalRegionFieldMaps? RegionFieldMaps { get; }
         public Random Rng { get; }
         public string BiomeId { get; }
         public float WetnessBias { get; }
@@ -114,27 +121,22 @@ public static class EmbarkGenerator
     }
 
     public static GeneratedEmbarkMap Generate(LocalGenerationSettings settings, int seed = 0)
+        => Generate(settings, seed, regionFieldMaps: null);
+
+    public static GeneratedEmbarkMap Generate(
+        LocalGenerationSettings settings,
+        int seed,
+        LocalRegionFieldMaps? regionFieldMaps)
     {
         ValidateSettings(settings);
 
-        var context = CreateGenerationContext(settings, seed);
+        var context = CreateGenerationContext(settings, seed, regionFieldMaps);
         CaptureStageSnapshot(context, EmbarkGenerationStageId.Inputs);
-        RunSurfaceShapeStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.SurfaceShape);
-        RunUndergroundStructureStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.UndergroundStructure);
-        RunHydrologyStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.Hydrology);
-        RunEcologyStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.Ecology);
-        RunHydrologyPolishStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.HydrologyPolish);
-        RunCivilizationOverlayStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.CivilizationOverlay);
-        RunPlayabilityStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.Playability);
-        RunPopulationStage(context);
-        CaptureStageSnapshot(context, EmbarkGenerationStageId.Population);
+        foreach (var pass in GenerationPasses)
+        {
+            pass.Execute(context);
+            CaptureStageSnapshot(context, pass.StageId);
+        }
 
         context.Map.Diagnostics = new EmbarkGenerationDiagnostics(context.Seed, context.StageSnapshots.ToArray());
 
@@ -148,47 +150,58 @@ public static class EmbarkGenerator
         if (settings.Depth <= 0) throw new ArgumentOutOfRangeException(nameof(settings.Depth));
     }
 
-    private static LocalGenerationContext CreateGenerationContext(LocalGenerationSettings settings, int seed)
+    private static LocalGenerationContext CreateGenerationContext(
+        LocalGenerationSettings settings,
+        int seed,
+        LocalRegionFieldMaps? regionFieldMaps)
     {
-        var map = new GeneratedEmbarkMap(settings.Width, settings.Height, settings.Depth);
+        var resolvedSettings = ResolveContinuitySettings(settings, seed);
+        var map = new GeneratedEmbarkMap(resolvedSettings.Width, resolvedSettings.Height, resolvedSettings.Depth);
         var rng = new Random(seed);
-        var biome = ResolveBiomePreset(settings.BiomeOverrideId, seed);
-        var wetnessBias = Math.Clamp(settings.ParentWetnessBias, -1f, 1f);
-        var soilDepthBias = Math.Clamp(settings.ParentSoilDepthBias, -1f, 1f);
-        var forestPatchBias = Math.Clamp(settings.ForestPatchBias, -1f, 1f);
-        var ecologyTreeBias = Math.Clamp(settings.TreeDensityBias + (wetnessBias * 0.45f) + (soilDepthBias * 0.30f), -1f, 1f);
-        var ecologyOutcropBias = Math.Clamp(settings.OutcropBias - (wetnessBias * 0.20f) - (soilDepthBias * 0.40f), -1f, 1f);
+        var continuitySeed = resolvedSettings.ContinuitySeed ?? seed;
+        var biome = ResolveBiomePreset(resolvedSettings.BiomeOverrideId, seed);
+        var wetnessBias = Math.Clamp(resolvedSettings.ParentWetnessBias, -1f, 1f);
+        var soilDepthBias = Math.Clamp(resolvedSettings.ParentSoilDepthBias, -1f, 1f);
+        var forestPatchBias = Math.Clamp(resolvedSettings.ForestPatchBias, -1f, 1f);
+        var ecologyTreeBias = Math.Clamp(resolvedSettings.TreeDensityBias + (wetnessBias * 0.45f) + (soilDepthBias * 0.30f), -1f, 1f);
+        var ecologyOutcropBias = Math.Clamp(resolvedSettings.OutcropBias - (wetnessBias * 0.20f) - (soilDepthBias * 0.40f), -1f, 1f);
         var streamBonus = wetnessBias >= 0.40f ? 1 : (wetnessBias <= -0.45f ? -1 : 0);
         var marshBonus = (int)MathF.Round(Math.Max(0f, wetnessBias) * 4f);
 
         var (treeCoverMin, treeCoverMax) = ApplyCoverageBias(biome.TreeCoverMin, biome.TreeCoverMax, ecologyTreeBias);
-        (treeCoverMin, treeCoverMax) = ApplyForestCoverageTarget(treeCoverMin, treeCoverMax, settings.ForestCoverageTarget, biome);
+        (treeCoverMin, treeCoverMax) = ApplyForestCoverageTarget(treeCoverMin, treeCoverMax, resolvedSettings.ForestCoverageTarget, biome);
         var (outcropMin, outcropMax) = ApplyRangeBias(biome.OutcropMin, biome.OutcropMax, ecologyOutcropBias, 0);
-        var streamBands = Math.Max(0, biome.StreamBands + settings.StreamBandBias + streamBonus);
-        var marshPoolCount = Math.Max(0, biome.MarshPoolCount + settings.MarshPoolBias + marshBonus);
-        var strataProfile = StrataProfileRegistry.Resolve(settings.GeologyProfileId);
-        var useStoneSurface = settings.StoneSurfaceOverride ?? biome.StoneSurface;
-        var terrain = BuildSurfaceTerrainMap(settings.Width, settings.Height, seed, biome, settings.NoiseOriginX, settings.NoiseOriginY);
+        var streamBands = Math.Max(0, biome.StreamBands + resolvedSettings.StreamBandBias + streamBonus);
+        var marshPoolCount = Math.Max(0, biome.MarshPoolCount + resolvedSettings.MarshPoolBias + marshBonus);
+        var strataProfile = StrataProfileRegistry.Resolve(resolvedSettings.GeologyProfileId);
+        var useStoneSurface = resolvedSettings.StoneSurfaceOverride ?? biome.StoneSurface;
+        var terrain = BuildSurfaceTerrainMap(resolvedSettings.Width, resolvedSettings.Height, continuitySeed, biome, resolvedSettings.NoiseOriginX, resolvedSettings.NoiseOriginY);
         var moisture = BuildSurfaceMoistureMap(
-            settings.Width,
-            settings.Height,
-            seed,
+            resolvedSettings.Width,
+            resolvedSettings.Height,
+            continuitySeed,
             terrain,
             biome,
             wetnessBias,
             soilDepthBias,
-            settings.NoiseOriginX,
-            settings.NoiseOriginY);
-        var canopyMask = BuildCanopyMaskMap(settings.Width, settings.Height, seed, settings.NoiseOriginX, settings.NoiseOriginY);
-        var forestPatchMask = BuildForestPatchMaskMap(settings.Width, settings.Height, seed, forestPatchBias, settings.NoiseOriginX, settings.NoiseOriginY);
-        var forestOpeningMask = BuildForestOpeningMaskMap(settings.Width, settings.Height, seed, settings.NoiseOriginX, settings.NoiseOriginY);
+            resolvedSettings.NoiseOriginX,
+            resolvedSettings.NoiseOriginY);
+        var canopyMask = BuildCanopyMaskMap(resolvedSettings.Width, resolvedSettings.Height, continuitySeed, resolvedSettings.NoiseOriginX, resolvedSettings.NoiseOriginY);
+        var forestPatchMask = BuildForestPatchMaskMap(resolvedSettings.Width, resolvedSettings.Height, continuitySeed, forestPatchBias, resolvedSettings.NoiseOriginX, resolvedSettings.NoiseOriginY);
+        var forestOpeningMask = BuildForestOpeningMaskMap(resolvedSettings.Width, resolvedSettings.Height, continuitySeed, resolvedSettings.NoiseOriginX, resolvedSettings.NoiseOriginY);
+        if (regionFieldMaps is not null)
+            ApplyRegionFieldMaps(moisture, canopyMask, forestPatchMask, forestOpeningMask, regionFieldMaps);
+        else
+            ApplyEcologyEdgeDescriptors(moisture, canopyMask, forestPatchMask, forestOpeningMask, resolvedSettings.EcologyEdges);
         var caveLayers = ResolveCaveLayerDepths(map.Depth);
-        var surface = ResolveSurfaceTile(biome.Id, useStoneSurface, settings.SurfaceTileOverrideId);
+        var surface = ResolveSurfaceTile(biome.Id, useStoneSurface, resolvedSettings.SurfaceTileOverrideId);
 
         return new LocalGenerationContext(
-            settings,
+            resolvedSettings,
             seed,
+            continuitySeed,
             map,
+            regionFieldMaps,
             rng,
             biome.Id,
             wetnessBias,
@@ -211,6 +224,43 @@ public static class EmbarkGenerator
             surface);
     }
 
+    private static LocalGenerationSettings ResolveContinuitySettings(LocalGenerationSettings settings, int seed)
+    {
+        if (settings.ContinuityContract is not LocalContinuityContract continuityContract)
+        {
+            return settings with
+            {
+                ContinuitySeed = settings.ContinuitySeed ?? seed,
+            };
+        }
+
+        return settings with
+        {
+            BiomeOverrideId = continuityContract.BiomeOverrideId ?? settings.BiomeOverrideId,
+            TreeDensityBias = continuityContract.TreeDensityBias ?? settings.TreeDensityBias,
+            OutcropBias = continuityContract.OutcropBias ?? settings.OutcropBias,
+            StreamBandBias = continuityContract.StreamBandBias ?? settings.StreamBandBias,
+            MarshPoolBias = continuityContract.MarshPoolBias ?? settings.MarshPoolBias,
+            ParentWetnessBias = continuityContract.ParentWetnessBias ?? settings.ParentWetnessBias,
+            ParentSoilDepthBias = continuityContract.ParentSoilDepthBias ?? settings.ParentSoilDepthBias,
+            GeologyProfileId = continuityContract.GeologyProfileId ?? settings.GeologyProfileId,
+            StoneSurfaceOverride = continuityContract.StoneSurfaceOverride ?? settings.StoneSurfaceOverride,
+            RiverPortals = continuityContract.RiverPortals ?? settings.RiverPortals,
+            ForestPatchBias = continuityContract.ForestPatchBias ?? settings.ForestPatchBias,
+            SettlementInfluence = continuityContract.SettlementInfluence ?? settings.SettlementInfluence,
+            RoadInfluence = continuityContract.RoadInfluence ?? settings.RoadInfluence,
+            SettlementAnchors = continuityContract.SettlementAnchors ?? settings.SettlementAnchors,
+            RoadPortals = continuityContract.RoadPortals ?? settings.RoadPortals,
+            SurfaceTileOverrideId = continuityContract.SurfaceTileOverrideId ?? settings.SurfaceTileOverrideId,
+            ForestCoverageTarget = continuityContract.ForestCoverageTarget ?? settings.ForestCoverageTarget,
+            EcologyEdges = continuityContract.EcologyEdges ?? settings.EcologyEdges,
+            NoiseOriginX = continuityContract.NoiseOriginX ?? settings.NoiseOriginX,
+            NoiseOriginY = continuityContract.NoiseOriginY ?? settings.NoiseOriginY,
+            ContinuitySeed = continuityContract.ContinuitySeed ?? settings.ContinuitySeed ?? seed,
+            SurfaceIntentGrid = continuityContract.SurfaceIntentGrid ?? settings.SurfaceIntentGrid,
+        };
+    }
+
     private static void RunSurfaceShapeStage(LocalGenerationContext context)
     {
         FillSurface(context.Map, context.Surface);
@@ -220,8 +270,12 @@ public static class EmbarkGenerator
             context.UseStoneSurface,
             context.Terrain,
             context.Moisture,
-            context.Seed,
-            context.Settings.SurfaceTileOverrideId);
+            context.ContinuitySeed,
+            context.Settings.SurfaceTileOverrideId,
+            context.Settings.SurfaceIntentGrid,
+            context.RegionFieldMaps,
+            context.Settings.NoiseOriginX,
+            context.Settings.NoiseOriginY);
     }
 
     private static void RunUndergroundStructureStage(LocalGenerationContext context)
@@ -237,9 +291,19 @@ public static class EmbarkGenerator
     {
         if (context.Settings.RiverPortals is { Length: > 0 })
         {
-            AddAnchoredStreams(context.Map, context.Rng, context.Terrain, context.Settings.RiverPortals);
-            if (context.StreamBands > 0)
-                AddStreams(context.Map, context.Rng, Math.Max(0, context.StreamBands - 1), context.Terrain);
+            AddAnchoredStreams(context.Map, context.Terrain, context.Settings.RiverPortals);
+        }
+        else if (context.RegionFieldMaps is not null)
+        {
+            AddFieldGuidedStreams(
+                context.Map,
+                context.ContinuitySeed,
+                context.StreamBands,
+                context.Terrain,
+                context.Moisture,
+                context.RegionFieldMaps,
+                context.Settings.NoiseOriginX,
+                context.Settings.NoiseOriginY);
         }
         else
         {
@@ -254,7 +318,7 @@ public static class EmbarkGenerator
         ApplySurfaceWaterMoistureFeedback(context.Map, context.Moisture);
         AddTrees(
             context.Map,
-            context.Rng,
+            context.ContinuitySeed,
             context.TreeCoverMin,
             context.TreeCoverMax,
             context.Terrain,
@@ -262,17 +326,58 @@ public static class EmbarkGenerator
             context.CanopyMask,
             context.ForestPatchMask,
             context.ForestOpeningMask,
+            context.RegionFieldMaps,
             context.BiomeId,
-            context.ForestPatchBias);
-        AddOutcrops(context.Map, context.Rng, context.OutcropMin, context.OutcropMax, context.Terrain);
-        AddMarshPools(context.Map, context.Rng, context.MarshPoolCount, context.Terrain, context.Moisture);
+            context.ForestPatchBias,
+            context.Settings.NoiseOriginX,
+            context.Settings.NoiseOriginY);
+        if (context.RegionFieldMaps is not null)
+        {
+            AddFieldGuidedOutcrops(
+                context.Map,
+                context.ContinuitySeed,
+                context.OutcropMin,
+                context.OutcropMax,
+                context.Terrain,
+                context.RegionFieldMaps,
+                context.Settings.NoiseOriginX,
+                context.Settings.NoiseOriginY);
+        }
+        else
+        {
+            AddOutcrops(context.Map, context.Rng, context.OutcropMin, context.OutcropMax, context.Terrain);
+        }
+        if (context.RegionFieldMaps is not null)
+        {
+            AddFieldGuidedMarshPools(
+                context.Map,
+                context.ContinuitySeed,
+                context.MarshPoolCount,
+                context.Terrain,
+                context.Moisture,
+                context.RegionFieldMaps,
+                context.Settings.NoiseOriginX,
+                context.Settings.NoiseOriginY);
+        }
+        else
+        {
+            AddMarshPools(context.Map, context.Rng, context.MarshPoolCount, context.Terrain, context.Moisture);
+        }
     }
 
     private static void RunHydrologyPolishStage(LocalGenerationContext context)
     {
         FloodOceanSurface(context.Map, context.Rng, context.BiomeId, context.Terrain);
         HarmonizeSurfaceWaterDepths(context.Map, context.Terrain, context.BiomeId);
-        ApplyRiparianSurfaceTransitions(context.Map, context.BiomeId, context.Seed);
+        ApplyRiparianSurfaceTransitions(
+            context.Map,
+            context.BiomeId,
+            context.Terrain,
+            context.Moisture,
+            context.RegionFieldMaps,
+            context.ContinuitySeed,
+            context.Settings.NoiseOriginX,
+            context.Settings.NoiseOriginY);
     }
 
     private static void RunCivilizationOverlayStage(LocalGenerationContext context)
@@ -292,16 +397,19 @@ public static class EmbarkGenerator
     {
         EnsureBorderPassable(context.Map, context.Surface);
         EnsureCentralEmbarkZone(context.Map, context.Surface);
+        EnsureSurfaceConnectivity(context.Map, context.Surface);
         PlaceCentralStaircase(context.Map);
         AddPlants(
             context.Map,
-            context.Seed,
-            context.Rng,
+            context.ContinuitySeed,
             context.Terrain,
             context.Moisture,
             context.ForestPatchMask,
             context.ForestOpeningMask,
-            context.BiomeId);
+            context.BiomeId,
+            context.RegionFieldMaps,
+            context.Settings.NoiseOriginX,
+            context.Settings.NoiseOriginY);
     }
 
     private static void RunPopulationStage(LocalGenerationContext context)
@@ -437,9 +545,12 @@ public static class EmbarkGenerator
         float[,] terrain,
         float[,] moisture,
         int seed,
-        string? surfaceTileOverrideId)
+        string? surfaceTileOverrideId,
+        LocalSurfaceIntentGrid? surfaceIntentGrid,
+        LocalRegionFieldMaps? regionFieldMaps,
+        int noiseOriginX,
+        int noiseOriginY)
     {
-        var preferredSurfaceTileDefId = ResolvePreferredSurfaceTileDefId(surfaceTileOverrideId);
         for (var x = 0; x < map.Width; x++)
         for (var y = 0; y < map.Height; y++)
         {
@@ -447,8 +558,20 @@ public static class EmbarkGenerator
             if (!tile.IsPassable || tile.FluidType != GeneratedFluidType.None)
                 continue;
 
-            var fx = map.Width <= 1 ? 0f : x / (float)(map.Width - 1);
-            var fy = map.Height <= 1 ? 0f : y / (float)(map.Height - 1);
+            var fx = ResolveNoiseSampleCoord(noiseOriginX, x, map.Width);
+            var fy = ResolveNoiseSampleCoord(noiseOriginY, y, map.Height);
+            var surfaceSelectorNoise = CoherentNoise.DomainWarpedFractal2D(
+                seed, fx * 1.18f, fy * 1.18f, octaves: 2, lacunarity: 2f, gain: 0.54f, warpStrength: 0.16f, salt: 277);
+            var surfaceSelector = Math.Clamp((surfaceSelectorNoise * 0.5f) + 0.5f, 0f, 0.9999f);
+            var preferredSurfaceTileDefId = ResolvePreferredSurfaceTileDefId(
+                surfaceTileOverrideId,
+                surfaceIntentGrid,
+                regionFieldMaps,
+                x,
+                y,
+                map.Width,
+                map.Height,
+                surfaceSelector);
             var macroNoise = CoherentNoise.DomainWarpedFractal2D(
                 seed, fx * 1.45f, fy * 1.45f, octaves: 3, lacunarity: 2f, gain: 0.52f, warpStrength: 0.22f, salt: 463);
             var detailNoise = CoherentNoise.Fractal2D(
@@ -673,7 +796,15 @@ public static class EmbarkGenerator
         };
     }
 
-    private static void ApplyRiparianSurfaceTransitions(GeneratedEmbarkMap map, string biomeId, int seed)
+    private static void ApplyRiparianSurfaceTransitions(
+        GeneratedEmbarkMap map,
+        string biomeId,
+        float[,] terrain,
+        float[,] moisture,
+        LocalRegionFieldMaps? regionFieldMaps,
+        int seed,
+        int noiseOriginX,
+        int noiseOriginY)
     {
         var isSnowBiome = string.Equals(biomeId, MacroBiomeIds.Tundra, StringComparison.OrdinalIgnoreCase) ||
                           string.Equals(biomeId, MacroBiomeIds.IcePlains, StringComparison.OrdinalIgnoreCase) ||
@@ -684,31 +815,45 @@ public static class EmbarkGenerator
         var isMarshBiome = string.Equals(biomeId, MacroBiomeIds.MistyMarsh, StringComparison.OrdinalIgnoreCase);
         var isHighland = string.Equals(biomeId, MacroBiomeIds.Highland, StringComparison.OrdinalIgnoreCase);
 
-        for (var x = 1; x < map.Width - 1; x++)
-        for (var y = 1; y < map.Height - 1; y++)
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
         {
             var tile = map.GetTile(x, y, 0);
             if (!tile.IsPassable || tile.FluidType != GeneratedFluidType.None)
                 continue;
             if (tile.TileDefId is GeneratedTileDefIds.Water or GeneratedTileDefIds.Magma or GeneratedTileDefIds.Tree or GeneratedTileDefIds.Staircase)
                 continue;
-
-            if (!TryMeasureNearbyWater(map, x, y, maxRadius: 3, out var nearestDistance, out var nearbyWaterCount, out var maxNeighborWaterLevel))
-                continue;
-            if (nearestDistance > 2)
+            if (x == 0 || y == 0 || x == map.Width - 1 || y == map.Height - 1)
                 continue;
 
-            var fx = map.Width <= 1 ? 0f : x / (float)(map.Width - 1);
-            var fy = map.Height <= 1 ? 0f : y / (float)(map.Height - 1);
+            var fx = ResolveNoiseSampleCoord(noiseOriginX, x, map.Width);
+            var fy = ResolveNoiseSampleCoord(noiseOriginY, y, map.Height);
             var rippleNoise = CoherentNoise.Fractal2D(
                 seed, fx * 7.8f, fy * 7.8f, octaves: 2, lacunarity: 2f, gain: 0.5f, salt: 557);
 
-            var shoreStrength = nearestDistance <= 1 ? 0.85f : 0.58f;
-            var wetness = Math.Clamp(
-                (shoreStrength * 0.52f) +
-                ((nearbyWaterCount / 12f) * 0.28f) +
-                ((maxNeighborWaterLevel / 7f) * 0.14f) +
-                (rippleNoise * 0.06f), 0f, 1f);
+            var localWetness = 0f;
+            if (TryMeasureNearbyWater(map, x, y, maxRadius: 3, out var nearestDistance, out var nearbyWaterCount, out var maxNeighborWaterLevel) && nearestDistance <= 2)
+            {
+                var shoreStrength = nearestDistance <= 1 ? 0.85f : 0.58f;
+                localWetness = Math.Clamp(
+                    (shoreStrength * 0.52f) +
+                    ((nearbyWaterCount / 12f) * 0.28f) +
+                    ((maxNeighborWaterLevel / 7f) * 0.14f) +
+                    (rippleNoise * 0.06f),
+                    0f,
+                    1f);
+            }
+
+            var fieldWetness = regionFieldMaps is null
+                ? 0f
+                : Math.Clamp(
+                    (ResolveFieldRiparianBoost(regionFieldMaps, moisture, terrain, x, y) * 0.88f) +
+                    (rippleNoise * 0.12f),
+                    0f,
+                    1f);
+            var wetness = Math.Max(localWetness, fieldWetness);
+            if (wetness <= 0f)
+                continue;
 
             var targetTileDefId = ResolveRiparianTileDefId(
                 tile.TileDefId,
@@ -1447,6 +1592,182 @@ public static class EmbarkGenerator
         return map;
     }
 
+    private static void ApplyEcologyEdgeDescriptors(
+        float[,] moisture,
+        float[,] canopyMask,
+        float[,] forestPatchMask,
+        float[,] forestOpeningMask,
+        EcologyEdgeDescriptors? ecologyEdges)
+    {
+        if (!ecologyEdges.HasValue)
+            return;
+
+        var width = moisture.GetLength(0);
+        var height = moisture.GetLength(1);
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
+        {
+            if (!TryResolveEcologyEdgeInfluence(ecologyEdges.Value, width, height, x, y, out var profile, out var edgeWeight))
+                continue;
+
+            var ecologySignal = Math.Clamp(
+                (MathF.Abs(profile.VegetationDensity - 0.5f) * 0.45f) +
+                (MathF.Abs(profile.VegetationSuitability - 0.5f) * 0.35f) +
+                (MathF.Abs(profile.SoilDepth - 0.5f) * 0.10f) +
+                (MathF.Abs(profile.Groundwater - 0.5f) * 0.10f),
+                0f,
+                1f);
+            var influence = Math.Clamp(edgeWeight * (0.10f + (ecologySignal * 0.65f)), 0f, 0.78f);
+            if (influence <= 0f)
+                continue;
+
+            var moistureTarget = Math.Clamp(
+                (profile.Groundwater * 0.48f) +
+                (profile.SoilDepth * 0.22f) +
+                (profile.VegetationSuitability * 0.20f) +
+                (profile.VegetationDensity * 0.10f),
+                0f,
+                1f);
+            var canopyTarget = Math.Clamp(
+                (profile.VegetationDensity * 0.64f) +
+                (profile.VegetationSuitability * 0.20f) +
+                (profile.Groundwater * 0.16f),
+                0f,
+                1f);
+            var patchTarget = Math.Clamp(
+                (profile.VegetationDensity * 0.72f) +
+                (profile.VegetationSuitability * 0.28f),
+                0f,
+                1f);
+            var openingTarget = Math.Clamp(
+                1f - ((profile.VegetationDensity * 0.72f) +
+                      (profile.VegetationSuitability * 0.18f) +
+                      (profile.Groundwater * 0.10f)),
+                0f,
+                1f);
+
+            moisture[x, y] = Math.Clamp(
+                (moisture[x, y] * (1f - (influence * 0.55f))) + (moistureTarget * (influence * 0.55f)),
+                0f,
+                1f);
+            canopyMask[x, y] = Math.Clamp(
+                (canopyMask[x, y] * (1f - (influence * 0.40f))) + (canopyTarget * (influence * 0.40f)),
+                0f,
+                1f);
+            forestPatchMask[x, y] = Math.Clamp(
+                (forestPatchMask[x, y] * (1f - (influence * 0.62f))) + (patchTarget * (influence * 0.62f)),
+                0f,
+                1f);
+            forestOpeningMask[x, y] = Math.Clamp(
+                (forestOpeningMask[x, y] * (1f - (influence * 0.50f))) + (openingTarget * (influence * 0.50f)),
+                0f,
+                1f);
+        }
+    }
+
+    private static void ApplyRegionFieldMaps(
+        float[,] moisture,
+        float[,] canopyMask,
+        float[,] forestPatchMask,
+        float[,] forestOpeningMask,
+        LocalRegionFieldMaps regionFieldMaps)
+    {
+        var width = moisture.GetLength(0);
+        var height = moisture.GetLength(1);
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
+        {
+            var hydrologyInfluence = Math.Clamp(
+                (regionFieldMaps.RiverInfluence[x, y] * 0.34f) +
+                (regionFieldMaps.LakeInfluence[x, y] * 0.18f) +
+                (regionFieldMaps.FlowAccumulationBand[x, y] * 0.20f) +
+                (regionFieldMaps.RiverDischargeBand[x, y] * 0.16f) +
+                (regionFieldMaps.RiverOrderBand[x, y] * 0.12f),
+                0f,
+                1f);
+            var vegetationDensity = regionFieldMaps.VegetationDensity[x, y];
+            var vegetationSuitability = regionFieldMaps.VegetationSuitability[x, y];
+            var soilDepth = regionFieldMaps.SoilDepth[x, y];
+            var groundwater = regionFieldMaps.Groundwater[x, y];
+            var moistureBand = regionFieldMaps.MoistureBand[x, y];
+            var slope = regionFieldMaps.Slope[x, y];
+
+            var moistureTarget = Math.Clamp(
+                (moistureBand * 0.32f) +
+                (groundwater * 0.32f) +
+                (soilDepth * 0.12f) +
+                (vegetationSuitability * 0.12f) +
+                (hydrologyInfluence * 0.12f),
+                0f,
+                1f);
+            var canopyTarget = Math.Clamp(
+                (vegetationDensity * 0.58f) +
+                (vegetationSuitability * 0.20f) +
+                (groundwater * 0.12f) +
+                (hydrologyInfluence * 0.10f) -
+                (slope * 0.08f),
+                0f,
+                1f);
+            var patchTarget = Math.Clamp(
+                (vegetationDensity * 0.52f) +
+                (vegetationSuitability * 0.24f) +
+                (moistureBand * 0.10f) +
+                (hydrologyInfluence * 0.14f) -
+                (slope * 0.06f),
+                0f,
+                1f);
+            var openingTarget = Math.Clamp(
+                1f - ((vegetationDensity * 0.62f) +
+                      (vegetationSuitability * 0.18f) +
+                      (hydrologyInfluence * 0.12f) +
+                      (groundwater * 0.08f)),
+                0f,
+                1f);
+
+            moisture[x, y] = Math.Clamp((moisture[x, y] * 0.52f) + (moistureTarget * 0.48f), 0f, 1f);
+            canopyMask[x, y] = Math.Clamp((canopyMask[x, y] * 0.42f) + (canopyTarget * 0.58f), 0f, 1f);
+            forestPatchMask[x, y] = Math.Clamp((forestPatchMask[x, y] * 0.46f) + (patchTarget * 0.54f), 0f, 1f);
+            forestOpeningMask[x, y] = Math.Clamp((forestOpeningMask[x, y] * 0.48f) + (openingTarget * 0.52f), 0f, 1f);
+        }
+    }
+
+    private static bool TryResolveEcologyEdgeInfluence(
+        EcologyEdgeDescriptors ecologyEdges,
+        int width,
+        int height,
+        int x,
+        int y,
+        out EcologyEdgeProfile profile,
+        out float edgeWeight)
+    {
+        var northWeight = ResolveEcologyEdgeWeight(y, height);
+        var eastWeight = ResolveEcologyEdgeWeight((width - 1) - x, width);
+        var southWeight = ResolveEcologyEdgeWeight((height - 1) - y, height);
+        var westWeight = ResolveEcologyEdgeWeight(x, width);
+        var totalWeight = northWeight + eastWeight + southWeight + westWeight;
+        if (totalWeight <= 0f)
+        {
+            profile = EcologyEdgeProfile.Neutral;
+            edgeWeight = 0f;
+            return false;
+        }
+
+        profile = new EcologyEdgeProfile(
+            VegetationDensity: ((ecologyEdges.North.VegetationDensity * northWeight) + (ecologyEdges.East.VegetationDensity * eastWeight) + (ecologyEdges.South.VegetationDensity * southWeight) + (ecologyEdges.West.VegetationDensity * westWeight)) / totalWeight,
+            VegetationSuitability: ((ecologyEdges.North.VegetationSuitability * northWeight) + (ecologyEdges.East.VegetationSuitability * eastWeight) + (ecologyEdges.South.VegetationSuitability * southWeight) + (ecologyEdges.West.VegetationSuitability * westWeight)) / totalWeight,
+            SoilDepth: ((ecologyEdges.North.SoilDepth * northWeight) + (ecologyEdges.East.SoilDepth * eastWeight) + (ecologyEdges.South.SoilDepth * southWeight) + (ecologyEdges.West.SoilDepth * westWeight)) / totalWeight,
+            Groundwater: ((ecologyEdges.North.Groundwater * northWeight) + (ecologyEdges.East.Groundwater * eastWeight) + (ecologyEdges.South.Groundwater * southWeight) + (ecologyEdges.West.Groundwater * westWeight)) / totalWeight);
+        edgeWeight = Math.Clamp(totalWeight, 0f, 1f);
+        return true;
+    }
+
+    private static float ResolveEcologyEdgeWeight(int distanceFromEdge, int extent)
+    {
+        var band = Math.Clamp(extent / 6f, 5f, 10f);
+        var normalized = 1f - Math.Clamp(distanceFromEdge / band, 0f, 1f);
+        return normalized * normalized * (3f - (2f * normalized));
+    }
+
     private static void SmoothScalarMask(float[,] map, int width, int height, int passes, float blend)
     {
         if (passes <= 0 || blend <= 0f)
@@ -1528,9 +1849,89 @@ public static class EmbarkGenerator
         }
     }
 
+    private static void AddFieldGuidedStreams(
+        GeneratedEmbarkMap map,
+        int continuitySeed,
+        int bands,
+        float[,] terrain,
+        float[,] moisture,
+        LocalRegionFieldMaps regionFieldMaps,
+        int noiseOriginX,
+        int noiseOriginY)
+    {
+        if (bands <= 0)
+            return;
+
+        var candidates = BuildFieldGuidedStreamCandidates(
+            map,
+            terrain,
+            moisture,
+            regionFieldMaps,
+            continuitySeed,
+            noiseOriginX,
+            noiseOriginY);
+        if (candidates.Count == 0)
+        {
+            var fallbackRng = new Random(SeedHash.Hash(continuitySeed, noiseOriginX, noiseOriginY, 17611));
+            AddStreams(map, fallbackRng, bands, terrain);
+            return;
+        }
+
+        var maxSteps = Math.Max(10, map.Width + map.Height);
+        var minSpacing = Math.Clamp(Math.Min(map.Width, map.Height) / 8, 4, 8);
+        var placedSources = new List<HydrologyCandidate>(bands);
+
+        for (var i = 0; i < candidates.Count && placedSources.Count < bands; i++)
+        {
+            var candidate = candidates[i];
+            if (!IsFarEnoughFromHydrologyCandidates(placedSources, candidate.X, candidate.Y, minSpacing))
+                continue;
+
+            var path = TraceFieldGuidedPath(
+                map,
+                terrain,
+                moisture,
+                regionFieldMaps,
+                continuitySeed,
+                noiseOriginX,
+                noiseOriginY,
+                candidate.X,
+                candidate.Y,
+                maxSteps);
+            if (path.Count < 4)
+                continue;
+
+            for (var pathIndex = 0; pathIndex < path.Count; pathIndex++)
+            {
+                var (x, y) = path[pathIndex];
+                var support = ResolveHydrologySupport(regionFieldMaps, moisture, terrain, x, y);
+                var baseLevel = support >= 0.82f ? 4 : (support >= 0.64f ? 3 : 2);
+                CarveWater(map, x, y, (byte)baseLevel, allowBoundary: true);
+
+                if (support >= 0.78f && pathIndex > 0 && pathIndex < path.Count - 1)
+                {
+                    foreach (var (dx, dy) in CardinalDirections)
+                    {
+                        if (ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, x + dx, y + dy, 17653, 0.5f) <= 0f)
+                            continue;
+
+                        CarveWater(map, x + dx, y + dy, 1, allowBoundary: true);
+                    }
+                }
+            }
+
+            placedSources.Add(candidate);
+        }
+
+        if (placedSources.Count == 0)
+        {
+            var fallbackRng = new Random(SeedHash.Hash(continuitySeed, noiseOriginX, noiseOriginY, 17641));
+            AddStreams(map, fallbackRng, bands, terrain);
+        }
+    }
+
     private static void AddAnchoredStreams(
         GeneratedEmbarkMap map,
-        Random rng,
         float[,] terrain,
         LocalRiverPortal[] portals)
     {
@@ -1602,12 +2003,30 @@ public static class EmbarkGenerator
 
         return portal.Edge switch
         {
-            LocalMapEdge.North => (x, 1),
-            LocalMapEdge.East => (map.Width - 2, y),
-            LocalMapEdge.South => (x, map.Height - 2),
-            LocalMapEdge.West => (1, y),
+            LocalMapEdge.North => (x, 0),
+            LocalMapEdge.East => (map.Width - 1, y),
+            LocalMapEdge.South => (x, map.Height - 1),
+            LocalMapEdge.West => (0, y),
             _ => (x, y),
         };
+    }
+
+    private static (int X, int Y) ResolveBoundaryInteriorPoint(GeneratedEmbarkMap map, (int X, int Y) point)
+    {
+        var x = point.X;
+        var y = point.Y;
+
+        if (x == 0)
+            x = Math.Min(1, map.Width - 1);
+        else if (x == map.Width - 1)
+            x = Math.Max(0, map.Width - 2);
+
+        if (y == 0)
+            y = Math.Min(1, map.Height - 1);
+        else if (y == map.Height - 1)
+            y = Math.Max(0, map.Height - 2);
+
+        return (x, y);
     }
 
     private static int FindNearestUnpaired(
@@ -1668,11 +2087,19 @@ public static class EmbarkGenerator
         byte strength)
     {
         var sourceCoord = (source.X, source.Y);
-        var path = FindAnchoredPath(map, terrain, sourceCoord, target);
+        var entry = ResolveBoundaryInteriorPoint(map, sourceCoord);
+        var exit = ResolveBoundaryInteriorPoint(map, target);
+        var path = FindAnchoredPath(map, terrain, entry, exit);
         if (path.Count == 0)
-            path = BuildFallbackAnchoredCorridor(map, sourceCoord, target);
+            path = BuildFallbackAnchoredCorridor(map, entry, exit);
 
+        var stitchedPath = new List<(int X, int Y)>(path.Count + 2);
+        AddPathPoint(stitchedPath, sourceCoord.X, sourceCoord.Y);
         foreach (var (x, y) in path)
+            AddPathPoint(stitchedPath, x, y);
+        AddPathPoint(stitchedPath, target.X, target.Y);
+
+        foreach (var (x, y) in stitchedPath)
             CarveAnchoredWater(map, x, y, strength);
     }
 
@@ -1705,14 +2132,14 @@ public static class EmbarkGenerator
                 continue;
 
             var level = (byte)Math.Clamp(centerLevel - distance, 1, 7);
-            CarveWater(map, x + dx, y + dy, level);
+            CarveWater(map, x + dx, y + dy, level, allowBoundary: true);
         }
     }
 
     private static void ApplySurfaceWaterMoistureFeedback(GeneratedEmbarkMap map, float[,] moisture)
     {
-        for (var x = 1; x < map.Width - 1; x++)
-        for (var y = 1; y < map.Height - 1; y++)
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
         {
             var tile = map.GetTile(x, y, 0);
             if (tile.TileDefId != GeneratedTileDefIds.Water)
@@ -1731,7 +2158,7 @@ public static class EmbarkGenerator
             {
                 var nx = x + dx;
                 var ny = y + dy;
-                if (nx <= 0 || ny <= 0 || nx >= map.Width - 1 || ny >= map.Height - 1)
+                if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
                     continue;
 
                 var distance = Math.Abs(dx) + Math.Abs(dy);
@@ -1974,6 +2401,206 @@ public static class EmbarkGenerator
         return bestX >= 0 && bestY >= 0;
     }
 
+    private static List<HydrologyCandidate> BuildFieldGuidedStreamCandidates(
+        GeneratedEmbarkMap map,
+        float[,] terrain,
+        float[,] moisture,
+        LocalRegionFieldMaps regionFieldMaps,
+        int continuitySeed,
+        int noiseOriginX,
+        int noiseOriginY)
+    {
+        var candidates = new List<HydrologyCandidate>(map.Width * map.Height / 6);
+        for (var x = 1; x < map.Width - 1; x++)
+        for (var y = 1; y < map.Height - 1; y++)
+        {
+            if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
+                continue;
+
+            var support = ResolveHydrologySupport(regionFieldMaps, moisture, terrain, x, y);
+            var sourceScore = Math.Clamp(
+                (support * 0.62f) +
+                (terrain[x, y] * 0.20f) +
+                (regionFieldMaps.Slope[x, y] * 0.10f) +
+                ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, x, y, 17671, 0.08f),
+                0f,
+                1f);
+
+            if (terrain[x, y] < 0.42f || support < 0.34f || sourceScore < 0.44f)
+                continue;
+
+            candidates.Add(new HydrologyCandidate(x, y, sourceScore));
+        }
+
+        candidates.Sort(static (left, right) => CompareHydrologyCandidates(left, right));
+        return candidates;
+    }
+
+    private static int CompareHydrologyCandidates(HydrologyCandidate left, HydrologyCandidate right)
+    {
+        var scoreCompare = right.Score.CompareTo(left.Score);
+        if (scoreCompare != 0)
+            return scoreCompare;
+
+        var yCompare = left.Y.CompareTo(right.Y);
+        if (yCompare != 0)
+            return yCompare;
+
+        return left.X.CompareTo(right.X);
+    }
+
+    private static bool IsFarEnoughFromHydrologyCandidates(
+        List<HydrologyCandidate> candidates,
+        int x,
+        int y,
+        int minDistance)
+    {
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var distance = Math.Abs(candidates[i].X - x) + Math.Abs(candidates[i].Y - y);
+            if (distance < minDistance)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static List<(int X, int Y)> TraceFieldGuidedPath(
+        GeneratedEmbarkMap map,
+        float[,] terrain,
+        float[,] moisture,
+        LocalRegionFieldMaps regionFieldMaps,
+        int continuitySeed,
+        int noiseOriginX,
+        int noiseOriginY,
+        int sourceX,
+        int sourceY,
+        int maxSteps)
+    {
+        var path = new List<(int X, int Y)>(maxSteps);
+        var visited = new bool[map.Width, map.Height];
+        var x = sourceX;
+        var y = sourceY;
+        var previousDx = 0;
+        var previousDy = 0;
+
+        for (var step = 0; step < maxSteps; step++)
+        {
+            if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+                break;
+            if (visited[x, y])
+                break;
+
+            visited[x, y] = true;
+            path.Add((x, y));
+            if (x == 0 || y == 0 || x == map.Width - 1 || y == map.Height - 1)
+                break;
+
+            var bestX = x;
+            var bestY = y;
+            var bestDx = 0;
+            var bestDy = 0;
+            var bestScore = float.MaxValue;
+
+            foreach (var (dx, dy) in CardinalDirections)
+            {
+                var nx = x + dx;
+                var ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
+                    continue;
+                if (visited[nx, ny])
+                    continue;
+                if (IsInCentralEmbarkZone(map.Width, map.Height, nx, ny) &&
+                    nx > 0 && ny > 0 && nx < map.Width - 1 && ny < map.Height - 1)
+                {
+                    continue;
+                }
+
+                var support = ResolveHydrologySupport(regionFieldMaps, moisture, terrain, nx, ny);
+                var descent = terrain[x, y] - terrain[nx, ny];
+                var descentBonus = descent > 0f ? descent * 0.44f : 0f;
+                var supportBonus = support * 0.26f;
+                var boundaryBonus = nx == 0 || ny == 0 || nx == map.Width - 1 || ny == map.Height - 1 ? 0.14f : 0f;
+                var turnPenalty = previousDx == dx && previousDy == dy ? 0f : 0.04f;
+                var jitter = ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, nx, ny, 17713, 0.015f);
+                var score = terrain[nx, ny] - descentBonus - supportBonus - boundaryBonus + turnPenalty + jitter;
+                if (score >= bestScore)
+                    continue;
+
+                bestScore = score;
+                bestX = nx;
+                bestY = ny;
+                bestDx = dx;
+                bestDy = dy;
+            }
+
+            if (bestX == x && bestY == y)
+                break;
+
+            previousDx = bestDx;
+            previousDy = bestDy;
+            x = bestX;
+            y = bestY;
+        }
+
+        return path;
+    }
+
+    private static float ResolveHydrologySupport(
+        LocalRegionFieldMaps regionFieldMaps,
+        float[,] moisture,
+        float[,] terrain,
+        int x,
+        int y)
+    {
+        return Math.Clamp(
+            (regionFieldMaps.MoistureBand[x, y] * 0.18f) +
+            (regionFieldMaps.Groundwater[x, y] * 0.18f) +
+            (moisture[x, y] * 0.12f) +
+            (regionFieldMaps.RiverInfluence[x, y] * 0.12f) +
+            (regionFieldMaps.LakeInfluence[x, y] * 0.08f) +
+            (regionFieldMaps.FlowAccumulationBand[x, y] * 0.14f) +
+            (regionFieldMaps.RiverDischargeBand[x, y] * 0.10f) +
+            (regionFieldMaps.RiverOrderBand[x, y] * 0.06f) +
+            ((1f - regionFieldMaps.Slope[x, y]) * 0.02f),
+            0f,
+            1f);
+    }
+
+    private static float ResolveFieldRiparianBoost(
+        LocalRegionFieldMaps regionFieldMaps,
+        float[,] moisture,
+        float[,] terrain,
+        int x,
+        int y)
+    {
+        return Math.Clamp(
+            (regionFieldMaps.RiverInfluence[x, y] * 0.24f) +
+            (regionFieldMaps.LakeInfluence[x, y] * 0.14f) +
+            (regionFieldMaps.FlowAccumulationBand[x, y] * 0.22f) +
+            (regionFieldMaps.RiverDischargeBand[x, y] * 0.18f) +
+            (regionFieldMaps.RiverOrderBand[x, y] * 0.08f) +
+            (regionFieldMaps.Groundwater[x, y] * 0.06f) +
+            (moisture[x, y] * 0.05f) +
+            ((1f - terrain[x, y]) * 0.03f),
+            0f,
+            1f);
+    }
+
+    private static float ResolveRiparianBoost(
+        GeneratedEmbarkMap map,
+        LocalRegionFieldMaps? regionFieldMaps,
+        float[,] moisture,
+        float[,] terrain,
+        int x,
+        int y)
+    {
+        if (regionFieldMaps is not null)
+            return ResolveFieldRiparianBoost(regionFieldMaps, moisture, terrain, x, y);
+
+        return EstimateRiparianBoost(map, x, y);
+    }
+
     private static List<(int X, int Y)> TraceDownhillPath(
         GeneratedEmbarkMap map,
         float[,] terrain,
@@ -2038,9 +2665,9 @@ public static class EmbarkGenerator
         return path;
     }
 
-    private static void CarveWater(GeneratedEmbarkMap map, int x, int y, byte level, int z = 0)
+    private static void CarveWater(GeneratedEmbarkMap map, int x, int y, byte level, int z = 0, bool allowBoundary = false)
     {
-        if (x <= 0 || y <= 0 || x >= map.Width - 1 || y >= map.Height - 1)
+        if (IsOutsideSurfaceBounds(map, x, y, allowBoundary))
             return;
         if (z < 0 || z >= map.Depth)
             return;
@@ -2061,8 +2688,8 @@ public static class EmbarkGenerator
         var deep = string.Equals(biomeId, MacroBiomeIds.OceanDeep, StringComparison.OrdinalIgnoreCase);
         var seaLevel = deep ? 0.78f : 0.68f;
 
-        for (var x = 1; x < map.Width - 1; x++)
-        for (var y = 1; y < map.Height - 1; y++)
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
         {
             if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
                 continue;
@@ -2085,8 +2712,8 @@ public static class EmbarkGenerator
         var component = new List<(int X, int Y)>(128);
         var isOceanBiome = IsOceanBiome(biomeId);
 
-        for (var x = 1; x < map.Width - 1; x++)
-        for (var y = 1; y < map.Height - 1; y++)
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
         {
             if (visited[x, y] || !IsSurfaceWater(map, x, y))
                 continue;
@@ -2106,10 +2733,10 @@ public static class EmbarkGenerator
                 var (cx, cy) = queue.Dequeue();
                 component.Add((cx, cy));
 
-                if (cx <= 1) touchesWest = true;
-                if (cx >= map.Width - 2) touchesEast = true;
-                if (cy <= 1) touchesNorth = true;
-                if (cy >= map.Height - 2) touchesSouth = true;
+                if (cx == 0) touchesWest = true;
+                if (cx == map.Width - 1) touchesEast = true;
+                if (cy == 0) touchesNorth = true;
+                if (cy == map.Height - 1) touchesSouth = true;
 
                 var level = map.GetTile(cx, cy, 0).FluidLevel;
                 if (level > maxLevel)
@@ -2119,7 +2746,7 @@ public static class EmbarkGenerator
                 {
                     var nx = cx + dx;
                     var ny = cy + dy;
-                    if (nx <= 0 || ny <= 0 || nx >= map.Width - 1 || ny >= map.Height - 1)
+                    if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
                         continue;
                     if (visited[nx, ny] || !IsSurfaceWater(map, nx, ny))
                         continue;
@@ -2197,7 +2824,7 @@ public static class EmbarkGenerator
                 {
                     var nx = x + dx;
                     var ny = y + dy;
-                    if (nx <= 0 || ny <= 0 || nx >= map.Width - 1 || ny >= map.Height - 1)
+                    if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
                         continue;
                     if (!keyToIndex.TryGetValue((ny * map.Width) + nx, out var neighborIdx))
                         continue;
@@ -2302,7 +2929,7 @@ public static class EmbarkGenerator
         {
             var nx = x + dx;
             var ny = y + dy;
-            if (nx <= 0 || ny <= 0 || nx >= map.Width - 1 || ny >= map.Height - 1)
+            if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
                 return true;
             if (!IsSurfaceWater(map, nx, ny))
                 return true;
@@ -2313,7 +2940,7 @@ public static class EmbarkGenerator
 
     private static void AddTrees(
         GeneratedEmbarkMap map,
-        Random rng,
+        int continuitySeed,
         float minCoverage,
         float maxCoverage,
         float[,] terrain,
@@ -2321,8 +2948,11 @@ public static class EmbarkGenerator
         float[,] canopyMask,
         float[,] forestPatchMask,
         float[,] forestOpeningMask,
+        LocalRegionFieldMaps? regionFieldMaps,
         string biomeId,
-        float forestPatchBias)
+        float forestPatchBias,
+        int noiseOriginX,
+        int noiseOriginY)
     {
         if (map.Width < 8 || map.Height < 8)
             return;
@@ -2344,11 +2974,18 @@ public static class EmbarkGenerator
         var ruggedPenaltyScale = 0.12f + (Math.Max(0f, -clampedPatchBias) * 0.06f);
         var candidates = new List<(int X, int Y, float Score)>(map.Width * map.Height);
         var eligibleLandTiles = 0;
+        var suitabilitySum = 0f;
         for (var x = 1; x < map.Width - 1; x++)
         for (var y = 1; y < map.Height - 1; y++)
         {
             if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
                 continue;
+            if (regionFieldMaps is not null)
+            {
+                var distanceFromEdge = Math.Min(Math.Min(x, map.Width - 1 - x), Math.Min(y, map.Height - 1 - y));
+                if (distanceFromEdge > 0 && distanceFromEdge < 6)
+                    continue;
+            }
             var tileDefId = map.GetTile(x, y, 0).TileDefId;
             if (tileDefId == GeneratedTileDefIds.Water || IsSurfaceRockWallTile(tileDefId))
                 continue;
@@ -2371,14 +3008,28 @@ public static class EmbarkGenerator
             if (suitability < suitabilityFloor)
                 continue;
 
-            var jitter = ((float)rng.NextDouble() - 0.5f) * 0.06f;
+            suitabilitySum += suitability;
+            var jitter = ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, x, y, 23111, 0.06f);
             candidates.Add((x, y, Math.Clamp(suitability + jitter, 0f, 1f)));
         }
 
         if (eligibleLandTiles == 0 || candidates.Count == 0)
             return;
 
-        var baseTargetCoverage = clampedMin + ((float)rng.NextDouble() * (clampedMax - clampedMin));
+        var averageSuitability = suitabilitySum / candidates.Count;
+        var coverageSignal = Math.Clamp(
+            (averageSuitability - suitabilityFloor) / Math.Max(0.05f, 1f - suitabilityFloor),
+            0f,
+            1f);
+        var coverageNoise = SeedHash.Unit(
+            continuitySeed,
+            noiseOriginX + (map.Width / 2),
+            noiseOriginY + (map.Height / 2),
+            23129);
+        var baseTargetCoverage = Math.Clamp(
+            clampedMin + (coverageSignal * (clampedMax - clampedMin)) + ((coverageNoise - 0.5f) * 0.08f),
+            clampedMin,
+            clampedMax);
         var boostedCoverage = Math.Clamp(
             baseTargetCoverage + (Math.Max(0f, biomeCoverageBoost) * 0.32f),
             clampedMin,
@@ -2387,7 +3038,7 @@ public static class EmbarkGenerator
         if (targetCount <= 0)
             return;
 
-        candidates.Sort((left, right) => right.Score.CompareTo(left.Score));
+        candidates.Sort(CompareTreeCandidates);
         var treePlaced = new bool[map.Width, map.Height];
         var placed = 0;
 
@@ -2399,13 +3050,23 @@ public static class EmbarkGenerator
         {
             var idx = Math.Min(candidates.Count - 1, (i * seedBandCount) / seedCount);
             var candidate = candidates[idx];
-            if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, rng))
+            if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, continuitySeed, noiseOriginX, noiseOriginY))
                 placed++;
         }
 
         // Force a small riverbank-focused seed pass so waterways grow visible riparian bands.
         if (placed < targetCount)
-            placed += PlaceRiparianTreeSeeds(map, treePlaced, candidates, biomeId, moisture, terrain, rng, targetCount - placed);
+            placed += PlaceRiparianTreeSeeds(
+                map,
+                treePlaced,
+                candidates,
+                biomeId,
+                moisture,
+                terrain,
+                continuitySeed,
+                noiseOriginX,
+                noiseOriginY,
+                targetCount - placed);
 
         var maxGrowthPasses = denseForestBiome ? 14 : 11;
         for (var pass = 0; pass < maxGrowthPasses && placed < targetCount; pass++)
@@ -2427,11 +3088,13 @@ public static class EmbarkGenerator
                     continue;
 
                 var neighborBoost = neighbors * neighborBoostScale;
-                var growth = candidate.Score + neighborBoost + (((float)rng.NextDouble() - 0.5f) * 0.05f);
+                var growth = candidate.Score +
+                             neighborBoost +
+                             ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, candidate.X, candidate.Y, 23167 + pass, 0.05f);
                 if (growth < threshold)
                     continue;
 
-                if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, rng))
+                if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, continuitySeed, noiseOriginX, noiseOriginY))
                 {
                     placed++;
                     passPlaced++;
@@ -2454,8 +3117,222 @@ public static class EmbarkGenerator
             if (neighbors == 0 && candidate.Score < fallbackMinScore)
                 continue;
 
-            if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, rng))
+            if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, continuitySeed, noiseOriginX, noiseOriginY))
                 placed++;
+        }
+
+        if (regionFieldMaps is not null)
+        {
+            AddFieldGuidedTrees(
+                map,
+                continuitySeed,
+                clampedMin,
+                clampedMax,
+                terrain,
+                moisture,
+                canopyMask,
+                forestPatchMask,
+                forestOpeningMask,
+                regionFieldMaps,
+                biomeId,
+                forestPatchBias,
+                noiseOriginX,
+                noiseOriginY);
+        }
+        else
+        {
+            ApplyBoundaryTreeContinuity(
+                map,
+                treePlaced,
+                biomeId,
+                moisture,
+                terrain,
+                canopyMask,
+                forestPatchMask,
+                forestOpeningMask,
+                continuitySeed,
+                noiseOriginX,
+                noiseOriginY);
+        }
+    }
+
+    private static void AddFieldGuidedTrees(
+        GeneratedEmbarkMap map,
+        int continuitySeed,
+        float minCoverage,
+        float maxCoverage,
+        float[,] terrain,
+        float[,] moisture,
+        float[,] canopyMask,
+        float[,] forestPatchMask,
+        float[,] forestOpeningMask,
+        LocalRegionFieldMaps regionFieldMaps,
+        string biomeId,
+        float forestPatchBias,
+        int noiseOriginX,
+        int noiseOriginY)
+    {
+        var biomeProfile = WorldGenContentRegistry.Current.ResolveBiomePreset(biomeId, seed: 0);
+        var clampedPatchBias = Math.Clamp(forestPatchBias, -1f, 1f);
+        var forestTreeFillRatio = Math.Clamp(biomeProfile.ForestTreeFillRatio, 0.50f, 0.98f);
+        var suitabilityFloor = biomeProfile.TreeSuitabilityFloor;
+        var treePlaced = new bool[map.Width, map.Height];
+
+        for (var x = 1; x < map.Width - 1; x++)
+        for (var y = 1; y < map.Height - 1; y++)
+        {
+            var distanceFromEdge = Math.Min(Math.Min(x, map.Width - 1 - x), Math.Min(y, map.Height - 1 - y));
+            if (distanceFromEdge <= 0 || distanceFromEdge >= 6)
+                continue;
+            if (IsSurfaceCornerCell(map.Width, map.Height, x, y) || IsInCentralEmbarkZone(map.Width, map.Height, x, y))
+                continue;
+
+            var tile = map.GetTile(x, y, 0);
+            if (!IsSurfaceSuitableForTree(tile))
+                continue;
+
+            var ruggedness = EstimateRuggedness(terrain, x, y, map.Width, map.Height);
+            var riparianBoost = ResolveRiparianBoost(map, regionFieldMaps, moisture, terrain, x, y);
+            var fieldDensity = Math.Clamp(
+                (regionFieldMaps.VegetationDensity[x, y] * 0.24f) +
+                (regionFieldMaps.VegetationSuitability[x, y] * 0.18f) +
+                (regionFieldMaps.Groundwater[x, y] * 0.12f) +
+                (regionFieldMaps.MoistureBand[x, y] * 0.10f) +
+                (regionFieldMaps.FlowAccumulationBand[x, y] * 0.10f) +
+                (regionFieldMaps.RiverDischargeBand[x, y] * 0.08f) +
+                (regionFieldMaps.RiverOrderBand[x, y] * 0.04f) -
+                (regionFieldMaps.Slope[x, y] * 0.06f),
+                0f,
+                1f);
+            var forestCore = Math.Clamp(
+                (forestPatchMask[x, y] * (0.54f + (Math.Max(0f, clampedPatchBias) * 0.10f))) +
+                (canopyMask[x, y] * 0.18f) +
+                (fieldDensity * 0.28f),
+                0f,
+                1f);
+            if (ShouldReserveForestOpening(forestCore, forestOpeningMask[x, y], forestTreeFillRatio))
+                continue;
+
+            var densitySignal = Math.Clamp(
+                (fieldDensity * 0.42f) +
+                (forestCore * 0.20f) +
+                (moisture[x, y] * 0.12f) +
+                ((1f - terrain[x, y]) * 0.06f) +
+                (riparianBoost * 0.10f) -
+                (ruggedness * (0.08f + (Math.Max(0f, -clampedPatchBias) * 0.04f))),
+                0f,
+                1f);
+            densitySignal = Math.Clamp(densitySignal + (biomeProfile.TreeCoverageBoost * 0.60f), 0f, 1f);
+            if (densitySignal < (suitabilityFloor * 0.72f))
+                continue;
+
+            var fx = ResolveNoiseSampleCoord(noiseOriginX, x, map.Width);
+            var fy = ResolveNoiseSampleCoord(noiseOriginY, y, map.Height);
+            var groveNoise = CoherentNoise.DomainWarpedFractal2D(
+                continuitySeed,
+                fx * 0.46f,
+                fy * 0.46f,
+                octaves: 2,
+                lacunarity: 2f,
+                gain: 0.54f,
+                warpStrength: 0.22f,
+                salt: 23137);
+            var groveSupport = Math.Clamp((groveNoise - 0.30f) / 0.54f, 0f, 1f);
+            var openingReserve = Math.Clamp(
+                (forestOpeningMask[x, y] - Math.Max(0.30f, 1f - forestTreeFillRatio)) /
+                Math.Max(0.08f, forestTreeFillRatio * 0.72f),
+                0f,
+                1f);
+            if (groveSupport < 0.04f && fieldDensity < 0.52f && riparianBoost < 0.64f)
+                continue;
+
+            var coverageBias = Math.Clamp((((minCoverage + maxCoverage) * 0.5f) - 0.42f) * 0.38f, -0.12f, 0.12f);
+            var chance = Math.Clamp(
+                0.05f +
+                (densitySignal * 0.50f) +
+                (forestCore * 0.18f) +
+                (groveSupport * 0.20f) +
+                (riparianBoost * 0.08f) +
+                coverageBias +
+                ((groveNoise - 0.5f) * 0.06f) -
+                (openingReserve * 0.18f),
+                0f,
+                0.95f);
+            var selector = CoherentNoise.DomainWarpedFractal2D(
+                continuitySeed,
+                fx * 3.8f,
+                fy * 3.8f,
+                octaves: 2,
+                lacunarity: 2f,
+                gain: 0.52f,
+                warpStrength: 0.16f,
+                salt: 23111);
+            if (selector > chance)
+                continue;
+
+            TryPlaceTree(
+                map,
+                treePlaced,
+                x,
+                y,
+                biomeId,
+                moisture,
+                terrain,
+                continuitySeed,
+                noiseOriginX,
+                noiseOriginY,
+                regionFieldMaps);
+        }
+    }
+
+    private static void ApplyBoundaryTreeContinuity(
+        GeneratedEmbarkMap map,
+        bool[,] treePlaced,
+        string biomeId,
+        float[,] moisture,
+        float[,] terrain,
+        float[,] canopyMask,
+        float[,] forestPatchMask,
+        float[,] forestOpeningMask,
+        int continuitySeed,
+        int noiseOriginX,
+        int noiseOriginY)
+    {
+        const int bandWidth = 4;
+        var denseForestBiome = WorldGenContentRegistry.Current.ResolveBiomePreset(biomeId, seed: 0).DenseForest;
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (IsSurfaceCornerCell(map.Width, map.Height, x, y) || treePlaced[x, y])
+                continue;
+            if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
+                continue;
+
+            var distanceFromEdge = Math.Min(Math.Min(x, map.Width - 1 - x), Math.Min(y, map.Height - 1 - y));
+            if (distanceFromEdge <= 0 || distanceFromEdge >= bandWidth)
+                continue;
+
+            var boundarySignal = Math.Clamp(
+                (forestPatchMask[x, y] * 0.42f) +
+                (canopyMask[x, y] * 0.30f) +
+                (moisture[x, y] * 0.18f) +
+                ((1f - forestOpeningMask[x, y]) * 0.10f),
+                0f,
+                1f);
+            var edgeWeight = 1f - ((distanceFromEdge - 1) / (float)Math.Max(1, bandWidth - 1));
+            var threshold = denseForestBiome
+                ? 0.72f - (edgeWeight * 0.14f)
+                : 0.78f - (edgeWeight * 0.18f);
+            var score = boundarySignal + ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, x, y, 23287, 0.04f);
+            var neighbors = CountAdjacentPlacedTrees(treePlaced, x, y, map.Width, map.Height);
+
+            if (score < threshold)
+                continue;
+            if (neighbors == 0 && score < threshold + 0.06f)
+                continue;
+
+            TryPlaceTree(map, treePlaced, x, y, biomeId, moisture, terrain, continuitySeed, noiseOriginX, noiseOriginY);
         }
     }
 
@@ -2466,7 +3343,9 @@ public static class EmbarkGenerator
         string biomeId,
         float[,] moisture,
         float[,] terrain,
-        Random rng,
+        int continuitySeed,
+        int noiseOriginX,
+        int noiseOriginY,
         int remaining)
     {
         if (remaining <= 0)
@@ -2494,13 +3373,13 @@ public static class EmbarkGenerator
         if (riparianCandidates.Count == 0)
             return 0;
 
-        riparianCandidates.Sort((left, right) => right.Score.CompareTo(left.Score));
+        riparianCandidates.Sort(CompareTreeCandidates);
         var target = Math.Min(remaining, Math.Max(2, riparianCandidates.Count / 5));
         var placed = 0;
         for (var i = 0; i < riparianCandidates.Count && placed < target; i++)
         {
             var candidate = riparianCandidates[i];
-            if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, rng))
+            if (TryPlaceTree(map, treePlaced, candidate.X, candidate.Y, biomeId, moisture, terrain, continuitySeed, noiseOriginX, noiseOriginY))
                 placed++;
         }
 
@@ -2515,9 +3394,14 @@ public static class EmbarkGenerator
         string biomeId,
         float[,] moisture,
         float[,] terrain,
-        Random rng)
+        int continuitySeed,
+        int noiseOriginX,
+        int noiseOriginY,
+        LocalRegionFieldMaps? regionFieldMaps = null)
     {
         if (treePlaced[x, y])
+            return false;
+        if (IsSurfaceCornerCell(map.Width, map.Height, x, y))
             return false;
         if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
             return false;
@@ -2527,11 +3411,29 @@ public static class EmbarkGenerator
         if (!EnsureTreeSubsurface(map, x, y, biomeId, moisture[x, y], terrain[x, y]))
             return false;
 
-        var riparianBoost = EstimateRiparianBoost(map, x, y);
-        var speciesId = ResolveTreeSpeciesId(biomeId, moisture[x, y], terrain[x, y], riparianBoost, rng);
+        var riparianBoost = ResolveRiparianBoost(map, regionFieldMaps, moisture, terrain, x, y);
+        var speciesId = ResolveTreeSpeciesId(
+            biomeId,
+            moisture[x, y],
+            terrain[x, y],
+            riparianBoost,
+            CreateTileRandom(continuitySeed, noiseOriginX, noiseOriginY, x, y, 23221));
         map.SetTile(x, y, 0, TreeTile(speciesId));
         treePlaced[x, y] = true;
         return true;
+    }
+
+    private static int CompareTreeCandidates((int X, int Y, float Score) left, (int X, int Y, float Score) right)
+    {
+        var scoreCompare = right.Score.CompareTo(left.Score);
+        if (scoreCompare != 0)
+            return scoreCompare;
+
+        var yCompare = left.Y.CompareTo(right.Y);
+        if (yCompare != 0)
+            return yCompare;
+
+        return left.X.CompareTo(right.X);
     }
 
     private static bool ShouldReserveForestOpening(float forestCore, float openingMask, float forestTreeFillRatio)
@@ -2585,7 +3487,7 @@ public static class EmbarkGenerator
 
             var nx = x + dx;
             var ny = y + dy;
-            if (nx <= 0 || ny <= 0 || nx >= width - 1 || ny >= height - 1)
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height)
                 continue;
             if (treePlaced[nx, ny])
                 count++;
@@ -2634,16 +3536,18 @@ public static class EmbarkGenerator
     private static void AddPlants(
         GeneratedEmbarkMap map,
         int seed,
-        Random rng,
         float[,] terrain,
         float[,] moisture,
         float[,] forestPatchMask,
         float[,] forestOpeningMask,
-        string biomeId)
+        string biomeId,
+        LocalRegionFieldMaps? regionFieldMaps,
+        int noiseOriginX,
+        int noiseOriginY)
     {
         var plantCatalog = WorldGenPlantRegistry.Current;
         var biomeProfile = WorldGenContentRegistry.Current.ResolveBiomePreset(biomeId, seed: 0);
-        SeedFruitCanopies(map, rng, terrain, moisture, biomeId, plantCatalog);
+        SeedFruitCanopies(map, seed, terrain, moisture, biomeId, plantCatalog, regionFieldMaps, noiseOriginX, noiseOriginY);
 
         var density = WorldGenContentRegistry.Current.ResolveGroundPlantDensity(biomeId);
         if (density <= 0f)
@@ -2651,20 +3555,20 @@ public static class EmbarkGenerator
 
         // Build a clustering noise layer so plants form natural patches rather than uniform grids.
         // Low-frequency noise creates large-scale "fertile" and "barren" zones.
-        var plantClusterNoise = BuildPlantClusterNoise(map.Width, map.Height, seed + 7919);
+        var plantClusterNoise = BuildPlantClusterNoise(map.Width, map.Height, seed + 7919, noiseOriginX, noiseOriginY);
 
         // Track placed plants for soft crowding penalty.
         var plantPlaced = new bool[map.Width, map.Height];
-        for (var x = 1; x < map.Width - 1; x++)
-        for (var y = 1; y < map.Height - 1; y++)
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
         {
             var tile = map.GetTile(x, y, 0);
             if (!string.IsNullOrWhiteSpace(tile.PlantDefId))
                 plantPlaced[x, y] = true;
         }
 
-        for (var x = 1; x < map.Width - 1; x++)
-        for (var y = 1; y < map.Height - 1; y++)
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
         {
             if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
                 continue;
@@ -2673,7 +3577,7 @@ public static class EmbarkGenerator
             if (!CanHostGroundPlant(tile))
                 continue;
 
-            var riparianBoost = EstimateRiparianBoost(map, x, y);
+                var riparianBoost = ResolveRiparianBoost(map, regionFieldMaps, moisture, terrain, x, y);
             if (!plantCatalog.TryResolveBestGroundPlant(
                     biomeId,
                     tile.TileDefId,
@@ -2688,35 +3592,62 @@ public static class EmbarkGenerator
 
             // Apply cluster noise: high-noise areas are more favorable for plant clusters.
             // This creates natural patches where plants group together.
-            var clusterValue = plantClusterNoise[x, y];
+            var clusterValue = ResolvePlantClusterValue(
+                plantClusterNoise[x, y],
+                regionFieldMaps,
+                forestPatchMask,
+                forestOpeningMask,
+                moisture,
+                terrain,
+                x,
+                y);
             var clusterBoost = (clusterValue - 0.5f) * 0.30f; // +/- 15% boost/penalty
-            var adjustedScore = Math.Clamp(score + clusterBoost, 0f, 1f);
+            var fieldSupport = ResolvePlantFieldSupport(regionFieldMaps, moisture, terrain, x, y);
+            var adjustedScore = Math.Clamp(score + clusterBoost + (fieldSupport * 0.12f), 0f, 1f);
 
             // Soft crowding penalty: each nearby plant slightly reduces placement chance.
             // Unlike hard exclusion, this allows some plants to be close together naturally.
-            var nearbyCount = CountNearbyPlacedPlants(plantPlaced, x, y, radius: 3, map.Width, map.Height);
-            var crowdingPenalty = nearbyCount * 0.08f; // Each nearby plant reduces score by 8%
             var nearbyTrees = CountNearbySurfaceTrees(map, x, y, radius: 1);
             var understoryBoost = ResolveForestUnderstoryBoost(
                 forestPatchMask[x, y],
                 forestOpeningMask[x, y],
                 nearbyTrees,
                 biomeProfile.ForestTreeFillRatio);
-            var effectiveDensity = Math.Clamp(density + understoryBoost, 0f, 1f);
+            var effectiveDensity = Math.Clamp(density + understoryBoost + (fieldSupport * 0.10f), 0f, 1f);
 
             // Threshold scales with biome density: dense biomes accept lower scores.
             var threshold = 0.72f - (effectiveDensity * 0.20f);
             if (tile.TileDefId == GeneratedTileDefIds.Mud)
                 threshold -= 0.04f;
 
-            var jitter = ((float)rng.NextDouble() - 0.5f) * 0.14f;
-            var finalScore = adjustedScore + understoryBoost - crowdingPenalty + jitter;
+            var jitter = ResolveTileJitter(seed, noiseOriginX, noiseOriginY, x, y, 71341, 0.14f);
+            float finalScore;
+            if (regionFieldMaps is null)
+            {
+                var nearbyCount = CountNearbyPlacedPlants(plantPlaced, x, y, radius: 3, map.Width, map.Height);
+                var crowdingPenalty = nearbyCount * 0.08f; // Each nearby plant reduces score by 8%
+                finalScore = adjustedScore + understoryBoost - crowdingPenalty + jitter;
+            }
+            else
+            {
+                finalScore = adjustedScore + understoryBoost + jitter;
+                var placementNoise = SeedHash.Unit(seed, noiseOriginX + x, noiseOriginY + y, 71323);
+                var placementCutoff = Math.Clamp(
+                    (effectiveDensity * 0.50f) +
+                    (Math.Max(0f, finalScore - threshold) * 0.92f) +
+                    (clusterValue * 0.14f),
+                    0f,
+                    1f);
+                if (placementNoise > placementCutoff)
+                    continue;
+            }
+
             if (finalScore < threshold)
                 continue;
 
-            var stage = ResolvePlantGrowthStage(rng, plantDefinition.MaxGrowthStage);
-
-            var yield = stage >= GeneratedPlantGrowthStages.Mature && rng.NextDouble() < 0.55d ? (byte)1 : (byte)0;
+            var plantRandom = CreateTileRandom(seed, noiseOriginX, noiseOriginY, x, y, 71379);
+            var stage = ResolvePlantGrowthStage(plantRandom, plantDefinition.MaxGrowthStage);
+            var yield = stage >= GeneratedPlantGrowthStages.Mature && plantRandom.NextDouble() < 0.55d ? (byte)1 : (byte)0;
             var seedLevel = stage == GeneratedPlantGrowthStages.Seed ? (byte)1 : (byte)0;
             map.SetTile(x, y, 0, tile with
             {
@@ -2730,14 +3661,14 @@ public static class EmbarkGenerator
         }
     }
 
-    private static float[,] BuildPlantClusterNoise(int width, int height, int seed)
+    private static float[,] BuildPlantClusterNoise(int width, int height, int seed, int noiseOriginX, int noiseOriginY)
     {
         var noise = new float[width, height];
         for (var x = 0; x < width; x++)
         for (var y = 0; y < height; y++)
         {
-            var fx = width <= 1 ? 0f : x / (float)(width - 1);
-            var fy = height <= 1 ? 0f : y / (float)(height - 1);
+            var fx = ResolveNoiseSampleCoord(noiseOriginX, x, width);
+            var fy = ResolveNoiseSampleCoord(noiseOriginY, y, height);
 
             // Low-frequency noise for large-scale clustering (patches of 5-10 tiles).
             var coarse = CoherentNoise.DomainWarpedFractal2D(
@@ -2839,13 +3770,66 @@ public static class EmbarkGenerator
         return openingSignal * forestSignal * treeSignal * 0.40f;
     }
 
+    private static float ResolvePlantClusterValue(
+        float baseClusterValue,
+        LocalRegionFieldMaps? regionFieldMaps,
+        float[,] forestPatchMask,
+        float[,] forestOpeningMask,
+        float[,] moisture,
+        float[,] terrain,
+        int x,
+        int y)
+    {
+        if (regionFieldMaps is null)
+            return baseClusterValue;
+
+        var fieldCluster = Math.Clamp(
+            (regionFieldMaps.VegetationDensity[x, y] * 0.28f) +
+            (regionFieldMaps.VegetationSuitability[x, y] * 0.20f) +
+            (regionFieldMaps.MoistureBand[x, y] * 0.18f) +
+            (regionFieldMaps.Groundwater[x, y] * 0.16f) +
+            (forestPatchMask[x, y] * 0.10f) +
+            (Math.Max(0f, 1f - forestOpeningMask[x, y]) * 0.05f) +
+            (moisture[x, y] * 0.03f),
+            0f,
+            1f);
+
+        return Math.Clamp((baseClusterValue * 0.52f) + (fieldCluster * 0.48f), 0f, 1f);
+    }
+
+    private static float ResolvePlantFieldSupport(
+        LocalRegionFieldMaps? regionFieldMaps,
+        float[,] moisture,
+        float[,] terrain,
+        int x,
+        int y)
+    {
+        if (regionFieldMaps is null)
+            return 0f;
+
+        return Math.Clamp(
+            (regionFieldMaps.VegetationSuitability[x, y] * 0.24f) +
+            (regionFieldMaps.VegetationDensity[x, y] * 0.20f) +
+            (regionFieldMaps.MoistureBand[x, y] * 0.18f) +
+            (regionFieldMaps.Groundwater[x, y] * 0.16f) +
+            (regionFieldMaps.RiverInfluence[x, y] * 0.08f) +
+            (regionFieldMaps.LakeInfluence[x, y] * 0.06f) +
+            (moisture[x, y] * 0.05f) +
+            ((1f - terrain[x, y]) * 0.03f),
+            0f,
+            1f);
+    }
+
     private static void SeedFruitCanopies(
         GeneratedEmbarkMap map,
-        Random rng,
+        int seed,
         float[,] terrain,
         float[,] moisture,
         string biomeId,
-        WorldGenPlantCatalog plantCatalog)
+        WorldGenPlantCatalog plantCatalog,
+        LocalRegionFieldMaps? regionFieldMaps,
+        int noiseOriginX,
+        int noiseOriginY)
     {
         for (var x = 0; x < map.Width; x++)
         for (var y = 0; y < map.Height; y++)
@@ -2854,7 +3838,7 @@ public static class EmbarkGenerator
             if (tile.TileDefId != GeneratedTileDefIds.Tree || string.IsNullOrWhiteSpace(tile.TreeSpeciesId))
                 continue;
 
-            var riparianBoost = EstimateRiparianBoost(map, x, y);
+                var riparianBoost = ResolveRiparianBoost(map, regionFieldMaps, moisture, terrain, x, y);
             if (!plantCatalog.TryResolveBestTreeCanopyPlant(
                     biomeId,
                     tile.TreeSpeciesId,
@@ -2867,17 +3851,19 @@ public static class EmbarkGenerator
                 continue;
             }
 
-            if (score < 0.36f)
+            var fieldSupport = ResolvePlantFieldSupport(regionFieldMaps, moisture, terrain, x, y);
+            if ((score + (fieldSupport * 0.08f)) < 0.36f)
                 continue;
 
             var stage = Math.Min(GeneratedPlantGrowthStages.Mature, canopyDefinition.MaxGrowthStage);
+            var canopyRandom = CreateTileRandom(seed, noiseOriginX, noiseOriginY, x, y, 71417);
 
             map.SetTile(x, y, 0, tile with
             {
                 PlantDefId = canopyDefinition.Id,
                 PlantGrowthStage = (byte)stage,
                 PlantGrowthProgressSeconds = 0f,
-                PlantYieldLevel = stage >= GeneratedPlantGrowthStages.Mature && rng.NextDouble() < 0.60d ? (byte)1 : (byte)0,
+                PlantYieldLevel = stage >= GeneratedPlantGrowthStages.Mature && canopyRandom.NextDouble() < 0.60d ? (byte)1 : (byte)0,
                 PlantSeedLevel = stage == GeneratedPlantGrowthStages.Seed ? (byte)1 : (byte)0,
             });
         }
@@ -2901,6 +3887,18 @@ public static class EmbarkGenerator
 
         return (byte)Math.Min(Math.Clamp((int)maxGrowthStage, GeneratedPlantGrowthStages.Seed, GeneratedPlantGrowthStages.Mature), rolledStage);
     }
+
+    private static float ResolveTileJitter(int seed, int noiseOriginX, int noiseOriginY, int x, int y, int salt, float amplitude)
+    {
+        if (amplitude <= 0f)
+            return 0f;
+
+        var sample = SeedHash.Unit(seed, noiseOriginX + x, noiseOriginY + y, salt);
+        return ((sample * 2f) - 1f) * amplitude;
+    }
+
+    private static Random CreateTileRandom(int seed, int noiseOriginX, int noiseOriginY, int x, int y, int salt)
+        => new(SeedHash.Hash(seed, noiseOriginX + x, noiseOriginY + y, salt));
 
     private static void AddOutcrops(GeneratedEmbarkMap map, Random rng, int min, int max, float[,] terrain)
     {
@@ -2926,6 +3924,77 @@ public static class EmbarkGenerator
 
             map.SetTile(x, y, 0, ResolveOutcropWallTile(rng));
             placed++;
+        }
+    }
+
+    private static void AddFieldGuidedOutcrops(
+        GeneratedEmbarkMap map,
+        int continuitySeed,
+        int min,
+        int max,
+        float[,] terrain,
+        LocalRegionFieldMaps regionFieldMaps,
+        int noiseOriginX,
+        int noiseOriginY)
+    {
+        if (max <= 0 || map.Width < 10 || map.Height < 10)
+            return;
+
+        var clampedMin = Math.Max(0, min);
+        var clampedMax = Math.Max(clampedMin, max);
+        var count = clampedMin;
+        if (clampedMax > clampedMin)
+        {
+            var countUnit = SeedHash.Unit(continuitySeed, noiseOriginX + (map.Width / 2), noiseOriginY + (map.Height / 2), 17861);
+            count += (int)MathF.Round((clampedMax - clampedMin) * countUnit);
+        }
+
+        if (count <= 0)
+            return;
+
+        var candidates = new List<HydrologyCandidate>(map.Width * map.Height / 8);
+        for (var x = 2; x < map.Width - 2; x++)
+        for (var y = 2; y < map.Height - 2; y++)
+        {
+            if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
+                continue;
+            if (map.GetTile(x, y, 0).TileDefId is GeneratedTileDefIds.Water or GeneratedTileDefIds.Tree)
+                continue;
+
+            var ruggedness = EstimateRuggedness(terrain, x, y, map.Width, map.Height);
+            var score = Math.Clamp(
+                (ruggedness * 0.46f) +
+                (regionFieldMaps.SurfaceStoneWeight[x, y] * 0.24f) +
+                (regionFieldMaps.Slope[x, y] * 0.18f) +
+                (terrain[x, y] * 0.08f) +
+                ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, x, y, 17879, 0.10f),
+                0f,
+                1f);
+            if (score < 0.58f)
+                continue;
+
+            candidates.Add(new HydrologyCandidate(x, y, score));
+        }
+
+        if (candidates.Count == 0)
+        {
+            var fallbackRng = new Random(SeedHash.Hash(continuitySeed, noiseOriginX, noiseOriginY, 17909));
+            AddOutcrops(map, fallbackRng, clampedMin, clampedMax, terrain);
+            return;
+        }
+
+        candidates.Sort(static (left, right) => CompareHydrologyCandidates(left, right));
+        var placed = new List<HydrologyCandidate>(count);
+        const int minSpacing = 3;
+        for (var i = 0; i < candidates.Count && placed.Count < count; i++)
+        {
+            var candidate = candidates[i];
+            if (!IsFarEnoughFromHydrologyCandidates(placed, candidate.X, candidate.Y, minSpacing))
+                continue;
+
+            var outcropRandom = CreateTileRandom(continuitySeed, noiseOriginX, noiseOriginY, candidate.X, candidate.Y, 17941);
+            map.SetTile(candidate.X, candidate.Y, 0, ResolveOutcropWallTile(outcropRandom));
+            placed.Add(candidate);
         }
     }
 
@@ -2980,6 +4049,176 @@ public static class EmbarkGenerator
 
                 map.SetTile(x, y, 0, ShallowWaterTile((byte)(1 + rng.Next(0, 2))));
             }
+        }
+    }
+
+    private static void AddFieldGuidedMarshPools(
+        GeneratedEmbarkMap map,
+        int continuitySeed,
+        int poolCount,
+        float[,] terrain,
+        float[,] moisture,
+        LocalRegionFieldMaps regionFieldMaps,
+        int noiseOriginX,
+        int noiseOriginY)
+    {
+        if (poolCount <= 0)
+            return;
+
+        var candidates = new List<HydrologyCandidate>(map.Width * map.Height / 5);
+        for (var x = 2; x < map.Width - 2; x++)
+        for (var y = 2; y < map.Height - 2; y++)
+        {
+            if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
+                continue;
+
+            var wetlandSignal = Math.Clamp(
+                (moisture[x, y] * 0.28f) +
+                (regionFieldMaps.Groundwater[x, y] * 0.26f) +
+                (regionFieldMaps.MoistureBand[x, y] * 0.18f) +
+                (regionFieldMaps.LakeInfluence[x, y] * 0.14f) +
+                (regionFieldMaps.RiverInfluence[x, y] * 0.08f) +
+                ((1f - terrain[x, y]) * 0.08f) -
+                (regionFieldMaps.Slope[x, y] * 0.06f) +
+                ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, x, y, 17749, 0.08f),
+                0f,
+                1f);
+
+            if (terrain[x, y] > 0.68f || wetlandSignal < 0.56f)
+                continue;
+
+            candidates.Add(new HydrologyCandidate(x, y, wetlandSignal));
+        }
+
+        candidates.Sort(static (left, right) => CompareHydrologyCandidates(left, right));
+        var placed = new List<HydrologyCandidate>(poolCount);
+        var minSpacing = Math.Clamp(Math.Min(map.Width, map.Height) / 10, 3, 6);
+
+        for (var i = 0; i < candidates.Count && placed.Count < poolCount; i++)
+        {
+            var candidate = candidates[i];
+            if (!IsFarEnoughFromHydrologyCandidates(placed, candidate.X, candidate.Y, minSpacing))
+                continue;
+
+            var radiusSignal = candidate.Score + ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, candidate.X, candidate.Y, 17783, 0.08f);
+            var radius = radiusSignal >= 0.82f ? 3 : (radiusSignal >= 0.66f ? 2 : 1);
+            for (var dx = -radius; dx <= radius; dx++)
+            for (var dy = -radius; dy <= radius; dy++)
+            {
+                var x = candidate.X + dx;
+                var y = candidate.Y + dy;
+                if (x <= 1 || y <= 1 || x >= map.Width - 1 || y >= map.Height - 1)
+                    continue;
+                if (Math.Abs(dx) + Math.Abs(dy) > radius + 1)
+                    continue;
+                if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
+                    continue;
+
+                var distance = Math.Abs(dx) + Math.Abs(dy);
+                var localSignal = candidate.Score - (distance * 0.16f) + ResolveTileJitter(continuitySeed, noiseOriginX, noiseOriginY, x, y, 17821, 0.06f);
+                if (localSignal < 0.42f)
+                    continue;
+
+                var level = localSignal >= 0.76f ? (byte)2 : (byte)1;
+                CarveWater(map, x, y, level, allowBoundary: true);
+            }
+
+            placed.Add(candidate);
+        }
+
+        if (placed.Count == 0)
+        {
+            var fallbackRng = new Random(SeedHash.Hash(continuitySeed, noiseOriginX, noiseOriginY, 17843));
+            AddMarshPools(map, fallbackRng, poolCount, terrain, moisture);
+        }
+
+        ApplyFieldGuidedBoundaryWetlands(
+            map,
+            continuitySeed,
+            terrain,
+            moisture,
+            regionFieldMaps,
+            noiseOriginX,
+            noiseOriginY);
+    }
+
+    private static void ApplyFieldGuidedBoundaryWetlands(
+        GeneratedEmbarkMap map,
+        int continuitySeed,
+        float[,] terrain,
+        float[,] moisture,
+        LocalRegionFieldMaps regionFieldMaps,
+        int noiseOriginX,
+        int noiseOriginY)
+    {
+        const int bandWidth = 6;
+
+        for (var x = 1; x < map.Width - 1; x++)
+        for (var y = 1; y < map.Height - 1; y++)
+        {
+            var distanceFromEdge = Math.Min(Math.Min(x, map.Width - 1 - x), Math.Min(y, map.Height - 1 - y));
+            if (distanceFromEdge <= 0 || distanceFromEdge >= bandWidth)
+                continue;
+            if (IsInCentralEmbarkZone(map.Width, map.Height, x, y))
+                continue;
+
+            var wetlandSupport = Math.Clamp(
+                (moisture[x, y] * 0.24f) +
+                (regionFieldMaps.Groundwater[x, y] * 0.22f) +
+                (regionFieldMaps.MoistureBand[x, y] * 0.18f) +
+                (regionFieldMaps.LakeInfluence[x, y] * 0.14f) +
+                (regionFieldMaps.RiverInfluence[x, y] * 0.08f) +
+                (regionFieldMaps.FlowAccumulationBand[x, y] * 0.08f) +
+                ((1f - terrain[x, y]) * 0.06f) -
+                (regionFieldMaps.Slope[x, y] * 0.04f),
+                0f,
+                1f);
+            if (terrain[x, y] > 0.72f || wetlandSupport < 0.48f)
+                continue;
+
+            var fx = ResolveNoiseSampleCoord(noiseOriginX, x, map.Width);
+            var fy = ResolveNoiseSampleCoord(noiseOriginY, y, map.Height);
+            var poolNoiseSource = CoherentNoise.DomainWarpedFractal2D(
+                continuitySeed,
+                fx * 0.88f,
+                fy * 0.88f,
+                octaves: 3,
+                lacunarity: 2f,
+                gain: 0.54f,
+                warpStrength: 0.22f,
+                salt: 17749);
+            var basinNoise = CoherentNoise.DomainWarpedFractal2D(
+                continuitySeed,
+                fx * 0.44f,
+                fy * 0.44f,
+                octaves: 2,
+                lacunarity: 2f,
+                gain: 0.50f,
+                warpStrength: 0.18f,
+                salt: 17783);
+            var poolRibbon = 1f - MathF.Abs((poolNoiseSource * 2f) - 1f);
+            var chance = Math.Clamp(
+                (wetlandSupport * 0.46f) +
+                (poolRibbon * 0.18f) +
+                (basinNoise * 0.16f) -
+                (((distanceFromEdge - 1) / (float)Math.Max(1, bandWidth - 1)) * 0.04f),
+                0f,
+                1f);
+            var selector = CoherentNoise.DomainWarpedFractal2D(
+                continuitySeed,
+                fx * 3.2f,
+                fy * 3.2f,
+                octaves: 2,
+                lacunarity: 2f,
+                gain: 0.52f,
+                warpStrength: 0.16f,
+                salt: 17821);
+            if (selector > chance)
+                continue;
+
+            var levelSignal = chance + (wetlandSupport * 0.20f);
+            var level = levelSignal >= 0.82f ? (byte)2 : (byte)1;
+            CarveWater(map, x, y, level, allowBoundary: true);
         }
     }
 
@@ -3111,27 +4350,27 @@ public static class EmbarkGenerator
         if (primaryHorizontal)
         {
             var yA = Math.Clamp(hub.Y + offsetA, 1, map.Height - 2);
-            AddRoadEndpointUnique(endpoints, seen, 1, yA, defaultWidth);
-            AddRoadEndpointUnique(endpoints, seen, map.Width - 2, yA, defaultWidth);
+            AddRoadEndpointUnique(endpoints, seen, 0, yA, defaultWidth);
+            AddRoadEndpointUnique(endpoints, seen, map.Width - 1, yA, defaultWidth);
 
             if (road >= 0.64f)
             {
                 var xB = Math.Clamp(hub.X + offsetB, 1, map.Width - 2);
-                AddRoadEndpointUnique(endpoints, seen, xB, 1, defaultWidth);
-                AddRoadEndpointUnique(endpoints, seen, xB, map.Height - 2, defaultWidth);
+                AddRoadEndpointUnique(endpoints, seen, xB, 0, defaultWidth);
+                AddRoadEndpointUnique(endpoints, seen, xB, map.Height - 1, defaultWidth);
             }
         }
         else
         {
             var xA = Math.Clamp(hub.X + offsetA, 1, map.Width - 2);
-            AddRoadEndpointUnique(endpoints, seen, xA, 1, defaultWidth);
-            AddRoadEndpointUnique(endpoints, seen, xA, map.Height - 2, defaultWidth);
+            AddRoadEndpointUnique(endpoints, seen, xA, 0, defaultWidth);
+            AddRoadEndpointUnique(endpoints, seen, xA, map.Height - 1, defaultWidth);
 
             if (road >= 0.64f)
             {
                 var yB = Math.Clamp(hub.Y + offsetB, 1, map.Height - 2);
-                AddRoadEndpointUnique(endpoints, seen, 1, yB, defaultWidth);
-                AddRoadEndpointUnique(endpoints, seen, map.Width - 2, yB, defaultWidth);
+                AddRoadEndpointUnique(endpoints, seen, 0, yB, defaultWidth);
+                AddRoadEndpointUnique(endpoints, seen, map.Width - 1, yB, defaultWidth);
             }
         }
 
@@ -3152,7 +4391,7 @@ public static class EmbarkGenerator
         {
             var hub = ResolveNearestHub(endpoint, hubs);
             var width = ResolveRoadWidth(road, endpoint.Width);
-            TraceRoadLine(map, (endpoint.X, endpoint.Y), (hub.X, hub.Y), width, roadTile, skipWater: true);
+            TraceRoadLine(map, (endpoint.X, endpoint.Y), (hub.X, hub.Y), width, roadTile, skipWater: true, allowBoundary: true);
         }
 
         if (hubs.Count < 2 || road < 0.72f)
@@ -3195,34 +4434,38 @@ public static class EmbarkGenerator
         var offsetY = ResolveInteriorAxisOffset(normalizedOffset, map.Height);
         return edge switch
         {
-            LocalMapEdge.North => (offsetX, 1),
-            LocalMapEdge.East => (map.Width - 2, offsetY),
-            LocalMapEdge.South => (offsetX, map.Height - 2),
-            LocalMapEdge.West => (1, offsetY),
+            LocalMapEdge.North => (offsetX, 0),
+            LocalMapEdge.East => (map.Width - 1, offsetY),
+            LocalMapEdge.South => (offsetX, map.Height - 1),
+            LocalMapEdge.West => (0, offsetY),
             _ => (map.Width / 2, map.Height / 2),
         };
     }
 
     private static int ResolveSettlementAxisOffset(float normalizedOffset, int axisSize)
+        => ResolveNormalizedAxisOffset(normalizedOffset, axisSize, min: 2, max: axisSize - 3, fallbackMin: 1, fallbackMax: axisSize - 2);
+
+    private static int ResolveInteriorAxisOffset(float normalizedOffset, int axisSize)
+        => ResolveNormalizedAxisOffset(normalizedOffset, axisSize, min: 1, max: axisSize - 2, fallbackMin: 0, fallbackMax: axisSize - 1);
+
+    private static int ResolveNormalizedAxisOffset(float normalizedOffset, int axisSize, int min, int max, int fallbackMin, int fallbackMax)
     {
-        var min = 2;
-        var max = axisSize - 3;
         if (max < min)
-            return Math.Clamp(axisSize / 2, 1, Math.Max(1, axisSize - 2));
+            return Math.Clamp(axisSize / 2, fallbackMin, Math.Max(fallbackMin, fallbackMax));
 
         var clamped = Math.Clamp(normalizedOffset, 0f, 1f);
         return min + (int)MathF.Round(clamped * (max - min));
     }
 
-    private static int ResolveInteriorAxisOffset(float normalizedOffset, int axisSize)
-    {
-        var min = 1;
-        var max = axisSize - 2;
-        if (max < min)
-            return Math.Clamp(axisSize / 2, 0, Math.Max(0, axisSize - 1));
+    private static bool IsSurfaceCornerCell(int width, int height, int x, int y)
+        => (x == 0 || x == width - 1) &&
+           (y == 0 || y == height - 1);
 
-        var clamped = Math.Clamp(normalizedOffset, 0f, 1f);
-        return min + (int)MathF.Round(clamped * (max - min));
+    private static bool IsOutsideSurfaceBounds(GeneratedEmbarkMap map, int x, int y, bool allowBoundary)
+    {
+        return allowBoundary
+            ? x < 0 || y < 0 || x >= map.Width || y >= map.Height
+            : x <= 0 || y <= 0 || x >= map.Width - 1 || y >= map.Height - 1;
     }
 
     private static void AddAnchoredPointUnique(List<AnchoredPoint> points, HashSet<int> seen, int x, int y, byte strength)
@@ -3280,18 +4523,19 @@ public static class EmbarkGenerator
         (int X, int Y) to,
         int width,
         GeneratedTile roadTile,
-        bool skipWater)
+        bool skipWater,
+        bool allowBoundary = false)
     {
         var horizontalFirst = Math.Abs(to.X - from.X) >= Math.Abs(to.Y - from.Y);
         if (horizontalFirst)
         {
-            TraceAxisAlignedSegment(map, from, (to.X, from.Y), width, roadTile, skipWater);
-            TraceAxisAlignedSegment(map, (to.X, from.Y), to, width, roadTile, skipWater);
+            TraceAxisAlignedSegment(map, from, (to.X, from.Y), width, roadTile, skipWater, allowBoundary);
+            TraceAxisAlignedSegment(map, (to.X, from.Y), to, width, roadTile, skipWater, allowBoundary);
         }
         else
         {
-            TraceAxisAlignedSegment(map, from, (from.X, to.Y), width, roadTile, skipWater);
-            TraceAxisAlignedSegment(map, (from.X, to.Y), to, width, roadTile, skipWater);
+            TraceAxisAlignedSegment(map, from, (from.X, to.Y), width, roadTile, skipWater, allowBoundary);
+            TraceAxisAlignedSegment(map, (from.X, to.Y), to, width, roadTile, skipWater, allowBoundary);
         }
     }
 
@@ -3301,7 +4545,8 @@ public static class EmbarkGenerator
         (int X, int Y) to,
         int width,
         GeneratedTile roadTile,
-        bool skipWater)
+        bool skipWater,
+        bool allowBoundary)
     {
         var x = from.X;
         var y = from.Y;
@@ -3310,7 +4555,7 @@ public static class EmbarkGenerator
         var steps = Math.Abs(to.X - from.X) + Math.Abs(to.Y - from.Y);
         for (var i = 0; i <= steps; i++)
         {
-            CarveRoadWidth(map, x, y, width, roadTile, skipWater);
+            CarveRoadWidth(map, x, y, width, roadTile, skipWater, allowBoundary);
 
             if (x != to.X)
                 x += dx;
@@ -3325,21 +4570,22 @@ public static class EmbarkGenerator
         int y,
         int width,
         GeneratedTile roadTile,
-        bool skipWater)
+        bool skipWater,
+        bool allowBoundary)
     {
         for (var oy = -width + 1; oy <= width - 1; oy++)
         for (var ox = -width + 1; ox <= width - 1; ox++)
         {
             var nx = x + ox;
             var ny = y + oy;
-            if (nx <= 0 || ny <= 0 || nx >= map.Width - 1 || ny >= map.Height - 1)
+            if (IsOutsideSurfaceBounds(map, nx, ny, allowBoundary))
                 continue;
             if (Math.Abs(ox) + Math.Abs(oy) > width)
                 continue;
 
-            TryCarveGroundTile(map, nx, ny, roadTile, skipWater);
+            TryCarveGroundTile(map, nx, ny, roadTile, skipWater, allowBoundary);
             var shoulderRadius = width >= 2 ? 2 : 1;
-            ClearRoadsideTrees(map, nx, ny, shoulderRadius, roadTile, skipWater);
+            ClearRoadsideTrees(map, nx, ny, shoulderRadius, roadTile, skipWater, allowBoundary);
         }
     }
 
@@ -3349,7 +4595,8 @@ public static class EmbarkGenerator
         int centerY,
         int radius,
         GeneratedTile roadTile,
-        bool skipWater)
+        bool skipWater,
+        bool allowBoundary)
     {
         for (var dy = -radius; dy <= radius; dy++)
         for (var dx = -radius; dx <= radius; dx++)
@@ -3361,14 +4608,14 @@ public static class EmbarkGenerator
 
             var x = centerX + dx;
             var y = centerY + dy;
-            if (x <= 0 || y <= 0 || x >= map.Width - 1 || y >= map.Height - 1)
+            if (IsOutsideSurfaceBounds(map, x, y, allowBoundary))
                 continue;
 
             var tile = map.GetTile(x, y, 0);
             if (tile.TileDefId != GeneratedTileDefIds.Tree)
                 continue;
 
-            TryCarveGroundTile(map, x, y, roadTile, skipWater);
+            TryCarveGroundTile(map, x, y, roadTile, skipWater, allowBoundary);
         }
     }
 
@@ -3377,8 +4624,12 @@ public static class EmbarkGenerator
         int x,
         int y,
         GeneratedTile baseTile,
-        bool skipWater)
+        bool skipWater,
+        bool allowBoundary = false)
     {
+        if (IsOutsideSurfaceBounds(map, x, y, allowBoundary))
+            return;
+
         var tile = map.GetTile(x, y, 0);
         if (tile.TileDefId == GeneratedTileDefIds.Magma)
             return;
@@ -3399,49 +4650,135 @@ public static class EmbarkGenerator
 
     private static void EnsureBorderPassable(GeneratedEmbarkMap map, GeneratedTile fallbackTile)
     {
-        // Keep edge continuity by preserving already valid border terrain and only fixing unsafe blockers.
-        for (var x = 0; x < map.Width; x++)
-        {
-            EnsureBorderCellSafe(map, x, 0, x, 1, fallbackTile);
-            EnsureBorderCellSafe(map, x, map.Height - 1, x, map.Height - 2, fallbackTile);
-        }
+        // Keep corners and at least one access point per edge safe without flattening the whole border.
+        EnsureSurfaceCellSafe(map, 0, 0, fallbackTile);
+        EnsureSurfaceCellSafe(map, map.Width - 1, 0, fallbackTile);
+        EnsureSurfaceCellSafe(map, 0, map.Height - 1, fallbackTile);
+        EnsureSurfaceCellSafe(map, map.Width - 1, map.Height - 1, fallbackTile);
 
-        for (var y = 0; y < map.Height; y++)
-        {
-            EnsureBorderCellSafe(map, 0, y, 1, y, fallbackTile);
-            EnsureBorderCellSafe(map, map.Width - 1, y, map.Width - 2, y, fallbackTile);
-        }
+        EnsureEdgeHasPassableAccess(map, LocalMapEdge.North, fallbackTile);
+        EnsureEdgeHasPassableAccess(map, LocalMapEdge.East, fallbackTile);
+        EnsureEdgeHasPassableAccess(map, LocalMapEdge.South, fallbackTile);
+        EnsureEdgeHasPassableAccess(map, LocalMapEdge.West, fallbackTile);
     }
 
-    private static void EnsureBorderCellSafe(
-        GeneratedEmbarkMap map,
-        int edgeX,
-        int edgeY,
-        int inwardX,
-        int inwardY,
-        GeneratedTile fallbackTile)
+    private static void EnsureEdgeHasPassableAccess(GeneratedEmbarkMap map, LocalMapEdge edge, GeneratedTile fallbackTile)
     {
-        var edge = map.GetTile(edgeX, edgeY, 0);
-        if (IsSafePassableSurface(edge))
+        if (HasSafeBorderAccess(map, edge))
             return;
 
-        if (inwardX >= 0 && inwardY >= 0 && inwardX < map.Width && inwardY < map.Height)
+        var (edgeX, edgeY, inwardX, inwardY) = ResolveBorderAccessPoint(map, edge);
+        EnsureSurfaceCellSafe(map, edgeX, edgeY, fallbackTile);
+        EnsureSurfaceCellSafe(map, inwardX, inwardY, fallbackTile);
+    }
+
+    private static bool HasSafeBorderAccess(GeneratedEmbarkMap map, LocalMapEdge edge)
+    {
+        if (edge is LocalMapEdge.North or LocalMapEdge.South)
         {
-            var inward = map.GetTile(inwardX, inwardY, 0);
-            if (IsSafePassableSurface(inward))
+            var y = edge == LocalMapEdge.North ? 0 : map.Height - 1;
+            for (var x = 1; x < map.Width - 1; x++)
             {
-                map.SetTile(edgeX, edgeY, 0, inward);
-                return;
+                if (IsSafePassableSurface(map.GetTile(x, y, 0)))
+                    return true;
             }
+
+            return false;
         }
 
-        map.SetTile(edgeX, edgeY, 0, fallbackTile);
+        var borderX = edge == LocalMapEdge.West ? 0 : map.Width - 1;
+        for (var y = 1; y < map.Height - 1; y++)
+        {
+            if (IsSafePassableSurface(map.GetTile(borderX, y, 0)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static (int EdgeX, int EdgeY, int InwardX, int InwardY) ResolveBorderAccessPoint(GeneratedEmbarkMap map, LocalMapEdge edge)
+    {
+        var midX = map.Width / 2;
+        var midY = map.Height / 2;
+        return edge switch
+        {
+            LocalMapEdge.North => (midX, 0, midX, Math.Min(1, map.Height - 1)),
+            LocalMapEdge.East => (map.Width - 1, midY, Math.Max(0, map.Width - 2), midY),
+            LocalMapEdge.South => (midX, map.Height - 1, midX, Math.Max(0, map.Height - 2)),
+            LocalMapEdge.West => (0, midY, Math.Min(1, map.Width - 1), midY),
+            _ => (midX, 0, midX, Math.Min(1, map.Height - 1)),
+        };
+    }
+
+    private static void EnsureSurfaceCellSafe(GeneratedEmbarkMap map, int x, int y, GeneratedTile fallbackTile)
+    {
+        if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+            return;
+
+        var tile = map.GetTile(x, y, 0);
+        if (IsSafePassableSurface(tile))
+            return;
+
+        map.SetTile(x, y, 0, ResolveSafeBorderSurface(tile, fallbackTile));
     }
 
     private static bool IsSafePassableSurface(GeneratedTile tile)
         => tile.IsPassable &&
            tile.FluidType != GeneratedFluidType.Magma &&
            tile.TileDefId != GeneratedTileDefIds.Magma;
+
+    private static GeneratedTile ResolveSafeBorderSurface(GeneratedTile edge, GeneratedTile fallbackTile)
+    {
+        if (edge.TileDefId == GeneratedTileDefIds.StoneWall)
+        {
+            return StoneSurfaceTile() with
+            {
+                MaterialId = ResolveBorderMaterialId(edge.MaterialId, fallbackTile.MaterialId, "granite"),
+            };
+        }
+
+        if (edge.TileDefId == GeneratedTileDefIds.SoilWall)
+        {
+            return ResolvePassableFallbackSurface(fallbackTile, edge.MaterialId is { Length: > 0 } ? edge.MaterialId : "soil");
+        }
+
+        return ResolvePassableFallbackSurface(fallbackTile, edge.MaterialId);
+    }
+
+    private static GeneratedTile ResolvePassableFallbackSurface(GeneratedTile fallbackTile, string? preferredMaterialId)
+    {
+        return fallbackTile.TileDefId switch
+        {
+            GeneratedTileDefIds.Grass => GrassSurfaceTile(),
+            GeneratedTileDefIds.Soil => SoilSurfaceTile() with
+            {
+                MaterialId = ResolveBorderMaterialId(preferredMaterialId, fallbackTile.MaterialId, "soil"),
+            },
+            GeneratedTileDefIds.Sand => SandSurfaceTile(),
+            GeneratedTileDefIds.Mud => MudSurfaceTile(),
+            GeneratedTileDefIds.Snow => SnowSurfaceTile(),
+            GeneratedTileDefIds.StoneBrick => RoadSurfaceTile(ResolveBorderMaterialId(preferredMaterialId, fallbackTile.MaterialId, "granite")),
+            GeneratedTileDefIds.StoneFloor or GeneratedTileDefIds.StoneWall => StoneSurfaceTile() with
+            {
+                MaterialId = ResolveBorderMaterialId(preferredMaterialId, fallbackTile.MaterialId, "granite"),
+            },
+            GeneratedTileDefIds.SoilWall => SoilSurfaceTile() with
+            {
+                MaterialId = ResolveBorderMaterialId(preferredMaterialId, fallbackTile.MaterialId, "soil"),
+            },
+            _ => SoilSurfaceTile() with
+            {
+                MaterialId = ResolveBorderMaterialId(preferredMaterialId, fallbackTile.MaterialId, "soil"),
+            },
+        };
+    }
+
+    private static string ResolveBorderMaterialId(string? preferredMaterialId, string? fallbackMaterialId, string defaultMaterialId)
+        => !string.IsNullOrWhiteSpace(preferredMaterialId)
+            ? preferredMaterialId
+            : !string.IsNullOrWhiteSpace(fallbackMaterialId)
+                ? fallbackMaterialId
+                : defaultMaterialId;
 
     private static void EnsureCentralEmbarkZone(GeneratedEmbarkMap map, GeneratedTile baseTile)
     {
@@ -3451,6 +4788,214 @@ public static class EmbarkGenerator
         for (var y = minY; y <= maxY; y++)
             EnsureSpawnSafeSurfaceTile(map, x, y, baseTile);
     }
+
+    private static void EnsureSurfaceConnectivity(GeneratedEmbarkMap map, GeneratedTile baseTile)
+    {
+        while (TryFindLargestTraversableSurfaceComponent(map, out var mainComponent, out var traversableCount, out var largestComponentCount) &&
+               largestComponentCount < traversableCount)
+        {
+            if (!TryFindDisconnectedTraversableSurfaceTile(map, mainComponent, out var startX, out var startY))
+                return;
+
+            if (!TryCarveSurfaceConnectionToComponent(map, mainComponent, startX, startY, baseTile))
+                return;
+        }
+    }
+
+    private static bool TryFindLargestTraversableSurfaceComponent(
+        GeneratedEmbarkMap map,
+        out bool[,] componentMask,
+        out int traversableCount,
+        out int largestComponentCount)
+    {
+        componentMask = new bool[map.Width, map.Height];
+        traversableCount = 0;
+        largestComponentCount = 0;
+
+        if (map.Width <= 0 || map.Height <= 0)
+            return false;
+
+        var visited = new bool[map.Width, map.Height];
+        var queue = new Queue<(int X, int Y)>();
+        var cells = new List<(int X, int Y)>(Math.Max(16, map.Width + map.Height));
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (visited[x, y])
+                continue;
+
+            var tile = map.GetTile(x, y, 0);
+            if (!IsTraversableSurfaceTile(tile))
+                continue;
+
+            visited[x, y] = true;
+            queue.Enqueue((x, y));
+            cells.Clear();
+
+            while (queue.Count > 0)
+            {
+                var (cx, cy) = queue.Dequeue();
+                cells.Add((cx, cy));
+
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx + 1, cy);
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx - 1, cy);
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx, cy + 1);
+                EnqueueTraversableSurfaceNeighbor(map, visited, queue, cx, cy - 1);
+            }
+
+            traversableCount += cells.Count;
+            if (cells.Count <= largestComponentCount)
+                continue;
+
+            Array.Clear(componentMask, 0, componentMask.Length);
+            foreach (var (cellX, cellY) in cells)
+                componentMask[cellX, cellY] = true;
+
+            largestComponentCount = cells.Count;
+        }
+
+        return traversableCount > 0;
+    }
+
+    private static void EnqueueTraversableSurfaceNeighbor(
+        GeneratedEmbarkMap map,
+        bool[,] visited,
+        Queue<(int X, int Y)> queue,
+        int x,
+        int y)
+    {
+        if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+            return;
+        if (visited[x, y])
+            return;
+        if (!IsTraversableSurfaceTile(map.GetTile(x, y, 0)))
+            return;
+
+        visited[x, y] = true;
+        queue.Enqueue((x, y));
+    }
+
+    private static bool TryFindDisconnectedTraversableSurfaceTile(GeneratedEmbarkMap map, bool[,] mainComponent, out int x, out int y)
+    {
+        for (var sx = 0; sx < map.Width; sx++)
+        for (var sy = 0; sy < map.Height; sy++)
+        {
+            if (mainComponent[sx, sy])
+                continue;
+            if (!IsTraversableSurfaceTile(map.GetTile(sx, sy, 0)))
+                continue;
+
+            x = sx;
+            y = sy;
+            return true;
+        }
+
+        x = -1;
+        y = -1;
+        return false;
+    }
+
+    private static bool TryCarveSurfaceConnectionToComponent(
+        GeneratedEmbarkMap map,
+        bool[,] mainComponent,
+        int startX,
+        int startY,
+        GeneratedTile baseTile)
+    {
+        var visited = new bool[map.Width, map.Height];
+        var parentX = new int[map.Width, map.Height];
+        var parentY = new int[map.Width, map.Height];
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            parentX[x, y] = -1;
+            parentY[x, y] = -1;
+        }
+
+        var queue = new Queue<(int X, int Y)>();
+        queue.Enqueue((startX, startY));
+        visited[startX, startY] = true;
+
+        while (queue.Count > 0)
+        {
+            var (x, y) = queue.Dequeue();
+            if (mainComponent[x, y])
+            {
+                CarveSurfaceConnectionPath(map, parentX, parentY, x, y, baseTile);
+                return true;
+            }
+
+            TryEnqueueSurfaceConnectionNode(map, visited, parentX, parentY, queue, x, y, x + 1, y);
+            TryEnqueueSurfaceConnectionNode(map, visited, parentX, parentY, queue, x, y, x - 1, y);
+            TryEnqueueSurfaceConnectionNode(map, visited, parentX, parentY, queue, x, y, x, y + 1);
+            TryEnqueueSurfaceConnectionNode(map, visited, parentX, parentY, queue, x, y, x, y - 1);
+        }
+
+        return false;
+    }
+
+    private static void TryEnqueueSurfaceConnectionNode(
+        GeneratedEmbarkMap map,
+        bool[,] visited,
+        int[,] parentX,
+        int[,] parentY,
+        Queue<(int X, int Y)> queue,
+        int fromX,
+        int fromY,
+        int x,
+        int y)
+    {
+        if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+            return;
+        if (visited[x, y])
+            return;
+
+        var tile = map.GetTile(x, y, 0);
+        if (!CanTraverseOrCarveSurfaceTile(tile))
+            return;
+
+        visited[x, y] = true;
+        parentX[x, y] = fromX;
+        parentY[x, y] = fromY;
+        queue.Enqueue((x, y));
+    }
+
+    private static void CarveSurfaceConnectionPath(
+        GeneratedEmbarkMap map,
+        int[,] parentX,
+        int[,] parentY,
+        int endX,
+        int endY,
+        GeneratedTile baseTile)
+    {
+        var x = endX;
+        var y = endY;
+
+        while (x >= 0 && y >= 0)
+        {
+            var tile = map.GetTile(x, y, 0);
+            if (!IsTraversableSurfaceTile(tile))
+                map.SetTile(x, y, 0, ResolveSafeBorderSurface(tile, baseTile));
+
+            var nextX = parentX[x, y];
+            var nextY = parentY[x, y];
+            if (nextX < 0 || nextY < 0)
+                break;
+
+            x = nextX;
+            y = nextY;
+        }
+    }
+
+    private static bool IsTraversableSurfaceTile(GeneratedTile tile)
+        => tile.IsPassable &&
+           tile.FluidType != GeneratedFluidType.Magma &&
+           tile.TileDefId != GeneratedTileDefIds.Magma;
+
+    private static bool CanTraverseOrCarveSurfaceTile(GeneratedTile tile)
+        => tile.FluidType != GeneratedFluidType.Magma &&
+           tile.TileDefId != GeneratedTileDefIds.Magma;
 
     private static bool IsInCentralEmbarkZone(int width, int height, int x, int y)
     {
@@ -3923,6 +5468,140 @@ public static class EmbarkGenerator
         };
     }
 
+    private static string? ResolvePreferredSurfaceTileDefId(
+        string? surfaceTileOverrideId,
+        LocalSurfaceIntentGrid? surfaceIntentGrid,
+        LocalRegionFieldMaps? regionFieldMaps,
+        int x,
+        int y,
+        int width,
+        int height,
+        float selector)
+    {
+        var fallbackSurfaceTileDefId = ResolvePreferredSurfaceTileDefId(surfaceTileOverrideId);
+        if (regionFieldMaps is not null)
+        {
+            return ResolveWeightedSurfaceTileDefId(
+                regionFieldMaps.SurfaceGrassWeight[x, y],
+                regionFieldMaps.SurfaceSoilWeight[x, y],
+                regionFieldMaps.SurfaceSandWeight[x, y],
+                regionFieldMaps.SurfaceMudWeight[x, y],
+                regionFieldMaps.SurfaceSnowWeight[x, y],
+                regionFieldMaps.SurfaceStoneWeight[x, y],
+                selector,
+                fallbackSurfaceTileDefId);
+        }
+
+        if (surfaceIntentGrid is not LocalSurfaceIntentGrid resolvedSurfaceIntentGrid)
+            return fallbackSurfaceTileDefId;
+
+        return ResolveBlendedSurfaceTileDefId(resolvedSurfaceIntentGrid, fallbackSurfaceTileDefId, x, y, width, height, selector);
+    }
+
+    private static string? ResolveBlendedSurfaceTileDefId(
+        LocalSurfaceIntentGrid surfaceIntentGrid,
+        string? fallbackSurfaceTileDefId,
+        int x,
+        int y,
+        int width,
+        int height,
+        float selector)
+    {
+        var sampleX = width <= 1 ? 0.5f : x / (float)(width - 1);
+        var sampleY = height <= 1 ? 0.5f : y / (float)(height - 1);
+        var (leftOffsetX, rightOffsetX, tx) = ResolveSurfaceIntentAxis(sampleX);
+        var (topOffsetY, bottomOffsetY, ty) = ResolveSurfaceIntentAxis(sampleY);
+
+        var topLeft = surfaceIntentGrid.GetTileDefId(leftOffsetX, topOffsetY);
+        var topRight = surfaceIntentGrid.GetTileDefId(rightOffsetX, topOffsetY);
+        var bottomLeft = surfaceIntentGrid.GetTileDefId(leftOffsetX, bottomOffsetY);
+        var bottomRight = surfaceIntentGrid.GetTileDefId(rightOffsetX, bottomOffsetY);
+
+        var grassScore = ResolveSurfaceIntentScore(GeneratedTileDefIds.Grass, topLeft, topRight, bottomLeft, bottomRight, tx, ty);
+        var soilScore = ResolveSurfaceIntentScore(GeneratedTileDefIds.Soil, topLeft, topRight, bottomLeft, bottomRight, tx, ty);
+        var sandScore = ResolveSurfaceIntentScore(GeneratedTileDefIds.Sand, topLeft, topRight, bottomLeft, bottomRight, tx, ty);
+        var mudScore = ResolveSurfaceIntentScore(GeneratedTileDefIds.Mud, topLeft, topRight, bottomLeft, bottomRight, tx, ty);
+        var snowScore = ResolveSurfaceIntentScore(GeneratedTileDefIds.Snow, topLeft, topRight, bottomLeft, bottomRight, tx, ty);
+        var stoneScore = ResolveSurfaceIntentScore(GeneratedTileDefIds.StoneFloor, topLeft, topRight, bottomLeft, bottomRight, tx, ty);
+
+        return ResolveWeightedSurfaceTileDefId(
+            grassScore,
+            soilScore,
+            sandScore,
+            mudScore,
+            snowScore,
+            stoneScore,
+            selector,
+            fallbackSurfaceTileDefId);
+    }
+
+    private static (int LeftOffset, int RightOffset, float T) ResolveSurfaceIntentAxis(float sample)
+    {
+        if (sample <= 0.5f)
+            return (-1, 0, Math.Clamp(sample + 0.5f, 0f, 1f));
+
+        return (0, 1, Math.Clamp(sample - 0.5f, 0f, 1f));
+    }
+
+    private static float ResolveSurfaceIntentScore(
+        string targetTileDefId,
+        string topLeft,
+        string topRight,
+        string bottomLeft,
+        string bottomRight,
+        float tx,
+        float ty)
+    {
+        var top = LerpSurfacePresence(targetTileDefId, topLeft, topRight, tx);
+        var bottom = LerpSurfacePresence(targetTileDefId, bottomLeft, bottomRight, tx);
+        return top + ((bottom - top) * ty);
+    }
+
+    private static float LerpSurfacePresence(string targetTileDefId, string leftTileDefId, string rightTileDefId, float t)
+    {
+        var left = string.Equals(leftTileDefId, targetTileDefId, StringComparison.OrdinalIgnoreCase) ? 1f : 0f;
+        var right = string.Equals(rightTileDefId, targetTileDefId, StringComparison.OrdinalIgnoreCase) ? 1f : 0f;
+        return left + ((right - left) * t);
+    }
+
+    private static string? ResolveWeightedSurfaceTileDefId(
+        float grassScore,
+        float soilScore,
+        float sandScore,
+        float mudScore,
+        float snowScore,
+        float stoneScore,
+        float selector,
+        string? fallbackSurfaceTileDefId)
+    {
+        var totalScore = grassScore + soilScore + sandScore + mudScore + snowScore + stoneScore;
+        if (totalScore <= 0f)
+            return fallbackSurfaceTileDefId;
+
+        var threshold = selector * totalScore;
+        var cumulative = grassScore;
+        if (threshold <= cumulative)
+            return GeneratedTileDefIds.Grass;
+
+        cumulative += soilScore;
+        if (threshold <= cumulative)
+            return GeneratedTileDefIds.Soil;
+
+        cumulative += sandScore;
+        if (threshold <= cumulative)
+            return GeneratedTileDefIds.Sand;
+
+        cumulative += mudScore;
+        if (threshold <= cumulative)
+            return GeneratedTileDefIds.Mud;
+
+        cumulative += snowScore;
+        if (threshold <= cumulative)
+            return GeneratedTileDefIds.Snow;
+
+        return GeneratedTileDefIds.StoneFloor;
+    }
+
     private static GeneratedTile CreateSurfaceTileFromTileDefId(string tileDefId)
     {
         return tileDefId switch
@@ -4010,3 +5689,4 @@ public static class EmbarkGenerator
     private static GeneratedTile StaircaseTile()
         => new(GeneratedTileDefIds.Staircase, "granite", true);
 }
+

@@ -1,7 +1,10 @@
+﻿using DwarfFortress.WorldGen.Analysis;
+using DwarfFortress.WorldGen.Generation;
 using DwarfFortress.WorldGen.Geology;
 using DwarfFortress.WorldGen.Ids;
 using DwarfFortress.WorldGen.Local;
 using DwarfFortress.WorldGen.Maps;
+using System.Reflection;
 using System.Linq;
 
 namespace DwarfFortress.WorldGen.Tests;
@@ -106,6 +109,137 @@ public sealed class EmbarkGeneratorTests
         Assert.Equal(mapA.CreatureSpawns.Count, mapB.CreatureSpawns.Count);
         for (var i = 0; i < mapA.CreatureSpawns.Count; i++)
             Assert.Equal(mapA.CreatureSpawns[i], mapB.CreatureSpawns[i]);
+    }
+
+    [Fact]
+    public void Generate_SharedContinuitySeed_PreservesAdjacentBoundaryFamiliesAcrossDifferentLocalSeeds()
+    {
+        const int continuitySeed = 4201;
+        var leftSettings = new LocalGenerationSettings(
+            Width: 48,
+            Height: 48,
+            Depth: 8,
+            BiomeOverrideId: MacroBiomeIds.ConiferForest,
+            NoiseOriginX: 0,
+            NoiseOriginY: 0,
+            ContinuitySeed: continuitySeed);
+        var rightSettings = leftSettings with { NoiseOriginX = leftSettings.Width - 1 };
+
+        var left = EmbarkGenerator.Generate(leftSettings, seed: 1111);
+        var right = EmbarkGenerator.Generate(rightSettings, seed: 2222);
+
+        var comparison = EmbarkBoundaryContinuity.CompareBoundary(left, right, isEastNeighbor: true);
+        var matchRatio = 1f - comparison.SurfaceFamilyMismatchRatio;
+        Assert.True(
+            matchRatio >= 0.95f,
+            $"Expected shared continuity seed to keep adjacent surface families aligned across local seeds, got ratio {matchRatio:F2}.");
+    }
+
+    [Fact]
+    public void Generate_RiparianPolish_DoesNotRepaintBoundaryCells()
+    {
+        var map = new GeneratedEmbarkMap(width: 8, height: 8, depth: 1);
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+            map.SetTile(x, y, 0, new GeneratedTile(GeneratedTileDefIds.Grass, "soil", true));
+
+        map.SetTile(1, 4, 0, new GeneratedTile(GeneratedTileDefIds.Water, null, true, GeneratedFluidType.Water, 3));
+
+        var terrain = new float[map.Width, map.Height];
+        var moisture = new float[map.Width, map.Height];
+
+        var method = typeof(EmbarkGenerator).GetMethod("ApplyRiparianSurfaceTransitions", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        method!.Invoke(null, [map, MacroBiomeIds.ConiferForest, terrain, moisture, null, 42, 0, 0]);
+
+        Assert.Equal(GeneratedTileDefIds.Grass, map.GetTile(0, 4, 0).TileDefId);
+        Assert.NotEqual(GeneratedTileDefIds.Grass, map.GetTile(2, 4, 0).TileDefId);
+    }
+    [Fact]
+    public void Generate_EcologyEdges_BoostSharedBoundaryForestBands()
+    {
+        const int continuitySeed = 5319;
+        var leftSettings = new LocalGenerationSettings(
+            Width: 48,
+            Height: 48,
+            Depth: 8,
+            BiomeOverrideId: MacroBiomeIds.ConiferForest,
+            TreeDensityBias: -0.10f,
+            ForestPatchBias: -0.08f,
+            NoiseOriginX: 0,
+            NoiseOriginY: 0,
+            ContinuitySeed: continuitySeed);
+        var rightSettings = leftSettings with { NoiseOriginX = leftSettings.Width - 1 };
+
+        var denseSharedEdge = new EcologyEdgeProfile(
+            VegetationDensity: 0.92f,
+            VegetationSuitability: 0.88f,
+            SoilDepth: 0.74f,
+            Groundwater: 0.80f);
+        var leftEcologyEdges = new EcologyEdgeDescriptors(
+            North: EcologyEdgeProfile.Neutral,
+            East: denseSharedEdge,
+            South: EcologyEdgeProfile.Neutral,
+            West: EcologyEdgeProfile.Neutral);
+        var rightEcologyEdges = new EcologyEdgeDescriptors(
+            North: EcologyEdgeProfile.Neutral,
+            East: EcologyEdgeProfile.Neutral,
+            South: EcologyEdgeProfile.Neutral,
+            West: denseSharedEdge);
+
+        var baselineLeft = EmbarkGenerator.Generate(leftSettings, seed: 1111);
+        var baselineRight = EmbarkGenerator.Generate(rightSettings, seed: 2222);
+        var edgeBiasedLeft = EmbarkGenerator.Generate(leftSettings with { EcologyEdges = leftEcologyEdges }, seed: 1111);
+        var edgeBiasedRight = EmbarkGenerator.Generate(rightSettings with { EcologyEdges = rightEcologyEdges }, seed: 2222);
+
+        var baselineLeftBandTrees = CountSurfaceTreesInColumnBand(baselineLeft, baselineLeft.Width - 4, baselineLeft.Width - 2);
+        var baselineRightBandTrees = CountSurfaceTreesInColumnBand(baselineRight, 1, 3);
+        var edgeBiasedLeftBandTrees = CountSurfaceTreesInColumnBand(edgeBiasedLeft, edgeBiasedLeft.Width - 4, edgeBiasedLeft.Width - 2);
+        var edgeBiasedRightBandTrees = CountSurfaceTreesInColumnBand(edgeBiasedRight, 1, 3);
+        var baselineLeftEdgeVegetation = CountSurfaceVegetationInColumnBand(baselineLeft, baselineLeft.Width - 1, baselineLeft.Width - 1);
+        var baselineRightEdgeVegetation = CountSurfaceVegetationInColumnBand(baselineRight, 0, 0);
+        var edgeBiasedLeftEdgeVegetation = CountSurfaceVegetationInColumnBand(edgeBiasedLeft, edgeBiasedLeft.Width - 1, edgeBiasedLeft.Width - 1);
+        var edgeBiasedRightEdgeVegetation = CountSurfaceVegetationInColumnBand(edgeBiasedRight, 0, 0);
+
+        Assert.True(
+            edgeBiasedLeftBandTrees > baselineLeftBandTrees,
+            $"Expected shared-east ecology edge descriptors to increase left boundary forest band trees ({edgeBiasedLeftBandTrees} vs {baselineLeftBandTrees}).");
+        Assert.True(
+            (edgeBiasedLeftBandTrees + edgeBiasedRightBandTrees) > (baselineLeftBandTrees + baselineRightBandTrees),
+            $"Expected shared ecology edge descriptors to increase combined boundary forest band trees ({edgeBiasedLeftBandTrees + edgeBiasedRightBandTrees} vs {baselineLeftBandTrees + baselineRightBandTrees}).");
+        Assert.True(
+            (edgeBiasedLeftEdgeVegetation + edgeBiasedRightEdgeVegetation) > (baselineLeftEdgeVegetation + baselineRightEdgeVegetation),
+            $"Expected shared ecology edge descriptors to populate the actual shared boundary edge with visible vegetation ({edgeBiasedLeftEdgeVegetation + edgeBiasedRightEdgeVegetation} vs {baselineLeftEdgeVegetation + baselineRightEdgeVegetation}).");
+    }
+
+    [Fact]
+    public void Generate_ContinuityContract_RiverPortalsDriveHydrologyWithoutLegacyPortalSettings()
+    {
+        var settings = new LocalGenerationSettings(
+            Width: 48,
+            Height: 48,
+            Depth: 8,
+            BiomeOverrideId: MacroBiomeIds.Desert,
+            StreamBandBias: -3,
+            MarshPoolBias: -3,
+            ContinuityContract: new LocalContinuityContract(
+                RiverPortals:
+                [
+                    new LocalRiverPortal(LocalMapEdge.West, 0.52f, Strength: 4),
+                    new LocalRiverPortal(LocalMapEdge.East, 0.52f, Strength: 4),
+                ],
+                ContinuitySeed: 9173));
+
+        var map = EmbarkGenerator.Generate(settings, seed: 2048);
+
+        Assert.True(
+            CountSurfaceWaterAtX(map, 0) > 0,
+            "Expected continuity contract river portals to reach the west boundary.");
+        Assert.True(
+            CountSurfaceWaterAtX(map, map.Width - 1) > 0,
+            "Expected continuity contract river portals to reach the east boundary.");
     }
 
     [Fact]
@@ -373,7 +507,7 @@ public sealed class EmbarkGeneratorTests
     }
 
     [Fact]
-    public void Generate_ConiferForestSpawnsTreesAwayFromMapEdges()
+    public void Generate_ConiferForest_SpawnsInteriorTreesReliably()
     {
         const int size = 48;
         const int edgeMargin = 6;
@@ -550,11 +684,11 @@ public sealed class EmbarkGeneratorTests
             ]);
 
         var map = EmbarkGenerator.Generate(settings, seed: 7331);
-        var northEdgeWater = CountSurfaceWaterAtY(map, 1);
-        var southEdgeWater = CountSurfaceWaterAtY(map, map.Height - 2);
+        var northEdgeWater = CountSurfaceWaterAtY(map, 0);
+        var southEdgeWater = CountSurfaceWaterAtY(map, map.Height - 1);
 
-        Assert.True(northEdgeWater > 0, $"Expected anchored river water near north edge, got {northEdgeWater}.");
-        Assert.True(southEdgeWater > 0, $"Expected anchored river water near south edge, got {southEdgeWater}.");
+        Assert.True(northEdgeWater > 0, $"Expected anchored river water on north edge, got {northEdgeWater}.");
+        Assert.True(southEdgeWater > 0, $"Expected anchored river water on south edge, got {southEdgeWater}.");
         Assert.True(
             HasConnectedSurfaceWaterFromNorthToSouth(map),
             "Expected a continuous anchored channel from north to south without isolated center gaps.");
@@ -600,6 +734,29 @@ public sealed class EmbarkGeneratorTests
     }
 
     [Fact]
+    public void Generate_AnchoredRiverPortals_DoNotSpawnDisconnectedSecondarySurfaceChannels()
+    {
+        var settings = new LocalGenerationSettings(
+            Width: 48,
+            Height: 48,
+            Depth: 8,
+            BiomeOverrideId: MacroBiomeIds.Desert,
+            StreamBandBias: 4,
+            MarshPoolBias: -3,
+            RiverPortals:
+            [
+                new LocalRiverPortal(LocalMapEdge.West, 0.52f, Strength: 4),
+                new LocalRiverPortal(LocalMapEdge.East, 0.52f, Strength: 4),
+            ]);
+
+        var map = EmbarkGenerator.Generate(settings, seed: 2408);
+
+        Assert.True(CountSurfaceWaterAtX(map, 0) > 0, "Expected anchored river water on west edge.");
+        Assert.True(CountSurfaceWaterAtX(map, map.Width - 1) > 0, "Expected anchored river water on east edge.");
+        Assert.Equal(1, CountConnectedSurfaceWaterComponents(map));
+    }
+
+    [Fact]
     public void Generate_MarshPools_AvoidExtremeAdjacentSurfaceWaterDepthCliffs()
     {
         var settings = new LocalGenerationSettings(
@@ -619,7 +776,6 @@ public sealed class EmbarkGeneratorTests
             maxAdjacentDelta <= 2,
             $"Expected neighboring water tiles to avoid extreme depth cliffs, but observed delta {maxAdjacentDelta}.");
     }
-
     [Fact]
     public void Generate_TemperateAnchoredRiver_ProducesRiparianWillowTrees()
     {
@@ -709,8 +865,8 @@ public sealed class EmbarkGeneratorTests
         var roadMap = EmbarkGenerator.Generate(withRoads, seed: 9113);
         var noRoadTrees = CountSurfaceTiles(noRoadMap, GeneratedTileDefIds.Tree);
         var roadTrees = CountSurfaceTiles(roadMap, GeneratedTileDefIds.Tree);
-        var northNoRoadTrees = CountSurfaceTreesAtY(noRoadMap, y: 1);
-        var northRoadTrees = CountSurfaceTreesAtY(roadMap, y: 1);
+        var northNoRoadTiles = CountSurfaceTilesAtY(noRoadMap, y: 0, GeneratedTileDefIds.StoneBrick);
+        var northRoadTiles = CountSurfaceTilesAtY(roadMap, y: 0, GeneratedTileDefIds.StoneBrick);
         var noRoadSurfaceRoadTiles = CountSurfaceTiles(noRoadMap, GeneratedTileDefIds.StoneBrick);
         var roadSurfaceRoadTiles = CountSurfaceTiles(roadMap, GeneratedTileDefIds.StoneBrick);
 
@@ -718,8 +874,8 @@ public sealed class EmbarkGeneratorTests
             roadTrees + 8 < noRoadTrees,
             $"Expected explicit road portals to reduce forest cover along carved corridors ({roadTrees} vs {noRoadTrees}).");
         Assert.True(
-            northRoadTrees < northNoRoadTrees,
-            $"Expected explicit road portal to clear trees near north edge ({northRoadTrees} vs {northNoRoadTrees}).");
+            northRoadTiles > northNoRoadTiles,
+            $"Expected explicit road portal to stamp road tiles on north edge ({northRoadTiles} vs {northNoRoadTiles}).");
         Assert.True(
             roadSurfaceRoadTiles > noRoadSurfaceRoadTiles,
             $"Expected explicit road portals to stamp visible road surface tiles ({roadSurfaceRoadTiles} vs {noRoadSurfaceRoadTiles}).");
@@ -1348,6 +1504,18 @@ public sealed class EmbarkGeneratorTests
         return count;
     }
 
+    private static int CountSurfaceWaterAtX(GeneratedEmbarkMap map, int x)
+    {
+        var count = 0;
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (map.GetTile(x, y, 0).TileDefId == GeneratedTileDefIds.Water)
+                count++;
+        }
+
+        return count;
+    }
+
     private static int CountSurfaceWaterAtOrAboveLevel(GeneratedEmbarkMap map, byte minLevel)
     {
         var count = 0;
@@ -1357,6 +1525,59 @@ public sealed class EmbarkGeneratorTests
             var tile = map.GetTile(x, y, 0);
             if (tile.TileDefId == GeneratedTileDefIds.Water && tile.FluidLevel >= minLevel)
                 count++;
+        }
+
+        return count;
+    }
+
+    private static int CountConnectedSurfaceWaterComponents(GeneratedEmbarkMap map)
+    {
+        var visited = new bool[map.Width, map.Height];
+        var queue = new Queue<(int X, int Y)>();
+        var count = 0;
+        var offsets = new (int X, int Y)[]
+        {
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+        };
+
+        for (var x = 0; x < map.Width; x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (visited[x, y])
+                continue;
+
+            var tile = map.GetTile(x, y, 0);
+            if (tile.TileDefId != GeneratedTileDefIds.Water && tile.FluidType != GeneratedFluidType.Water)
+                continue;
+
+            count++;
+            visited[x, y] = true;
+            queue.Enqueue((x, y));
+
+            while (queue.Count > 0)
+            {
+                var (cx, cy) = queue.Dequeue();
+
+                foreach (var (dx, dy) in offsets)
+                {
+                    var nx = cx + dx;
+                    var ny = cy + dy;
+                    if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
+                        continue;
+                    if (visited[nx, ny])
+                        continue;
+
+                    var neighbor = map.GetTile(nx, ny, 0);
+                    if (neighbor.TileDefId != GeneratedTileDefIds.Water && neighbor.FluidType != GeneratedFluidType.Water)
+                        continue;
+
+                    visited[nx, ny] = true;
+                    queue.Enqueue((nx, ny));
+                }
+            }
         }
 
         return count;
@@ -1380,7 +1601,12 @@ public sealed class EmbarkGeneratorTests
 
             foreach (var (dx, dy) in offsets)
             {
-                var neighbor = map.GetTile(x + dx, y + dy, 0);
+                var nx = x + dx;
+                var ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
+                    continue;
+
+                var neighbor = map.GetTile(nx, ny, 0);
                 if (neighbor.TileDefId != GeneratedTileDefIds.Water)
                     continue;
 
@@ -1393,21 +1619,17 @@ public sealed class EmbarkGeneratorTests
         return maxDelta;
     }
 
-    private static bool HasSurfaceWaterWithinDistance(GeneratedEmbarkMap map, int x, int y, int maxDistance)
+    private static bool HasSurfaceWaterWithinDistance(GeneratedEmbarkMap map, int centerX, int centerY, int maxDistance)
     {
-        for (var dx = -maxDistance; dx <= maxDistance; dx++)
-        for (var dy = -maxDistance; dy <= maxDistance; dy++)
+        for (var y = centerY - maxDistance; y <= centerY + maxDistance; y++)
+        for (var x = centerX - maxDistance; x <= centerX + maxDistance; x++)
         {
-            var distance = Math.Abs(dx) + Math.Abs(dy);
-            if (distance == 0 || distance > maxDistance)
+            if (x < 0 || y < 0 || x >= map.Width || y >= map.Height)
+                continue;
+            if (Math.Abs(x - centerX) + Math.Abs(y - centerY) > maxDistance)
                 continue;
 
-            var nx = x + dx;
-            var ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= map.Width || ny >= map.Height)
-                continue;
-
-            var tile = map.GetTile(nx, ny, 0);
+            var tile = map.GetTile(x, y, 0);
             if (tile.TileDefId == GeneratedTileDefIds.Water || tile.FluidType == GeneratedFluidType.Water)
                 return true;
         }
@@ -1443,6 +1665,45 @@ public sealed class EmbarkGeneratorTests
         for (var x = 0; x < map.Width; x++)
         {
             if (map.GetTile(x, y, 0).TileDefId == GeneratedTileDefIds.Tree)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountSurfaceTreesInColumnBand(GeneratedEmbarkMap map, int minX, int maxX)
+    {
+        var count = 0;
+        for (var x = Math.Clamp(minX, 0, map.Width - 1); x <= Math.Clamp(maxX, 0, map.Width - 1); x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            if (map.GetTile(x, y, 0).TileDefId == GeneratedTileDefIds.Tree)
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountSurfaceVegetationInColumnBand(GeneratedEmbarkMap map, int minX, int maxX)
+    {
+        var count = 0;
+        for (var x = Math.Clamp(minX, 0, map.Width - 1); x <= Math.Clamp(maxX, 0, map.Width - 1); x++)
+        for (var y = 0; y < map.Height; y++)
+        {
+            var tile = map.GetTile(x, y, 0);
+            if (tile.TileDefId == GeneratedTileDefIds.Tree || !string.IsNullOrWhiteSpace(tile.PlantDefId))
+                count++;
+        }
+
+        return count;
+    }
+
+    private static int CountSurfaceTilesAtY(GeneratedEmbarkMap map, int y, string tileDefId)
+    {
+        var count = 0;
+        for (var x = 0; x < map.Width; x++)
+        {
+            if (string.Equals(map.GetTile(x, y, 0).TileDefId, tileDefId, StringComparison.Ordinal))
                 count++;
         }
 
@@ -1560,3 +1821,7 @@ public sealed class EmbarkGeneratorTests
         return best;
     }
 }
+
+
+
+

@@ -17,7 +17,7 @@ public sealed class CraftItemStrategy : IJobStrategy
     public string JobDefId => JobDefIds.Craft;
 
     public bool CanExecute(Job job, int dwarfId, GameContext ctx)
-        => job.EntityId < 0 || TryGetRecipe(job, ctx) is not null;
+        => job.EntityId < 0 || (TryGetCompleteWorkshop(job, ctx) is not null && TryGetRecipe(job, ctx) is not null);
 
     public IReadOnlyList<ActionStep> GetSteps(Job job, int dwarfId, GameContext ctx)
     {
@@ -29,6 +29,9 @@ public sealed class CraftItemStrategy : IJobStrategy
                 new WorkAtStep(AdHocCraftWorkTime, AnimationHint: "crafting", RequiredPosition: job.TargetPos),
             ];
         }
+
+        if (TryGetCompleteWorkshop(job, ctx) is null)
+            return System.Array.Empty<ActionStep>();
 
         var itemSystem = ctx.TryGet<ItemSystem>();
         var recipe = TryGetRecipe(job, ctx);
@@ -97,5 +100,12 @@ public sealed class CraftItemStrategy : IJobStrategy
             return null;
 
         return dataManager.Recipes.Get(order.RecipeId);
+    }
+
+    private static PlacedBuildingData? TryGetCompleteWorkshop(Job job, GameContext ctx)
+    {
+        var buildingSystem = ctx.TryGet<BuildingSystem>();
+        var building = buildingSystem?.GetById(job.EntityId);
+        return building is { IsComplete: true } ? building : null;
     }
 }

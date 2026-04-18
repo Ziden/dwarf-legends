@@ -7,6 +7,15 @@ namespace DwarfFortress.GameLogic.Data.Defs;
 /// <summary>A tile in the building's footprint, relative to the origin.</summary>
 public sealed record BuildingTile(Vec2i Offset, string TileDefId);
 
+/// <summary>A building entry tile and the direction creatures cross to leave the building.</summary>
+public sealed record BuildingEntryDef(Vec2i Offset, Vec2i OutwardDirection);
+
+/// <summary>Client-facing visual profile data for procedural building rendering.</summary>
+public sealed record BuildingVisualProfile(
+    string Archetype,
+    string? Palette = null,
+    bool HideRoofOnHover = false);
+
 /// <summary>
 /// Immutable definition of a building or workshop type.
 /// Loaded from buildings.json.
@@ -22,9 +31,9 @@ public sealed record BuildingDef(
     bool                        IsWorkshop       = false,
     string?                     ProducedSmokeId  = null,
     int                         ResidenceCapacity = 0,
-    IReadOnlyList<Vec2i>        EntryOffsets = null!,
+    IReadOnlyList<BuildingEntryDef> Entries = null!,
     IReadOnlyList<string>       AutoStockpileAcceptedTags = null!,
-    string?                     StructureVisualId = null);
+    BuildingVisualProfile?      VisualProfile = null);
 
 public static class BuildingDefIds
 {

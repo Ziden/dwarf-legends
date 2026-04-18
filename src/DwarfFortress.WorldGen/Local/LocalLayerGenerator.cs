@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using DwarfFortress.WorldGen.Generation;
 using DwarfFortress.WorldGen.Ids;
@@ -38,7 +38,7 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         var riverPortals = BuildLocalRiverPortals(region, coord.RegionX, coord.RegionY);
 
         var biomeId = settings.BiomeOverrideId ?? ResolveEmbarkBiomeId(regionTile.BiomeVariantId, region.ParentMacroBiomeId);
-        var variantTreeBias = ResolveVariantTreeBias(regionTile.BiomeVariantId);
+        var variantTreeBias = RegionBiomeVariantIds.ResolveTreeDensityBias(regionTile.BiomeVariantId);
         var macroForestBias = ResolveMacroForestBias(region.ParentMacroBiomeId);
         var parentForestBias = Math.Clamp((region.ParentForestCover - 0.5f) * 0.90f, -0.30f, 0.30f);
         var parentMountainPenalty = Math.Clamp((region.ParentMountainCover - 0.35f) * 0.24f, -0.18f, 0.18f);
@@ -163,38 +163,114 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         var surfaceTileOverrideId = ResolvePreferredSurfaceTileDefId(regionTile, region.ParentMacroBiomeId);
         var globalRegionX = (coord.WorldX * region.Width) + coord.RegionX;
         var globalRegionY = (coord.WorldY * region.Height) + coord.RegionY;
-        var noiseOriginX = globalRegionX * settings.Width;
-        var noiseOriginY = globalRegionY * settings.Height;
+        var noiseOriginX = ResolveGlobalNoiseOrigin(globalRegionX, settings.Width);
+        var noiseOriginY = ResolveGlobalNoiseOrigin(globalRegionY, settings.Height);
+        var regionFieldMaps = BuildLocalRegionFieldMaps(region, coord.RegionX, coord.RegionY, settings.Width, settings.Height);
 
         bool? stoneSurface = settings.StoneSurfaceOverride;
         if (stoneSurface is null && IsRockyVariant(regionTile.BiomeVariantId))
             stoneSurface = true;
 
-        var localSettings = settings with
-        {
-            BiomeOverrideId = biomeId,
-            TreeDensityBias = treeBias,
-            OutcropBias = outcropBias,
-            StreamBandBias = streamBandBias,
-            MarshPoolBias = marshPoolBias,
-            ParentWetnessBias = wetnessBias,
-            ParentSoilDepthBias = soilDepthBias,
-            GeologyProfileId = settings.GeologyProfileId ?? regionTile.GeologyProfileId,
-            StoneSurfaceOverride = stoneSurface,
-            RiverPortals = riverPortals,
-            ForestPatchBias = forestPatchBias,
-            SettlementInfluence = settlementInfluence,
-            RoadInfluence = roadInfluence,
-            SettlementAnchors = settlementAnchors,
-            RoadPortals = roadPortals,
-            SurfaceTileOverrideId = surfaceTileOverrideId,
-            ForestCoverageTarget = forestCoverageTarget,
-            NoiseOriginX = noiseOriginX,
-            NoiseOriginY = noiseOriginY,
-        };
+        var resolvedContract = new ResolvedLocalEmbarkContract(
+            BiomeOverrideId: biomeId,
+            TreeDensityBias: treeBias,
+            OutcropBias: outcropBias,
+            StreamBandBias: streamBandBias,
+            MarshPoolBias: marshPoolBias,
+            ParentWetnessBias: wetnessBias,
+            ParentSoilDepthBias: soilDepthBias,
+            GeologyProfileId: settings.GeologyProfileId ?? regionTile.GeologyProfileId,
+            StoneSurfaceOverride: stoneSurface,
+            RiverPortals: riverPortals,
+            ForestPatchBias: forestPatchBias,
+            SettlementInfluence: settlementInfluence,
+            RoadInfluence: roadInfluence,
+            SettlementAnchors: settlementAnchors,
+            RoadPortals: roadPortals,
+            SurfaceTileOverrideId: surfaceTileOverrideId,
+            ForestCoverageTarget: forestCoverageTarget,
+            NoiseOriginX: noiseOriginX,
+            NoiseOriginY: noiseOriginY,
+            ContinuitySeed: settings.ContinuitySeed ?? region.Seed);
 
-        return EmbarkGenerator.Generate(localSettings, localSeed);
+        var localSettings = ApplyResolvedEmbarkContract(settings, resolvedContract);
+
+        return EmbarkGenerator.Generate(localSettings, localSeed, regionFieldMaps);
     }
+
+    private static LocalGenerationSettings ApplyResolvedEmbarkContract(
+        LocalGenerationSettings settings,
+        ResolvedLocalEmbarkContract contract)
+    {
+        var continuityContract = new LocalContinuityContract(
+            BiomeOverrideId: contract.BiomeOverrideId,
+            TreeDensityBias: contract.TreeDensityBias,
+            OutcropBias: contract.OutcropBias,
+            StreamBandBias: contract.StreamBandBias,
+            MarshPoolBias: contract.MarshPoolBias,
+            ParentWetnessBias: contract.ParentWetnessBias,
+            ParentSoilDepthBias: contract.ParentSoilDepthBias,
+            GeologyProfileId: contract.GeologyProfileId,
+            StoneSurfaceOverride: contract.StoneSurfaceOverride,
+            RiverPortals: contract.RiverPortals,
+            ForestPatchBias: contract.ForestPatchBias,
+            SettlementInfluence: contract.SettlementInfluence,
+            RoadInfluence: contract.RoadInfluence,
+            SettlementAnchors: contract.SettlementAnchors,
+            RoadPortals: contract.RoadPortals,
+            SurfaceTileOverrideId: contract.SurfaceTileOverrideId,
+            ForestCoverageTarget: contract.ForestCoverageTarget,
+            NoiseOriginX: contract.NoiseOriginX,
+            NoiseOriginY: contract.NoiseOriginY,
+            ContinuitySeed: contract.ContinuitySeed);
+
+        return settings with
+        {
+            BiomeOverrideId = contract.BiomeOverrideId,
+            TreeDensityBias = contract.TreeDensityBias,
+            OutcropBias = contract.OutcropBias,
+            StreamBandBias = contract.StreamBandBias,
+            MarshPoolBias = contract.MarshPoolBias,
+            ParentWetnessBias = contract.ParentWetnessBias,
+            ParentSoilDepthBias = contract.ParentSoilDepthBias,
+            GeologyProfileId = contract.GeologyProfileId,
+            StoneSurfaceOverride = contract.StoneSurfaceOverride,
+            RiverPortals = contract.RiverPortals,
+            ForestPatchBias = contract.ForestPatchBias,
+            SettlementInfluence = contract.SettlementInfluence,
+            RoadInfluence = contract.RoadInfluence,
+            SettlementAnchors = contract.SettlementAnchors,
+            RoadPortals = contract.RoadPortals,
+            SurfaceTileOverrideId = contract.SurfaceTileOverrideId,
+            ForestCoverageTarget = contract.ForestCoverageTarget,
+            NoiseOriginX = contract.NoiseOriginX,
+            NoiseOriginY = contract.NoiseOriginY,
+            ContinuitySeed = contract.ContinuitySeed,
+            ContinuityContract = continuityContract,
+        };
+    }
+
+    private readonly record struct ResolvedLocalEmbarkContract(
+        string BiomeOverrideId,
+        float TreeDensityBias,
+        float OutcropBias,
+        int StreamBandBias,
+        int MarshPoolBias,
+        float ParentWetnessBias,
+        float ParentSoilDepthBias,
+        string GeologyProfileId,
+        bool? StoneSurfaceOverride,
+        LocalRiverPortal[]? RiverPortals,
+        float ForestPatchBias,
+        float SettlementInfluence,
+        float RoadInfluence,
+        LocalSettlementAnchor[]? SettlementAnchors,
+        LocalRoadPortal[]? RoadPortals,
+        string SurfaceTileOverrideId,
+        float ForestCoverageTarget,
+        int NoiseOriginX,
+        int NoiseOriginY,
+        int ContinuitySeed);
 
     private static string ResolveEmbarkBiomeId(string regionBiomeVariant, string? parentMacroBiomeId)
     {
@@ -206,49 +282,6 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
 
     private static bool IsRockyVariant(string regionBiomeVariant)
         => RegionBiomeVariantIds.IsRockyVariant(regionBiomeVariant);
-
-    private static float ResolveVariantTreeBias(string regionBiomeVariant)
-    {
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.DenseConifer, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(regionBiomeVariant, RegionBiomeVariantIds.ForestedFoothills, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0.15f;
-        }
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.ConiferWoodland, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(regionBiomeVariant, RegionBiomeVariantIds.TemperateWoodland, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0.10f;
-        }
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.RiverValley, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(regionBiomeVariant, RegionBiomeVariantIds.FloodplainMarsh, StringComparison.OrdinalIgnoreCase))
-        {
-            return 0.08f;
-        }
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.TropicalCanopy, StringComparison.OrdinalIgnoreCase))
-            return 0.18f;
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.TropicalLowland, StringComparison.OrdinalIgnoreCase))
-            return 0.12f;
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.SavannaGrassland, StringComparison.OrdinalIgnoreCase))
-            return -0.05f;
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.DrySteppe, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(regionBiomeVariant, RegionBiomeVariantIds.SparseSteppe, StringComparison.OrdinalIgnoreCase))
-        {
-            return -0.12f;
-        }
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.AridBadlands, StringComparison.OrdinalIgnoreCase))
-            return -0.20f;
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.AlpineRidge, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(regionBiomeVariant, RegionBiomeVariantIds.RockyHighland, StringComparison.OrdinalIgnoreCase))
-        {
-            return -0.08f;
-        }
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.PolarTundra, StringComparison.OrdinalIgnoreCase))
-            return -0.16f;
-        if (string.Equals(regionBiomeVariant, RegionBiomeVariantIds.GlacialField, StringComparison.OrdinalIgnoreCase))
-            return -0.24f;
-
-        return 0f;
-    }
 
     private static float ResolveMacroForestBias(string macroBiomeId)
     {
@@ -316,33 +349,145 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
     private static string ResolvePreferredSurfaceTileDefId(GeneratedRegionTile tile, string parentMacroBiomeId)
         => RegionSurfaceResolver.ResolvePreferredSurfaceTileDefId(tile, parentMacroBiomeId);
 
-    private static float SampleNeighborhoodVegetation(GeneratedRegionMap region, int centerX, int centerY)
+    private static int ResolveGlobalNoiseOrigin(int globalRegionIndex, int localExtent)
+        => globalRegionIndex * Math.Max(1, localExtent - 1);
+
+    private static LocalRegionFieldMaps BuildLocalRegionFieldMaps(
+        GeneratedRegionMap region,
+        int regionX,
+        int regionY,
+        int width,
+        int height)
     {
-        var weighted = 0f;
-        var weight = 0f;
+        var vegetationDensity = new float[width, height];
+        var vegetationSuitability = new float[width, height];
+        var soilDepth = new float[width, height];
+        var groundwater = new float[width, height];
+        var moistureBand = new float[width, height];
+        var slope = new float[width, height];
+        var riverInfluence = new float[width, height];
+        var lakeInfluence = new float[width, height];
+        var flowAccumulationBand = new float[width, height];
+        var riverDischargeBand = new float[width, height];
+        var riverOrderBand = new float[width, height];
+        var surfaceGrassWeight = new float[width, height];
+        var surfaceSoilWeight = new float[width, height];
+        var surfaceSandWeight = new float[width, height];
+        var surfaceMudWeight = new float[width, height];
+        var surfaceSnowWeight = new float[width, height];
+        var surfaceStoneWeight = new float[width, height];
 
-        for (var dy = -1; dy <= 1; dy++)
-        for (var dx = -1; dx <= 1; dx++)
+        for (var x = 0; x < width; x++)
+        for (var y = 0; y < height; y++)
         {
-            var x = centerX + dx;
-            var y = centerY + dy;
-            if (x < 0 || y < 0 || x >= region.Width || y >= region.Height)
-                continue;
+            var sampleX = ResolveRegionFieldSampleCoord(regionX, x, width);
+            var sampleY = ResolveRegionFieldSampleCoord(regionY, y, height);
 
-            var isCenter = dx == 0 && dy == 0;
-            var isCardinal = dx == 0 || dy == 0;
-            var sampleWeight = isCenter ? 1.6f : (isCardinal ? 1.0f : 0.7f);
-            weighted += region.GetTile(x, y).VegetationDensity * sampleWeight;
-            weight += sampleWeight;
+            vegetationDensity[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.VegetationDensity);
+            vegetationSuitability[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.VegetationSuitability);
+            soilDepth[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.SoilDepth);
+            groundwater[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.Groundwater);
+            moistureBand[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.MoistureBand);
+            slope[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.Slope / 255f);
+            riverInfluence[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.HasRiver ? 1f : 0f);
+            lakeInfluence[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.HasLake ? 1f : 0f);
+            flowAccumulationBand[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => tile.FlowAccumulationBand);
+            riverDischargeBand[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => Math.Clamp(tile.RiverDischarge / 12f, 0f, 1f));
+            riverOrderBand[x, y] = SampleRegionScalar(region, sampleX, sampleY, static tile => Math.Clamp(tile.RiverOrder / 8f, 0f, 1f));
+            surfaceGrassWeight[x, y] = SampleRegionSurfaceWeight(region, sampleX, sampleY, RegionSurfaceClassIds.Grass);
+            surfaceSoilWeight[x, y] = SampleRegionSurfaceWeight(region, sampleX, sampleY, RegionSurfaceClassIds.Soil);
+            surfaceSandWeight[x, y] = SampleRegionSurfaceWeight(region, sampleX, sampleY, RegionSurfaceClassIds.Sand);
+            surfaceMudWeight[x, y] = SampleRegionSurfaceWeight(region, sampleX, sampleY, RegionSurfaceClassIds.Mud);
+            surfaceSnowWeight[x, y] = SampleRegionSurfaceWeight(region, sampleX, sampleY, RegionSurfaceClassIds.Snow);
+            surfaceStoneWeight[x, y] = SampleRegionSurfaceWeight(region, sampleX, sampleY, RegionSurfaceClassIds.Stone);
         }
 
-        if (weight <= 0f)
-            return region.GetTile(centerX, centerY).VegetationDensity;
-
-        return weighted / weight;
+        return new LocalRegionFieldMaps(
+            vegetationDensity,
+            vegetationSuitability,
+            soilDepth,
+            groundwater,
+            moistureBand,
+            slope,
+            riverInfluence,
+            lakeInfluence,
+            flowAccumulationBand,
+            riverDischargeBand,
+            riverOrderBand,
+            surfaceGrassWeight,
+            surfaceSoilWeight,
+            surfaceSandWeight,
+            surfaceMudWeight,
+            surfaceSnowWeight,
+            surfaceStoneWeight);
     }
 
+    private static float ResolveRegionFieldSampleCoord(int regionIndex, int localCoord, int localExtent)
+    {
+        if (localExtent <= 1)
+            return regionIndex + 0.5f;
+
+        return regionIndex + (localCoord / (float)(localExtent - 1));
+    }
+
+    private static float SampleRegionSurfaceWeight(
+        GeneratedRegionMap region,
+        float sampleX,
+        float sampleY,
+        string targetSurfaceClassId)
+    {
+        return SampleRegionScalar(
+            region,
+            sampleX,
+            sampleY,
+            tile => string.Equals(
+                RegionSurfaceResolver.ResolveSurfaceClassId(tile, region.ParentMacroBiomeId),
+                targetSurfaceClassId,
+                StringComparison.OrdinalIgnoreCase)
+                ? 1f
+                : 0f);
+    }
+
+    private static float SampleRegionScalar(
+        GeneratedRegionMap region,
+        float sampleX,
+        float sampleY,
+        Func<GeneratedRegionTile, float> selector)
+    {
+        var shiftedX = sampleX - 0.5f;
+        var shiftedY = sampleY - 0.5f;
+        var leftX = (int)MathF.Floor(shiftedX);
+        var topY = (int)MathF.Floor(shiftedY);
+        var tx = shiftedX - leftX;
+        var ty = shiftedY - topY;
+
+        var topLeft = selector(GetClampedTile(region, leftX, topY));
+        var topRight = selector(GetClampedTile(region, leftX + 1, topY));
+        var bottomLeft = selector(GetClampedTile(region, leftX, topY + 1));
+        var bottomRight = selector(GetClampedTile(region, leftX + 1, topY + 1));
+        var top = topLeft + ((topRight - topLeft) * tx);
+        var bottom = bottomLeft + ((bottomRight - bottomLeft) * tx);
+        return top + ((bottom - top) * ty);
+    }
+
+    private static GeneratedRegionTile GetClampedTile(GeneratedRegionMap region, int regionX, int regionY)
+    {
+        var clampedRegionX = Math.Clamp(regionX, 0, region.Width - 1);
+        var clampedRegionY = Math.Clamp(regionY, 0, region.Height - 1);
+        return region.GetTile(clampedRegionX, clampedRegionY);
+    }
+
+    private static float SampleNeighborhoodVegetation(GeneratedRegionMap region, int centerX, int centerY)
+        => SampleNeighborhoodScalar(region, centerX, centerY, static tile => tile.VegetationDensity);
+
     private static float SampleNeighborhoodSuitability(GeneratedRegionMap region, int centerX, int centerY)
+        => SampleNeighborhoodScalar(region, centerX, centerY, static tile => tile.VegetationSuitability);
+
+    private static float SampleNeighborhoodScalar(
+        GeneratedRegionMap region,
+        int centerX,
+        int centerY,
+        Func<GeneratedRegionTile, float> selector)
     {
         var weighted = 0f;
         var weight = 0f;
@@ -358,12 +503,12 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
             var isCenter = dx == 0 && dy == 0;
             var isCardinal = dx == 0 || dy == 0;
             var sampleWeight = isCenter ? 1.6f : (isCardinal ? 1.0f : 0.7f);
-            weighted += region.GetTile(x, y).VegetationSuitability * sampleWeight;
+            weighted += selector(region.GetTile(x, y)) * sampleWeight;
             weight += sampleWeight;
         }
 
         if (weight <= 0f)
-            return region.GetTile(centerX, centerY).VegetationSuitability;
+            return selector(region.GetTile(centerX, centerY));
 
         return weighted / weight;
     }
@@ -382,18 +527,7 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         if (edges.Count == 0)
         {
             // Fallback for isolated river cells: force a deterministic through-flow pair.
-            var hash = SeedHash.Hash(region.Seed, regionX, regionY, 9211);
-            var first = (LocalMapEdge)(Math.Abs(hash) % 4);
-            var second = first switch
-            {
-                LocalMapEdge.North => LocalMapEdge.South,
-                LocalMapEdge.South => LocalMapEdge.North,
-                LocalMapEdge.East => LocalMapEdge.West,
-                _ => LocalMapEdge.East,
-            };
-
-            edges.Add(first);
-            edges.Add(second);
+            AppendDeterministicThroughPair(edges, SeedHash.Hash(region.Seed, regionX, regionY, 9211));
         }
 
         var portals = new LocalRiverPortal[edges.Count];
@@ -406,6 +540,13 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         }
 
         return portals;
+    }
+
+    private static void AppendDeterministicThroughPair(List<LocalMapEdge> edges, int hash)
+    {
+        var first = (LocalMapEdge)(Math.Abs(hash) % 4);
+        edges.Add(first);
+        edges.Add(OppositeEdge(first));
     }
 
     private static float? TryResolveStraightThroughRiverOffset(int regionSeed, int regionX, int regionY, List<LocalMapEdge> edges)
@@ -463,21 +604,23 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         return edges;
     }
 
-    private static bool HasRiver(GeneratedRegionMap region, int x, int y)
+    private static bool TryGetRegionTile(GeneratedRegionMap region, int x, int y, out GeneratedRegionTile tile)
     {
         if (x < 0 || x >= region.Width || y < 0 || y >= region.Height)
+        {
+            tile = default;
             return false;
+        }
 
-        return region.GetTile(x, y).HasRiver;
+        tile = region.GetTile(x, y);
+        return true;
     }
+
+    private static bool HasRiver(GeneratedRegionMap region, int x, int y)
+        => TryGetRegionTile(region, x, y, out var tile) && tile.HasRiver;
 
     private static bool HasRiverEdge(GeneratedRegionMap region, int x, int y, RegionRiverEdges edge)
-    {
-        if (x < 0 || x >= region.Width || y < 0 || y >= region.Height)
-            return false;
-
-        return RegionRiverEdgeMask.Has(region.GetTile(x, y).RiverEdges, edge);
-    }
+        => TryGetRegionTile(region, x, y, out var tile) && RegionRiverEdgeMask.Has(tile.RiverEdges, edge);
 
     private static LocalSettlementAnchor[]? BuildLocalSettlementAnchors(GeneratedRegionMap region, int regionX, int regionY)
     {
@@ -557,18 +700,7 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         if (edges.Count == 0)
         {
             // Fallback for isolated road cells: deterministic through-pass pair.
-            var hash = SeedHash.Hash(region.Seed, regionX, regionY, 6121);
-            var first = (LocalMapEdge)(Math.Abs(hash) % 4);
-            var second = first switch
-            {
-                LocalMapEdge.North => LocalMapEdge.South,
-                LocalMapEdge.South => LocalMapEdge.North,
-                LocalMapEdge.East => LocalMapEdge.West,
-                _ => LocalMapEdge.East,
-            };
-
-            edges.Add(first);
-            edges.Add(second);
+            AppendDeterministicThroughPair(edges, SeedHash.Hash(region.Seed, regionX, regionY, 6121));
         }
 
         var width = (byte)Math.Clamp(1 + (regionTile.HasSettlement ? 1 : 0), 1, 2);
@@ -884,15 +1016,10 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
     }
 
     private static bool IsMajorHistoricalSite(string? kind)
-        => string.Equals(kind, "fortress", StringComparison.OrdinalIgnoreCase) ||
-           string.Equals(kind, "city", StringComparison.OrdinalIgnoreCase) ||
-           string.Equals(kind, "capital", StringComparison.OrdinalIgnoreCase) ||
-           string.Equals(kind, "town", StringComparison.OrdinalIgnoreCase);
+        => SiteKindIds.IsMajorSettlementKind(kind);
 
     private static bool IsMinorHistoricalSite(string? kind)
-        => string.Equals(kind, "hamlet", StringComparison.OrdinalIgnoreCase) ||
-           string.Equals(kind, "village", StringComparison.OrdinalIgnoreCase) ||
-           string.Equals(kind, "camp", StringComparison.OrdinalIgnoreCase);
+        => SiteKindIds.IsMinorSettlementKind(kind);
 
     private static LocalMapEdge ResolveHistoricalEdge(int dx, int dy)
     {
@@ -966,28 +1093,13 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
     }
 
     private static bool HasSettlement(GeneratedRegionMap region, int x, int y)
-    {
-        if (x < 0 || x >= region.Width || y < 0 || y >= region.Height)
-            return false;
-
-        return region.GetTile(x, y).HasSettlement;
-    }
+        => TryGetRegionTile(region, x, y, out var tile) && tile.HasSettlement;
 
     private static bool HasRoad(GeneratedRegionMap region, int x, int y)
-    {
-        if (x < 0 || x >= region.Width || y < 0 || y >= region.Height)
-            return false;
-
-        return region.GetTile(x, y).HasRoad;
-    }
+        => TryGetRegionTile(region, x, y, out var tile) && tile.HasRoad;
 
     private static bool HasRoadEdge(GeneratedRegionMap region, int x, int y, RegionRoadEdges edge)
-    {
-        if (x < 0 || x >= region.Width || y < 0 || y >= region.Height)
-            return false;
-
-        return RegionRoadEdgeMask.Has(region.GetTile(x, y).RoadEdges, edge);
-    }
+        => TryGetRegionTile(region, x, y, out var tile) && RegionRoadEdgeMask.Has(tile.RoadEdges, edge);
 
     private static LocalMapEdge OppositeEdge(LocalMapEdge edge)
     {
@@ -1021,118 +1133,45 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
     }
 
     private static float ResolvePortalOffset(int regionSeed, int regionX, int regionY, LocalMapEdge edge)
-    {
-        // Canonical boundary keys ensure adjacent region cells resolve the same offset on their shared edge.
-        int keyX;
-        int keyY;
-        int salt;
-        switch (edge)
-        {
-            case LocalMapEdge.North:
-                keyX = regionX;
-                keyY = regionY - 1;
-                salt = 3301;
-                break;
-            case LocalMapEdge.South:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 3301;
-                break;
-            case LocalMapEdge.West:
-                keyX = regionX - 1;
-                keyY = regionY;
-                salt = 3371;
-                break;
-            case LocalMapEdge.East:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 3371;
-                break;
-            default:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 3391;
-                break;
-        }
-
-        var unit = SeedHash.Unit(regionSeed, keyX, keyY, salt);
-        return 0.15f + (unit * 0.70f);
-    }
+        => ResolveCanonicalEdgeOffset(regionSeed, regionX, regionY, edge, 3301, 3371, 3391, 0.15f, 0.70f);
 
     private static float ResolveSettlementPortalOffset(int regionSeed, int regionX, int regionY, LocalMapEdge edge)
-    {
-        int keyX;
-        int keyY;
-        int salt;
-        switch (edge)
-        {
-            case LocalMapEdge.North:
-                keyX = regionX;
-                keyY = regionY - 1;
-                salt = 5501;
-                break;
-            case LocalMapEdge.South:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 5501;
-                break;
-            case LocalMapEdge.West:
-                keyX = regionX - 1;
-                keyY = regionY;
-                salt = 5531;
-                break;
-            case LocalMapEdge.East:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 5531;
-                break;
-            default:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 5557;
-                break;
-        }
-
-        var unit = SeedHash.Unit(regionSeed, keyX, keyY, salt);
-        return 0.20f + (unit * 0.60f);
-    }
+        => ResolveCanonicalEdgeOffset(regionSeed, regionX, regionY, edge, 5501, 5531, 5557, 0.20f, 0.60f);
 
     private static float ResolveRoadPortalOffset(int regionSeed, int regionX, int regionY, LocalMapEdge edge)
-    {
-        int keyX;
-        int keyY;
-        int salt;
-        switch (edge)
-        {
-            case LocalMapEdge.North:
-                keyX = regionX;
-                keyY = regionY - 1;
-                salt = 5623;
-                break;
-            case LocalMapEdge.South:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 5623;
-                break;
-            case LocalMapEdge.West:
-                keyX = regionX - 1;
-                keyY = regionY;
-                salt = 5653;
-                break;
-            case LocalMapEdge.East:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 5653;
-                break;
-            default:
-                keyX = regionX;
-                keyY = regionY;
-                salt = 5689;
-                break;
-        }
+        => ResolveCanonicalEdgeOffset(regionSeed, regionX, regionY, edge, 5623, 5653, 5689, 0.18f, 0.64f);
 
-        var unit = SeedHash.Unit(regionSeed, keyX, keyY, salt);
-        return 0.18f + (unit * 0.64f);
+    private static float ResolveCanonicalEdgeOffset(
+        int regionSeed,
+        int regionX,
+        int regionY,
+        LocalMapEdge edge,
+        int northSouthSalt,
+        int eastWestSalt,
+        int fallbackSalt,
+        float minOffset,
+        float span)
+    {
+        var (keyX, keyY, salt) = ResolveCanonicalEdgeKey(regionX, regionY, edge, northSouthSalt, eastWestSalt, fallbackSalt);
+        return minOffset + (SeedHash.Unit(regionSeed, keyX, keyY, salt) * span);
+    }
+
+    private static (int KeyX, int KeyY, int Salt) ResolveCanonicalEdgeKey(
+        int regionX,
+        int regionY,
+        LocalMapEdge edge,
+        int northSouthSalt,
+        int eastWestSalt,
+        int fallbackSalt)
+    {
+        return edge switch
+        {
+            LocalMapEdge.North => (regionX, regionY - 1, northSouthSalt),
+            LocalMapEdge.South => (regionX, regionY, northSouthSalt),
+            LocalMapEdge.West => (regionX - 1, regionY, eastWestSalt),
+            LocalMapEdge.East => (regionX, regionY, eastWestSalt),
+            _ => (regionX, regionY, fallbackSalt),
+        };
     }
 
     private static byte ResolvePortalStrength(float riverDischarge, byte riverOrder)
@@ -1153,3 +1192,6 @@ public sealed class LocalLayerGenerator : ILocalLayerGenerator
         return (byte)Math.Clamp(scaledDischarge + orderBonus, 1, 8);
     }
 }
+
+
+

@@ -158,78 +158,183 @@ public static class RegionBiomeVariantIds
     public const string ForestedFoothills = "forested_foothills";
     public const string RiverValley = "river_valley";
 
+    private static readonly HashSet<string> ConiferVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        DenseConifer,
+        ConiferWoodland,
+        RockyConiferEdge,
+    };
+
+    private static readonly HashSet<string> HighlandVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        AlpineRidge,
+        HighlandFoothills,
+    };
+
+    private static readonly HashSet<string> MarshVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        FloodplainMarsh,
+        ReedMarsh,
+    };
+
+    private static readonly HashSet<string> SteppeVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        DrySteppe,
+        SteppeScrub,
+        SavannaGrassland,
+    };
+
+    private static readonly HashSet<string> RockyVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        AlpineRidge,
+        RockyConiferEdge,
+        AridBadlands,
+    };
+
+    private static readonly HashSet<string> OceanVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        CoastalShallows,
+        OpenOcean,
+    };
+
+    private static readonly Dictionary<string, string> MacroBiomeByVariant = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [DenseConifer] = MacroBiomeIds.ConiferForest,
+        [ConiferWoodland] = MacroBiomeIds.ConiferForest,
+        [RockyConiferEdge] = MacroBiomeIds.ConiferForest,
+        [TropicalCanopy] = MacroBiomeIds.TropicalRainforest,
+        [TropicalLowland] = MacroBiomeIds.TropicalRainforest,
+        [SavannaGrassland] = MacroBiomeIds.Savanna,
+        [AridBadlands] = MacroBiomeIds.Desert,
+        [PolarTundra] = MacroBiomeIds.Tundra,
+        [GlacialField] = MacroBiomeIds.IcePlains,
+        [AlpineRidge] = MacroBiomeIds.Highland,
+        [HighlandFoothills] = MacroBiomeIds.Highland,
+        [ForestedFoothills] = MacroBiomeIds.Highland,
+        [RockyHighland] = MacroBiomeIds.Highland,
+        [FloodplainMarsh] = MacroBiomeIds.MistyMarsh,
+        [ReedMarsh] = MacroBiomeIds.MistyMarsh,
+        [BoggyFen] = MacroBiomeIds.MistyMarsh,
+        [DrySteppe] = MacroBiomeIds.WindsweptSteppe,
+        [SteppeScrub] = MacroBiomeIds.WindsweptSteppe,
+        [SparseSteppe] = MacroBiomeIds.WindsweptSteppe,
+        [MeadowPlain] = MacroBiomeIds.TemperatePlains,
+        [RiverValley] = MacroBiomeIds.TemperatePlains,
+        [TemperateWoodland] = MacroBiomeIds.TemperatePlains,
+        [TemperatePlainsOpen] = MacroBiomeIds.TemperatePlains,
+        [CoastalShallows] = MacroBiomeIds.OceanShallow,
+        [OpenOcean] = MacroBiomeIds.OceanDeep,
+    };
+
+    private static readonly Dictionary<string, float> TreeDensityBiasByVariant = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [DenseConifer] = 0.15f,
+        [ForestedFoothills] = 0.15f,
+        [ConiferWoodland] = 0.10f,
+        [TemperateWoodland] = 0.10f,
+        [RiverValley] = 0.08f,
+        [FloodplainMarsh] = 0.08f,
+        [TropicalCanopy] = 0.18f,
+        [TropicalLowland] = 0.12f,
+        [SavannaGrassland] = -0.05f,
+        [DrySteppe] = -0.12f,
+        [SparseSteppe] = -0.12f,
+        [AridBadlands] = -0.20f,
+        [AlpineRidge] = -0.08f,
+        [RockyHighland] = -0.08f,
+        [PolarTundra] = -0.16f,
+        [GlacialField] = -0.24f,
+    };
+
     public static bool IsConiferVariant(string? variantId)
-        => EqualsVariant(variantId, DenseConifer) ||
-           EqualsVariant(variantId, ConiferWoodland) ||
-           EqualsVariant(variantId, RockyConiferEdge);
+        => ContainsVariant(variantId, ConiferVariants);
 
     public static bool IsHighlandVariant(string? variantId)
-        => EqualsVariant(variantId, AlpineRidge) ||
-           EqualsVariant(variantId, HighlandFoothills);
+        => ContainsVariant(variantId, HighlandVariants);
 
     public static bool IsMarshVariant(string? variantId)
-        => EqualsVariant(variantId, FloodplainMarsh) ||
-           EqualsVariant(variantId, ReedMarsh);
+        => ContainsVariant(variantId, MarshVariants);
 
     public static bool IsSteppeVariant(string? variantId)
-        => EqualsVariant(variantId, DrySteppe) ||
-           EqualsVariant(variantId, SteppeScrub) ||
-           EqualsVariant(variantId, SavannaGrassland);
+        => ContainsVariant(variantId, SteppeVariants);
 
     public static bool IsRockyVariant(string? variantId)
-        => EqualsVariant(variantId, AlpineRidge) ||
-           EqualsVariant(variantId, RockyConiferEdge) ||
-           EqualsVariant(variantId, AridBadlands);
+        => ContainsVariant(variantId, RockyVariants);
 
     public static bool IsOceanVariant(string? variantId)
-        => EqualsVariant(variantId, CoastalShallows) ||
-           EqualsVariant(variantId, OpenOcean);
+        => ContainsVariant(variantId, OceanVariants);
 
     public static string ResolveMacroBiomeId(string? variantId)
-    {
-        if (IsConiferVariant(variantId))
-            return MacroBiomeIds.ConiferForest;
-        if (EqualsVariant(variantId, TropicalCanopy) || EqualsVariant(variantId, TropicalLowland))
-            return MacroBiomeIds.TropicalRainforest;
-        if (EqualsVariant(variantId, SavannaGrassland))
-            return MacroBiomeIds.Savanna;
-        if (EqualsVariant(variantId, AridBadlands))
-            return MacroBiomeIds.Desert;
-        if (EqualsVariant(variantId, PolarTundra))
-            return MacroBiomeIds.Tundra;
-        if (EqualsVariant(variantId, GlacialField))
-            return MacroBiomeIds.IcePlains;
-        if (IsHighlandVariant(variantId))
-            return MacroBiomeIds.Highland;
-        if (EqualsVariant(variantId, ForestedFoothills))
-            return MacroBiomeIds.Highland;
-        if (EqualsVariant(variantId, RockyHighland))
-            return MacroBiomeIds.Highland;
-        if (IsMarshVariant(variantId))
-            return MacroBiomeIds.MistyMarsh;
-        if (EqualsVariant(variantId, BoggyFen))
-            return MacroBiomeIds.MistyMarsh;
-        if (IsSteppeVariant(variantId))
-            return MacroBiomeIds.WindsweptSteppe;
-        if (EqualsVariant(variantId, SparseSteppe))
-            return MacroBiomeIds.WindsweptSteppe;
-        if (EqualsVariant(variantId, MeadowPlain))
-            return MacroBiomeIds.TemperatePlains;
-        if (EqualsVariant(variantId, RiverValley))
-            return MacroBiomeIds.TemperatePlains;
-        if (EqualsVariant(variantId, TemperateWoodland))
-            return MacroBiomeIds.TemperatePlains;
-        if (EqualsVariant(variantId, TemperatePlainsOpen))
-            return MacroBiomeIds.TemperatePlains;
-        if (EqualsVariant(variantId, CoastalShallows))
-            return MacroBiomeIds.OceanShallow;
-        if (EqualsVariant(variantId, OpenOcean))
-            return MacroBiomeIds.OceanDeep;
-        return MacroBiomeIds.TemperatePlains;
-    }
+        => !string.IsNullOrWhiteSpace(variantId) && MacroBiomeByVariant.TryGetValue(variantId, out var macroBiomeId)
+            ? macroBiomeId
+            : MacroBiomeIds.TemperatePlains;
 
-    private static bool EqualsVariant(string? left, string right)
-        => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+    public static float ResolveTreeDensityBias(string? variantId)
+        => !string.IsNullOrWhiteSpace(variantId) && TreeDensityBiasByVariant.TryGetValue(variantId, out var bias)
+            ? bias
+            : 0f;
+
+    private static bool ContainsVariant(string? variantId, HashSet<string> variants)
+        => !string.IsNullOrWhiteSpace(variantId) && variants.Contains(variantId);
+}
+
+public static class HistoricalEventTypeIds
+{
+    public const string Treaty = "treaty";
+    public const string Raid = "raid";
+    public const string Founding = "founding";
+    public const string Skirmish = "skirmish";
+    public const string Crisis = "crisis";
+}
+
+public static class SiteKindIds
+{
+    public const string Fortress = "fortress";
+    public const string Hamlet = "hamlet";
+    public const string Ruin = "ruin";
+    public const string Shrine = "shrine";
+    public const string Cave = "cave";
+    public const string Watchtower = "watchtower";
+    public const string Capital = "capital";
+    public const string City = "city";
+    public const string Town = "town";
+    public const string Village = "village";
+    public const string Camp = "camp";
+    public const string Settlement = "settlement";
+    public const string WatchFragment = "watch";
+    public const string MineFragment = "mine";
+
+    public static bool IsMajorSettlementKind(string? siteKind)
+        => ContainsAny(siteKind, Fortress, City, Capital, Town);
+
+    public static bool IsMinorSettlementKind(string? siteKind)
+        => ContainsAny(siteKind, Hamlet, Village, Camp);
+
+    public static bool HasRiparianSettlementSemantics(string? siteKind)
+        => ContainsAny(siteKind, Fortress, Hamlet, Shrine);
+
+    public static bool HasGarrisonSemantics(string? siteKind)
+        => ContainsAny(siteKind, WatchFragment, Fortress, Cave);
+
+    public static bool HasAgrarianSemantics(string? siteKind)
+        => ContainsAny(siteKind, Hamlet, Village, Shrine);
+
+    public static bool HasMiningSemantics(string? siteKind)
+        => ContainsAny(siteKind, Cave, MineFragment, Ruin);
+
+    private static bool ContainsAny(string? value, params string[] fragments)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        foreach (var fragment in fragments)
+        {
+            if (value.Contains(fragment, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
 }
 
 public static class RegionSurfaceClassIds

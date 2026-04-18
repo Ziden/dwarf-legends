@@ -504,7 +504,7 @@ public sealed class DataManager : IGameSystem
         var footprint = new List<BuildingTile>();
         var inputs = ParseRecipeInputs(n["constructionInputs"]);
         var discoveryInputs = ParseRecipeInputs(n["discoveryInputs"]);
-        var entryOffsets = new List<Core.Vec2i>();
+        var entries = new List<BuildingEntryDef>();
 
         if (n["footprint"] is JsonArray fp)
             foreach (var t in fp)
@@ -513,12 +513,14 @@ public sealed class DataManager : IGameSystem
                         new Core.Vec2i(t["x"]?.GetValue<int>() ?? 0, t["y"]?.GetValue<int>() ?? 0),
                         t["tile"]!.GetValue<string>()));
 
-        if (n["entryOffsets"] is JsonArray eo)
+        if (n["entries"] is JsonArray eo)
             foreach (var entry in eo)
                 if (entry is not null)
-                    entryOffsets.Add(new Core.Vec2i(
-                        entry["x"]?.GetValue<int>() ?? 0,
-                        entry["y"]?.GetValue<int>() ?? 0));
+                    entries.Add(new BuildingEntryDef(
+                        new Core.Vec2i(
+                            entry["x"]?.GetValue<int>() ?? 0,
+                            entry["y"]?.GetValue<int>() ?? 0),
+                        ParseBuildingDirection(entry["outwardDirection"]?.GetValue<string>())));
 
         return new BuildingDef(
             Id:                 n["id"]!.GetValue<string>(),
@@ -531,9 +533,34 @@ public sealed class DataManager : IGameSystem
             IsWorkshop:         n["isWorkshop"]?.GetValue<bool>() ?? false,
             ProducedSmokeId:    n["producedSmokeId"]?.GetValue<string>(),
             ResidenceCapacity:  n["residenceCapacity"]?.GetValue<int>() ?? 0,
-            EntryOffsets:       entryOffsets,
+            Entries:            entries,
             AutoStockpileAcceptedTags: ParseStringList(n["autoStockpileAcceptedTags"]),
-            StructureVisualId:  n["structureVisualId"]?.GetValue<string>());
+            VisualProfile:      ParseBuildingVisualProfile(n["visualProfile"]));
+    }
+
+    private static Core.Vec2i ParseBuildingDirection(string? direction)
+        => direction?.Trim().ToLowerInvariant() switch
+        {
+            "north" => Core.Vec2i.North,
+            "south" => Core.Vec2i.South,
+            "east" => Core.Vec2i.East,
+            "west" => Core.Vec2i.West,
+            _ => Core.Vec2i.South,
+        };
+
+    private static BuildingVisualProfile? ParseBuildingVisualProfile(JsonNode? node)
+    {
+        if (node is not JsonObject profile)
+            return null;
+
+        var archetype = profile["archetype"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(archetype))
+            return null;
+
+        return new BuildingVisualProfile(
+            Archetype: archetype!,
+            Palette: profile["palette"]?.GetValue<string>(),
+            HideRoofOnHover: profile["hideRoofOnHover"]?.GetValue<bool>() ?? false);
     }
 
     // ── Shared helpers ─────────────────────────────────────────────────────

@@ -46,6 +46,41 @@ public sealed class DrinkStrategyTests
     }
 
     [Fact]
+    public void NeedsSystem_Caches_A_Reachable_Water_Tile_For_Natural_Water_Drink_Jobs()
+    {
+        var (sim, map, er, jobs, items) = TestFixtures.BuildFullSim();
+
+        foreach (var drink in items.GetAllItems().Where(item => item.DefId == ItemDefIds.Drink).ToList())
+            items.DestroyItem(drink.Id);
+
+        var dwarf = new Dwarf(er.NextId(), "Urist", new Vec3i(8, 8, 0));
+        er.Register(dwarf);
+        dwarf.Needs.Thirst.SetLevel(0.01f);
+
+        var waterPos = new Vec3i(14, 8, 0);
+        var waterTile = map.GetTile(waterPos);
+        waterTile.TileDefId = TileDefIds.Water;
+        waterTile.IsPassable = true;
+        waterTile.FluidType = FluidType.Water;
+        waterTile.FluidLevel = 7;
+        map.SetTile(waterPos, waterTile);
+
+        sim.Context.Get<NeedsSystem>().Tick(0.1f);
+
+        var drinkJob = Assert.Single(jobs.GetPendingJobs().Where(job => job.JobDefId == JobDefIds.Drink));
+
+        Assert.Equal(waterPos, drinkJob.TargetPos);
+        Assert.Contains(new[]
+            {
+                waterPos + Vec3i.North,
+                waterPos + Vec3i.South,
+                waterPos + Vec3i.East,
+                waterPos + Vec3i.West,
+            },
+            candidate => map.IsWalkable(candidate));
+    }
+
+    [Fact]
     public void Dwarf_Drinks_From_Fortress_Location_When_No_Local_Water_Exists()
     {
         var (sim, map, er, _, items) = TestFixtures.BuildFullSim();
@@ -80,6 +115,51 @@ public sealed class DrinkStrategyTests
         Assert.True(dwarf.IsAlive);
         Assert.InRange(dwarf.Position.Position.ManhattanDistanceTo(waterPos), 0, 1);
         Assert.False(map.IsSwimmable(dwarf.Position.Position));
+    }
+
+    [Fact]
+    public void NeedsSystem_Does_Not_Create_A_Drink_Job_For_Unreachable_Fortress_Fallback_Water()
+    {
+        var (sim, map, er, jobs, items) = TestFixtures.BuildFullSim();
+
+        foreach (var drink in items.GetAllItems().Where(item => item.DefId == ItemDefIds.Drink).ToList())
+            items.DestroyItem(drink.Id);
+
+        var dwarf = new Dwarf(er.NextId(), "Urist", new Vec3i(4, 4, 0));
+        er.Register(dwarf);
+        dwarf.Needs.Thirst.SetLevel(0.01f);
+
+        var waterPos = new Vec3i(24, 4, 0);
+        var waterTile = map.GetTile(waterPos);
+        waterTile.TileDefId = TileDefIds.Water;
+        waterTile.IsPassable = true;
+        waterTile.FluidType = FluidType.Water;
+        waterTile.FluidLevel = 7;
+        map.SetTile(waterPos, waterTile);
+
+        foreach (var wallPos in new[]
+                 {
+                     waterPos + Vec3i.North,
+                     waterPos + Vec3i.South,
+                     waterPos + Vec3i.East,
+                     waterPos + Vec3i.West,
+                 })
+        {
+            map.SetTile(wallPos, new TileData
+            {
+                TileDefId = TileDefIds.GraniteWall,
+                MaterialId = MaterialIds.Granite,
+                IsPassable = false,
+            });
+        }
+
+        var fortressLocations = sim.Context.Get<FortressLocationSystem>();
+        fortressLocations.SetLocation(FortressLocationIds.EmbarkCenter, dwarf.Position.Position);
+        fortressLocations.SetLocation(FortressLocationIds.ClosestDrink, waterPos);
+
+        sim.Context.Get<NeedsSystem>().Tick(0.1f);
+
+        Assert.DoesNotContain(jobs.GetPendingJobs(), job => job.JobDefId == JobDefIds.Drink);
     }
 
     [Fact]
@@ -186,6 +266,46 @@ public sealed class DrinkStrategyTests
         Assert.True(dwarf.IsAlive);
         Assert.True(items.TryGetItem(unreachableDrink.Id, out var preservedDrink));
         Assert.False(preservedDrink!.IsClaimed);
+    }
+
+    [Fact]
+    public void Fearful_Dwarf_Still_Drinks_When_Thirst_Is_Critical()
+    {
+        var (sim, map, er, _, items) = TestFixtures.BuildFullSim();
+
+        foreach (var drink in items.GetAllItems().Where(item => item.DefId == ItemDefIds.Drink).ToList())
+            items.DestroyItem(drink.Id);
+
+        var dwarf = new Dwarf(er.NextId(), "Urist", new Vec3i(8, 8, 0));
+        dwarf.Attributes.SetLevel(AttributeIds.Courage, 1);
+        dwarf.Needs.Thirst.SetLevel(0.01f);
+        er.Register(dwarf);
+
+        var waterPos = new Vec3i(14, 8, 0);
+        var waterTile = map.GetTile(waterPos);
+        waterTile.TileDefId = TileDefIds.Water;
+        waterTile.IsPassable = true;
+        waterTile.FluidType = FluidType.Water;
+        waterTile.FluidLevel = 7;
+        map.SetTile(waterPos, waterTile);
+
+        var refusals = new List<JobRefusedEvent>();
+        sim.Context.EventBus.On<JobRefusedEvent>(ev =>
+        {
+            if (ev.DwarfId == dwarf.Id)
+                refusals.Add(ev);
+        });
+
+        for (var tick = 0; tick < 2500; tick++)
+        {
+            sim.Tick(0.1f);
+            if (dwarf.Needs.Thirst.Level >= 0.8f)
+                break;
+        }
+
+        Assert.InRange(dwarf.Needs.Thirst.Level, 0.8f, 1f);
+        Assert.True(dwarf.IsAlive);
+        Assert.DoesNotContain(refusals, refusal => refusal.ReasonId == AttributeIds.Courage);
     }
 
     [Fact]

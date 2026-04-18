@@ -149,7 +149,7 @@ public sealed class WorldCamera3DController
 
     public Rect2I CalculateVisibleTileBounds(Viewport viewport, WorldMap? map)
     {
-        if (_camera is null || map is null || map.Width <= 0 || map.Height <= 0)
+        if (_camera is null || map is null || map.Depth <= 0)
             return new Rect2I();
 
         var viewportRect = viewport.GetVisibleRect();
@@ -158,10 +158,10 @@ public sealed class WorldCamera3DController
             : viewportRect.Size.X / viewportRect.Size.Y;
         var halfSpanTiles = Mathf.Max(8f, (_camera.Size * Mathf.Max(aspect * 1.05f, 1.10f)) + 4f);
 
-        var minX = Mathf.Clamp(Mathf.FloorToInt(_focusTile.X - halfSpanTiles), 0, map.Width - 1);
-        var minY = Mathf.Clamp(Mathf.FloorToInt(_focusTile.Y - halfSpanTiles), 0, map.Height - 1);
-        var maxX = Mathf.Clamp(Mathf.CeilToInt(_focusTile.X + halfSpanTiles), 0, map.Width - 1);
-        var maxY = Mathf.Clamp(Mathf.CeilToInt(_focusTile.Y + halfSpanTiles), 0, map.Height - 1);
+        var minX = Mathf.FloorToInt(_focusTile.X - halfSpanTiles);
+        var minY = Mathf.FloorToInt(_focusTile.Y - halfSpanTiles);
+        var maxX = Mathf.CeilToInt(_focusTile.X + halfSpanTiles);
+        var maxY = Mathf.CeilToInt(_focusTile.Y + halfSpanTiles);
 
         return new Rect2I(minX, minY, Mathf.Max(1, maxX - minX + 1), Mathf.Max(1, maxY - minY + 1));
     }

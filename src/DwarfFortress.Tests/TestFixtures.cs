@@ -1,5 +1,8 @@
 using DwarfFortress.GameLogic.Core;
+using DwarfFortress.GameLogic.Data;
+using DwarfFortress.GameLogic.Data.Defs;
 using DwarfFortress.GameLogic.Entities;
+using DwarfFortress.GameLogic.Items;
 using DwarfFortress.GameLogic.Jobs;
 using DwarfFortress.GameLogic.Systems;
 using DwarfFortress.GameLogic.Tests.Fakes;
@@ -267,5 +270,81 @@ public static class TestFixtures
         }
 
         return (sim, map, er, js, items);
+    }
+
+    public static PlacedBuildingData PlaceBuildingWithMaterials(
+        GameSimulation sim,
+        string buildingDefId,
+        Vec3i origin,
+        BuildingRotation rotation = BuildingRotation.None,
+        Vec3i? materialStart = null,
+        string materialId = MaterialIds.Wood,
+        bool complete = true)
+    {
+        var data = sim.Context.Get<DataManager>();
+        var items = sim.Context.Get<ItemSystem>();
+        var buildings = sim.Context.Get<BuildingSystem>();
+        var definition = data.Buildings.Get(buildingDefId);
+
+        AddBuildingConstructionInputs(items, definition.ConstructionInputs, materialStart ?? new Vec3i(1, 1, 0), materialId);
+        sim.Context.Commands.Dispatch(new PlaceBuildingCommand(buildingDefId, origin, rotation));
+
+        var building = buildings.GetByOrigin(origin)
+            ?? throw new InvalidOperationException($"Building '{buildingDefId}' was not placed at {origin}.");
+
+        if (complete)
+            buildings.CompleteConstruction(building.Id);
+
+        return building;
+    }
+
+    public static void AddBuildingConstructionInputs(
+        ItemSystem items,
+        IReadOnlyList<RecipeInput> inputs,
+        Vec3i start,
+        string materialId = MaterialIds.Wood)
+    {
+        var offset = 0;
+        foreach (var input in inputs)
+        {
+            var itemDefId = ResolveInputItemDefId(input);
+            var inputMaterialId = ResolveInputMaterialId(input, itemDefId, materialId);
+            for (var i = 0; i < input.Quantity; i++)
+            {
+                items.CreateItem(itemDefId, inputMaterialId, new Vec3i(start.X + offset, start.Y, start.Z));
+                offset++;
+            }
+        }
+    }
+
+    private static string ResolveInputItemDefId(RecipeInput input)
+    {
+        if (!string.IsNullOrWhiteSpace(input.ItemDefId))
+            return input.ItemDefId!;
+
+        if (input.RequiredTags.Contains(TagIds.Stone) || input.RequiredTags.Contains(TagIds.Boulder))
+            return ItemDefIds.GraniteBoulder;
+        if (input.RequiredTags.Contains(TagIds.Bed))
+            return ItemDefIds.Bed;
+        if (input.RequiredTags.Contains(TagIds.Table))
+            return ItemDefIds.Table;
+        if (input.RequiredTags.Contains(TagIds.Chair))
+            return ItemDefIds.Chair;
+        if (input.RequiredTags.Contains(TagIds.Bucket))
+            return ItemDefIds.Bucket;
+        if (input.RequiredTags.Contains(TagIds.Barrel))
+            return ItemDefIds.Barrel;
+
+        return ItemDefIds.Log;
+    }
+
+    private static string ResolveInputMaterialId(RecipeInput input, string itemDefId, string fallbackMaterialId)
+    {
+        if (!string.IsNullOrWhiteSpace(input.MaterialId))
+            return input.MaterialId!;
+
+        return itemDefId == ItemDefIds.GraniteBoulder
+            ? MaterialIds.Granite
+            : fallbackMaterialId;
     }
 }
